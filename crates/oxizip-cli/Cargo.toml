@@ -17,3 +17,7 @@ oxizip-i18n = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+open = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+winreg = { workspace = true }

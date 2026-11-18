@@ -38,6 +38,14 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
         }
         (Lang::ZhCn, "error.unrar_failed") => "UnRAR 执行失败",
         (Lang::En, "error.unrar_failed") => "UnRAR failed",
+        (Lang::ZhCn, "error.wimlib_missing") => {
+            "未找到 wimlib-imagex：请安装 wimlib（Windows 可放置 wimlib-imagex.exe）"
+        }
+        (Lang::En, "error.wimlib_missing") => {
+            "wimlib-imagex not found: install wimlib, or place wimlib-imagex.exe on Windows"
+        }
+        (Lang::ZhCn, "error.wimlib_failed") => "wimlib 执行失败",
+        (Lang::En, "error.wimlib_failed") => "wimlib failed",
         (Lang::ZhCn, "error.entry_not_found") => "未找到条目",
         (Lang::En, "error.entry_not_found") => "Entry not found",
         (Lang::ZhCn, "error.other") => "发生错误",
@@ -47,6 +55,16 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
         (Lang::En, "gui.open_archive") => "Open",
         (Lang::ZhCn, "gui.extract") => "解压到…",
         (Lang::En, "gui.extract") => "Extract…",
+        (Lang::ZhCn, "gui.extract_here") => "解压到此处",
+        (Lang::En, "gui.extract_here") => "Extract Here",
+        (Lang::ZhCn, "gui.extract_smart") => "智能解压",
+        (Lang::En, "gui.extract_smart") => "Extract Smart",
+        (Lang::ZhCn, "gui.test") => "测试",
+        (Lang::En, "gui.test") => "Test",
+        (Lang::ZhCn, "gui.add") => "添加…",
+        (Lang::En, "gui.add") => "Add…",
+        (Lang::ZhCn, "gui.delete_entry") => "删除",
+        (Lang::En, "gui.delete_entry") => "Delete",
         (Lang::ZhCn, "gui.create") => "压缩…",
         (Lang::En, "gui.create") => "Compress…",
         (Lang::ZhCn, "gui.cancel") => "取消",
@@ -79,6 +97,16 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
         (Lang::En, "gui.busy.create") => "Compressing…",
         (Lang::ZhCn, "gui.busy.open") => "正在打开条目…",
         (Lang::En, "gui.busy.open") => "Opening entry…",
+        (Lang::ZhCn, "gui.busy.test") => "正在测试…",
+        (Lang::En, "gui.busy.test") => "Testing…",
+        (Lang::ZhCn, "gui.busy.add") => "正在添加…",
+        (Lang::En, "gui.busy.add") => "Adding…",
+        (Lang::ZhCn, "gui.busy.delete") => "正在删除…",
+        (Lang::En, "gui.busy.delete") => "Deleting…",
+        (Lang::ZhCn, "gui.status.tested") => "测试通过",
+        (Lang::En, "gui.status.tested") => "Test OK",
+        (Lang::ZhCn, "gui.status.edited") => "已更新归档",
+        (Lang::En, "gui.status.edited") => "Archive updated",
         (Lang::ZhCn, "gui.status.ready") => "就绪",
         (Lang::En, "gui.status.ready") => "Ready",
         (Lang::ZhCn, "gui.status.opened") => "已打开",
@@ -101,6 +129,67 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
         (Lang::En, "gui.method.auto") => "Default",
         (Lang::ZhCn, "gui.entries") => "项",
         (Lang::En, "gui.entries") => "items",
+        (Lang::ZhCn, "gui.licenses") => "开源组件",
+        (Lang::En, "gui.licenses") => "Licenses",
+        (Lang::ZhCn, "gui.licenses.title") => "依赖组件与协议",
+        (Lang::En, "gui.licenses.title") => "Dependencies & licenses",
+        (Lang::ZhCn, "gui.licenses.back") => "返回",
+        (Lang::En, "gui.licenses.back") => "Back",
+        (Lang::ZhCn, "gui.licenses.filter") => "分类",
+        (Lang::En, "gui.licenses.filter") => "Filter",
+        (Lang::ZhCn, "gui.licenses.filter_all") => "全部",
+        (Lang::En, "gui.licenses.filter_all") => "All",
+        (Lang::ZhCn, "gui.licenses.intro") => {
+            "以下为 Oxizip 主要依赖与运行时工具的许可证摘要；完整说明见仓库 README.md。Oxizip 本体为 AGPL-3.0-only。"
+        }
+        (Lang::En, "gui.licenses.intro") => {
+            "Summary of major dependencies and runtime tools. Full notes are in README.md. Oxizip itself is AGPL-3.0-only."
+        }
+        (Lang::ZhCn, "gui.licenses.col.kind") => "类别",
+        (Lang::En, "gui.licenses.col.kind") => "Kind",
+        (Lang::ZhCn, "gui.licenses.col.name") => "组件",
+        (Lang::En, "gui.licenses.col.name") => "Component",
+        (Lang::ZhCn, "gui.licenses.col.license") => "协议",
+        (Lang::En, "gui.licenses.col.license") => "License",
+        (Lang::ZhCn, "gui.licenses.col.purpose") => "用途",
+        (Lang::En, "gui.licenses.col.purpose") => "Purpose",
+        (Lang::ZhCn, "gui.licenses.col.note") => "说明",
+        (Lang::En, "gui.licenses.col.note") => "Notes",
+        (Lang::ZhCn, "gui.licenses.footer") => {
+            "传递依赖未全部列出；捆绑 UnRAR / wimlib 时须另遵守其许可。"
+        }
+        (Lang::En, "gui.licenses.footer") => {
+            "Transitive crates are not fully listed; bundling UnRAR/wimlib requires their terms."
+        },
+
+        (Lang::ZhCn, "shell.extract_here") => "Oxizip 解压到此处",
+        (Lang::En, "shell.extract_here") => "Oxizip Extract Here",
+        (Lang::ZhCn, "shell.extract_smart") => "Oxizip 智能解压",
+        (Lang::En, "shell.extract_smart") => "Oxizip Extract Here (Smart)",
+        (Lang::ZhCn, "shell.extract_to_folder") => "Oxizip 解压到归档名文件夹",
+        (Lang::En, "shell.extract_to_folder") => "Oxizip Extract to Archive Folder",
+        (Lang::ZhCn, "shell.test") => "Oxizip 测试压缩包",
+        (Lang::En, "shell.test") => "Oxizip Test Archive",
+        (Lang::ZhCn, "shell.checksum") => "Oxizip 校验和信息",
+        (Lang::En, "shell.checksum") => "Oxizip Checksum Information",
+        (Lang::ZhCn, "shell.repair") => "Oxizip 修复压缩包",
+        (Lang::En, "shell.repair") => "Oxizip Repair Archive",
+        (Lang::ZhCn, "shell.compress_zip") => "Oxizip 压缩为 ZIP",
+        (Lang::En, "shell.compress_zip") => "Oxizip Compress to ZIP",
+        (Lang::ZhCn, "shell.compress_7z") => "Oxizip 压缩为 7z",
+        (Lang::En, "shell.compress_7z") => "Oxizip Compress to 7z",
+        (Lang::ZhCn, "shell.desktop_extract") => "Oxizip 解压",
+        (Lang::En, "shell.desktop_extract") => "Oxizip Extract",
+        (Lang::ZhCn, "shell.desktop_compress") => "Oxizip 压缩",
+        (Lang::En, "shell.desktop_compress") => "Oxizip Compress",
+        (Lang::ZhCn, "shell.install_ok") => "已安装当前用户的文件管理器集成",
+        (Lang::En, "shell.install_ok") => "Installed per-user file manager integration",
+        (Lang::ZhCn, "shell.uninstall_ok") => "已移除 Oxizip 文件管理器集成",
+        (Lang::En, "shell.uninstall_ok") => "Removed Oxizip file manager integration",
+        (Lang::ZhCn, "shell.status_installed") => "文件管理器集成：已安装",
+        (Lang::En, "shell.status_installed") => "Shell integration: installed",
+        (Lang::ZhCn, "shell.status_missing") => "文件管理器集成：未安装",
+        (Lang::En, "shell.status_missing") => "Shell integration: not installed",
         _ => return None,
     })
 }
@@ -123,6 +212,7 @@ pub fn error_message(lang: Lang, err: &CoreError) -> String {
         CoreError::Io(e) => format!("{base}: {e}"),
         CoreError::PathUnsafe(detail)
         | CoreError::UnrarFailed(detail)
+        | CoreError::WimlibFailed(detail)
         | CoreError::Other(detail) => format!("{base}: {detail}"),
         CoreError::EntryNotFound(name) => format!("{base}: {name}"),
         _ => base,
