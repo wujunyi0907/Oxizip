@@ -11,10 +11,12 @@
 - 分发产物文件名统一为 `Oxizip` 前缀；RPM 仍按 NEVRA 保留 `Release`（如 `Oxizip-<ver>-1.<arch>.rpm`）
 - GitHub Release 仅在 Setup / deb / rpm / AppImage / tar.gz 全部齐全时创建
 - Package 工作流仅在打 `v*` 标签或手动触发时运行（避免与 `main` 推送重复打包）
+- 完善「变更范围」「提交纪律」、Conventional Commit（前缀 + 中文）与 PR 说明规范（见 [AGENTS.md](AGENTS.md)）
 
 ### Added
 
 - 英文说明 [README.en.md](README.en.md)
+- [CHANGELOG.md](CHANGELOG.md)；发版标签格式明确为 `vX.Y.Z`
 
 ## [0.1.2] - 2026-11-18
 

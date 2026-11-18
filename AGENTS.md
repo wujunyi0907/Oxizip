@@ -58,6 +58,19 @@ oxizip-cli / oxizip-gui
 6. **打开文件**：解到受控临时目录后调用系统关联打开，不做内嵌预览控件。
 7. **中文沟通**：面向用户的说明、提交说明按仓库约定；代码标识符用英文。
 
+## 变更范围
+
+- **只改完成需求所必需的文件**；不顺手重构无关代码、不清理既有遗留、不扩大范围或堆砌文档。
+- **改前 / 改后**都应做相关构建与检查：至少对受影响 crate 跑通编译；提交前尽量 `cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`、相关 `cargo test`。
+- 注意源码编码（UTF-8）、CLI 控制台输出、GUI 交互与进度/取消是否正常。
+- **GUI / 安装器 UI** 改动：验证命令与视觉核对范围写入提交说明或 PR（有条件时附截图或录屏）。
+
+## 提交纪律
+
+- **未获用户明确授权时**，不自动执行 `git add` / `git commit` / `git push` / 打标签。
+- **禁止提交**：密钥与令牌、个人本地配置、`target/`、`dist/`、本地 `reference/`、`third_party/unrar/` / `third_party/wimlib/` 下的二进制 / SDK，以及其他生成物或缓存目录。
+- 提交说明与 PR 格式见下文「提交说明」「合并请求」；发版见「发版 / 打标签」。
+
 ## 不要做
 
 - 不要为了“快”把格式解析写进 `oxizip-gui` / `oxizip-cli`
@@ -65,7 +78,7 @@ oxizip-cli / oxizip-gui
 - 不要从 `reference/` 复制资源到本仓库发布路径
 - 不要引入 WebView 广告、授权服务器校验、应用内文档/图片预览器
 - 不要在未要求时添加无关 markdown / 扩大范围
-- 用户未要求时不 `git commit` / 不 `push`
+- 不要在未授权时 `git add` / `commit` / `push`
 - 不要在未更新 `Cargo.toml` 版本与 [CHANGELOG.md](CHANGELOG.md) 时打发布标签；发布标签必须是 `vX.Y.Z`（如 `v1.0.1`），禁止只有数字的标签名
 
 ## 编码规范
@@ -106,13 +119,37 @@ oxizip-cli / oxizip-gui
 - 文案全部经 i18n。
 - CLI：`clap` derive；日志 `tracing`；`-v` 增加细节；与 GUI 共享 engine。
 
-### 测试与 Git
+### 测试
 
 - 解压/打包集成测试放 `samples/`；覆盖 zip-slip 负例。
 - RAR/WIM：环境无 CLI 时 skip，并断言缺失错误类型。
-- 不提交密钥、本地 UnRAR/wimlib 二进制、整个 `reference/`。
-- 提交说明写清动机；团队默认中文简述。
 - 注释解释「为什么」；公开 API 写 `///`；优先避免 `unsafe`。
+
+### 提交说明（Conventional Commits + 中文）
+
+采用简洁的 Conventional Commit 前缀，**后接中文说明**；一次提交只含一个明确主题。
+
+| 前缀 | 用途 | 示例 |
+|---|---|---|
+| `feat:` | 新功能 | `feat: 新增 iced 自定义安装与卸载界面` |
+| `fix:` | 缺陷修复 | `fix: 修复 AppImage 插件自引用符号链接` |
+| `refactor:` | 无行为变化的重构 | `refactor: 抽离壳关联图标注册逻辑` |
+| `docs:` | 仅文档 | `docs: 补充发版标签 vX.Y.Z 说明` |
+| `chore:` | 构建/CI/杂务 | `chore: 调整 Package 工作流触发条件` |
+| `test:` | 仅测试 | `test: 补充 zip-slip 负例` |
+| `perf:` | 性能 | `perf: 降低大文件解压进度回调频率` |
+
+- 正文可另起一行写动机（为什么），避免只罗列文件名。
+- UI 相关提交：说明验证命令与视觉核对范围（例：`cargo run -p oxizip-setup`、安装页按钮是否完整可见）。
+
+### 合并请求（Pull Request）
+
+PR / MR 描述应包含：
+
+1. **用户可见变化**（做了什么、影响谁）
+2. **验证命令**（fmt / clippy / test / 手动跑 GUI 或打包脚本等）
+3. **目标平台**（如 Windows x64、Linux x86_64）
+4. 视觉改动时附**截图或录屏**，并关联相关 issue（有则链接）
 
 ### 发版 / 打标签（必做清单）
 
@@ -135,12 +172,13 @@ oxizip-cli / oxizip-gui
 
 ## 工作方式
 
-1. 改动前确认落在正确 crate，保持边界。
+1. 改动前确认落在正确 crate，保持边界；只改需求所需文件。
 2. 新格式：在 `oxizip-formats` 实现 probe + reader/writer，再在 `oxizip-engine` 注册。
 3. 测试样本放 `samples/`，只使用自造或明确许可的文件。
-4. 优先小步；用户未要求时不 commit/push。
+4. 优先小步；**未获明确授权不** `git add` / `commit` / `push`。
 5. Windows 为主要目标平台；路径与进程调用考虑 Unicode。
 6. 用户要求发版 / 打标签时：先走「发版 / 打标签」清单；标签一律 `vX.Y.Z`（例 `v1.0.1`），再 push。
+7. 用户要求提交时：使用 `feat:` / `fix:` 等前缀 + 中文主题；一次一个主题。
 
 ## 许可入口
 
