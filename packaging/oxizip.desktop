@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name={{name}}
+{{#if comment}}
+Comment={{comment}}
+{{/if}}
+Exec={{exec}} {{exec_arg}}
+Icon={{icon}}
+Terminal=false
+Categories={{categories}}
+MimeType=application/zip;application/x-7z-compressed;application/x-rar-compressed;application/x-tar;application/gzip;application/x-xz;
+Keywords=zip;7z;rar;archive;compress;oxizip;
+StartupNotify=true

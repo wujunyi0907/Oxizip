@@ -1,0 +1,57 @@
+# cargo-packager — https://github.com/crabnebula-dev/cargo-packager
+# Install once: cargo install cargo-packager --locked
+# Prefer scripts/package-windows.ps1 or scripts/package-linux.sh
+
+name = "oxizip"
+product-name = "Oxizip"
+identifier = "app.oxizip.desktop"
+version = "0.1.0"
+description = "Cross-format archive tool (CLI + iced GUI)"
+authors = ["wujunyi0907"]
+license-file = "LICENSE"
+copyright = "Copyright (c) Oxizip contributors"
+category = "Utility"
+out-dir = "dist"
+
+# Override per OS, e.g. --formats nsis  or  --formats deb,appimage
+formats = ["nsis", "deb", "appimage"]
+
+before-packaging-command = "cargo build --release -p oxizip-cli -p oxizip-gui"
+
+[[binaries]]
+path = "oxizip-gui"
+main = true
+
+[[binaries]]
+path = "oxizip"
+main = false
+
+icons = ["crates/oxizip-gui/assets/icons/oxizip.ico"]
+
+resources = [
+  "crates/oxizip-gui/assets/icons",
+  "LICENSE",
+  "README.md",
+]
+
+[nsis]
+install-mode = "both"
+languages = ["SimpChinese", "English"]
+display-language-selector = true
+
+[linux]
+generate-desktop-entry = true
+
+[deb]
+depends = [
+  "libx11-6",
+  "libxcursor1",
+  "libxrandr2",
+  "libxi6",
+  "libxkbcommon0",
+  "fonts-noto-cjk | fonts-wqy-zenhei | fonts-noto-cjk-extra",
+]
+section = "utils"
+priority = "optional"
+package-name = "oxizip"
+desktop-template = "packaging/oxizip.desktop"
