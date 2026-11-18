@@ -4,7 +4,7 @@
 
 ## 项目是什么
 
-Oxizip 是用 Rust **干净室**实现的压缩/解压工具（产品形态参考 Bandizip，**不**复制其代码、资源或专有库）。
+Oxizip 是用 Rust **干净室**实现的压缩/解压工具（不复制第三方专有代码、资源或库）。
 
 已锁定产品决策：
 
@@ -16,7 +16,9 @@ Oxizip 是用 Rust **干净室**实现的压缩/解压工具（产品形态参�
 | WIM | **仅解压**；官方 `wimlib-imagex` CLI；不链接 `libwim` |
 | ZPAQ | 进程内嵌入官方 `third_party/zpaq`（`OXIZIP_EMBEDDED`），不依赖外部 exe |
 | 架构 | **仅 64 位** |
-| 参考目录 | `reference/Bandizip/`、安装器仅作行为参考（已 gitignore），**禁止**纳入构建或拷贝进 `crates/` / `samples/` |
+| 应用 ID | `cn.wujunyi.oxizip`（反向域名：`wujunyi.cn` + 软件名；显示名仍为 Oxizip） |
+| 安装器 | Windows：自研 `oxizip-setup`（iced），见 `scripts/package-windows.ps1`；Linux：系统级 deb/rpm（`/usr`），见 `scripts/package-linux.sh`；禁止嵌入第三方安装器资源 |
+| 参考目录 | `reference/` 仅本地参考（已 gitignore），**禁止**纳入构建或拷贝进 `crates/` / `samples/` |
 
 ## 仓库布局
 
@@ -46,7 +48,7 @@ oxizip-cli / oxizip-gui
 
 ## 必须遵守
 
-1. **干净室**：不嵌入 `ark*.dll`，不复制 Bandizip 皮肤/语言包/图标/授权或广告逻辑。
+1. **干净室**：不嵌入 `ark*.dll`，不复制第三方专有皮肤/语言包/图标/授权或广告逻辑。
 2. **路径安全**：一切解压落地路径必须经 `oxizip-core` 的防穿越校验（zip-slip）；拒绝 `..`、绝对路径、盘符/UNC 逃逸。
 3. **进度与取消**：长时间作业接受 `Progress` + 取消令牌；GUI/CLI 不得阻塞到无法取消；取消后尽快停写盘。
 4. **格式逻辑只住在 formats/engine**：CLI/GUI 不得直接解析压缩格式。
@@ -60,7 +62,7 @@ oxizip-cli / oxizip-gui
 
 - 不要为了“快”把格式解析写进 `oxizip-gui` / `oxizip-cli`
 - 不要 vendoring 并修改 unrar/RAR 源码；不要实现 RAR 压缩比特流
-- 不要从 `reference/Bandizip/` 复制资源到本仓库发布路径
+- 不要从 `reference/` 复制资源到本仓库发布路径
 - 不要引入 WebView 广告、授权服务器校验、应用内文档/图片预览器
 - 不要在未要求时添加无关 markdown / 扩大范围
 - 用户未要求时不 `git commit` / 不 `push`

@@ -1,6 +1,6 @@
 # Oxizip
 
-用 Rust **干净室**实现的跨格式压缩 / 解压工具：共享引擎，提供命令行与桌面界面（产品形态可参考 Bandizip，**不**复制其代码、资源或专有库）。
+用 Rust **干净室**实现的跨格式压缩 / 解压工具：共享引擎，提供命令行与桌面界面。
 
 ## 特性
 
@@ -9,7 +9,7 @@
 - **桌面端**：`iced`；条目通过系统默认程序打开（无应用内预览）；自有图标见 `crates/oxizip-gui/assets/icons`
 - **路径安全**：解压防目录穿越（zip-slip）
 - **进度与取消**：长时间任务可报告进度并支持取消
-- **壳集成**：`oxizip shell install`（Windows 右键菜单 / Linux 桌面动作）
+- **壳集成**：`oxizip-cli shell install`（Windows 右键菜单 / Linux 桌面动作）
 - **架构**：仅 **64 位**
 
 ### 创建（压缩）
@@ -51,9 +51,11 @@ samples/             # 自造测试样本
 cargo fmt
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo run -p oxizip-cli -- --help
-cargo run -p oxizip-gui
+cargo run -p oxizip-cli -- --help          # → oxizip-cli(.exe)
+cargo run -p oxizip-gui                    # → oxizip(.exe)
 ```
+
+二进制命名：**GUI = `oxizip`**，**CLI = `oxizip-cli`**。
 
 CLI 示例：
 
@@ -74,40 +76,43 @@ cargo run -p oxizip-cli -- shell install
 - CLI / GUI 均支持 **简体中文** 与 **English**（`--lang zh-cn|en`；GUI 内可切换）。
 - Windows GUI：默认使用「微软雅黑 UI」；**Release** 构建不弹出控制台窗口。
 - Windows CLI：启动时将控制台代码页设为 UTF-8，避免中文乱码。
-- Linux GUI：依赖系统 CJK 字体（如 `fonts-noto-cjk`）；deb 包会声明该依赖。
+- Linux GUI：依赖系统 CJK 字体（如 `fonts-noto-cjk`）。
 
 ## 打包安装包
 
-一次安装打包工具：
+### Windows（自定义安装器 `Oxizip-Setup-x64.exe`）
 
-```bash
-cargo install cargo-packager --locked
-```
-
-### Windows（NSIS 安装包 `.exe`）
+自研 iced 安装 / 卸载界面（路径选择、许可确认、可选文件关联）：
 
 ```powershell
 .\scripts\package-windows.ps1
-# 或手动：
-cargo build --release -p oxizip-cli -p oxizip-gui
-cargo packager --release --formats nsis --binaries-dir target/release
 ```
 
-产物在 `dist\`（可安装的 `Oxizip_*_x64-setup.exe` 一类文件）。安装后含 `oxizip-gui.exe`、`oxizip.exe` 与 `assets/icons`。
+产物：`dist\Oxizip-Setup-x64.exe`。
 
-### Linux（`.deb` / `.AppImage`，可选 `.rpm`）
+- 默认安装到 `C:\Program Files\Oxizip`（会请求管理员权限）
+- 内嵌 `oxizip.exe`（GUI）与 `oxizip-cli.exe`（CLI）及格式图标
+- 安装完成后可启动程序并引导关联；卸载程序为安装目录下的 `Uninstall.exe`（同一套自定义界面）
+- 请分发 Setup；不要把单独的 `oxizip.exe` 当作安装包
 
-在 Linux 本机或容器中：
+### Linux（系统级 `.deb` / `.rpm` + tar.gz）
+
+在 Linux 本机或容器中（64 位）：
 
 ```bash
 chmod +x scripts/package-linux.sh
 ./scripts/package-linux.sh
 ```
 
-- 默认产出：`dist/*.deb`、`dist/*.AppImage`
-- `.rpm`：若已安装 `alien` 或 `fpm`，脚本会尝试从 deb 再生成 rpm
+产物（装到 `/usr`，由包管理器卸载）：
 
-配置见根目录 [Packager.toml](Packager.toml)。
+| 产物 | 工具 | 安装 / 卸载 |
+|---|---|---|
+| `dist/oxizip_<ver>_<arch>.deb` | `dpkg-deb` | `sudo dpkg -i …` / `sudo apt remove oxizip` |
+| `dist/oxizip-<ver>-1.<arch>.rpm` | `rpmbuild` 或 `fpm` | `sudo rpm -Uvh …` / `sudo rpm -e oxizip` |
+| `dist/oxizip-<ver>-linux-<arch>.tar.gz` | tar | 手动解压 `usr/` 树 |
+
+包内布局：`/usr/bin/oxizip`、`/usr/bin/oxizip-cli`、`/usr/share/applications/oxizip.desktop`、文档与图标（有 ImageMagick 时从 ICO 生成）。缺 `dpkg-deb` / `rpmbuild`/`fpm` 时会跳过对应格式。
 
 ## 运行时外部工具
 
@@ -158,7 +163,7 @@ Oxizip 以 **GNU Affero General Public License v3.0 only（AGPL-3.0-only）** �
 
 ### 不纳入构建
 
-- `reference/Bandizip/`（行为参考，gitignore）
+- `reference/` 下本地参考材料（gitignore，不纳入构建）
 - `third_party/unrar/`、`third_party/wimlib/` 下本地 `*.exe` / SDK（可选，gitignore；不链接 DLL）
 
 ### 发布前清单
@@ -166,4 +171,4 @@ Oxizip 以 **GNU Affero General Public License v3.0 only（AGPL-3.0-only）** �
 1. 附带 `LICENSE`（AGPL-3.0）；网络提供修改版服务时按 AGPL 提供对应完整源码
 2. 保留 `third_party/zpaq/COPYING`
 3. 若捆绑 UnRAR / wimlib：附其官方许可并履行相应义务
-4. 不分发 Bandizip / `ark*.dll` 或未获授权专有库
+4. 不分发 `ark*.dll` 或未获授权专有库
