@@ -6,10 +6,12 @@ members = [
     "crates/oxizip-engine",
     "crates/oxizip-i18n",
     "crates/oxizip-cli",
+    "crates/oxizip-gui",
     "crates/oxizip-sfx-stub",
 ]
 default-members = [
     "crates/oxizip-cli",
+    "crates/oxizip-gui",
     "crates/oxizip-sfx-stub",
 ]
 
