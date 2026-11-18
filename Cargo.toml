@@ -7,11 +7,13 @@ members = [
     "crates/oxizip-i18n",
     "crates/oxizip-cli",
     "crates/oxizip-gui",
+    "crates/oxizip-setup",
     "crates/oxizip-sfx-stub",
 ]
 default-members = [
     "crates/oxizip-cli",
     "crates/oxizip-gui",
+    "crates/oxizip-setup",
     "crates/oxizip-sfx-stub",
 ]
 
@@ -51,3 +53,4 @@ unalz = "0.2"
 unegg = "0.2"
 crc32fast = "1"
 sha2 = "0.10"
+winresource = "0.1"
