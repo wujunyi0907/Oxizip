@@ -110,10 +110,12 @@ chmod +x scripts/package-linux.sh
 
 | Artifact | Tooling | Install / uninstall |
 |---|---|---|
-| `dist/oxizip_<ver>_<arch>.deb` | `dpkg-deb` | `sudo dpkg -i …` / `sudo apt remove oxizip` |
-| `dist/oxizip-<ver>-1.<arch>.rpm` | `rpmbuild` or `fpm` | `sudo rpm -Uvh …` / `sudo rpm -e oxizip` |
+| `dist/Oxizip_<ver>_<arch>.deb` | `dpkg-deb` | `sudo dpkg -i …` / `sudo apt remove oxizip` |
+| `dist/Oxizip-<ver>-1.<arch>.rpm` | `rpmbuild` or `fpm` | `sudo rpm -Uvh …` / `sudo rpm -e oxizip` |
 | `dist/Oxizip-<ver>-<arch>.AppImage` | `linuxdeploy` + `appimagetool` (auto-fetched by default) | `chmod +x` then run; delete the file to remove |
-| `dist/oxizip-<ver>-linux-<arch>.tar.gz` | tar | manually unpack the `usr/` tree |
+| `dist/Oxizip-<ver>-linux-<arch>.tar.gz` | tar | manually unpack the `usr/` tree |
+
+Distributed filenames use a capital `Oxizip` prefix. deb/AppImage/tar/exe have no Release segment; **RPM keeps NEVRA** as `Oxizip-<ver>-1.<arch>.rpm` (`-1` is the Release build iteration). The system package name remains lowercase `oxizip` for `apt`/`rpm`.
 
 Layout: `/usr/bin/oxizip`, `/usr/bin/oxizip-cli`, `/usr/share/applications/oxizip.desktop`, docs and icons (PNG from ICO when ImageMagick is available; **AppImage needs a PNG icon**). Missing tools skip that format. For offline builds set `OXIZIP_FETCH_APPIMAGE_TOOLS=0` and put `appimagetool` / `linuxdeploy` on `PATH`.
 

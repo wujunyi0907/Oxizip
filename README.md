@@ -110,10 +110,12 @@ chmod +x scripts/package-linux.sh
 
 | 产物 | 工具 | 安装 / 卸载 |
 |---|---|---|
-| `dist/oxizip_<ver>_<arch>.deb` | `dpkg-deb` | `sudo dpkg -i …` / `sudo apt remove oxizip` |
-| `dist/oxizip-<ver>-1.<arch>.rpm` | `rpmbuild` 或 `fpm` | `sudo rpm -Uvh …` / `sudo rpm -e oxizip` |
+| `dist/Oxizip_<ver>_<arch>.deb` | `dpkg-deb` | `sudo dpkg -i …` / `sudo apt remove oxizip` |
+| `dist/Oxizip-<ver>-1.<arch>.rpm` | `rpmbuild` 或 `fpm` | `sudo rpm -Uvh …` / `sudo rpm -e oxizip` |
 | `dist/Oxizip-<ver>-<arch>.AppImage` | `linuxdeploy` + `appimagetool`（缺省自动下载） | `chmod +x` 后直接运行；删除文件即卸载 |
-| `dist/oxizip-<ver>-linux-<arch>.tar.gz` | tar | 手动解压 `usr/` 树 |
+| `dist/Oxizip-<ver>-linux-<arch>.tar.gz` | tar | 手动解压 `usr/` 树 |
+
+分发文件名统一 `Oxizip` 首字母大写。deb/AppImage/tar/exe 没有 Release 段；**RPM 按 NEVRA 保留** `Oxizip-<ver>-1.<arch>.rpm`（`-1` 为 Release 构建轮次）。系统包名仍是小写 `oxizip`（`apt`/`rpm` 查询用）。
 
 包内布局：`/usr/bin/oxizip`、`/usr/bin/oxizip-cli`、`/usr/share/applications/oxizip.desktop`、文档与图标（有 ImageMagick 时从 ICO 生成；**AppImage 需要 PNG 图标**）。缺对应工具时会跳过该格式。离线构建可设 `OXIZIP_FETCH_APPIMAGE_TOOLS=0` 并自行把 `appimagetool` / `linuxdeploy` 放进 `PATH`。
 

@@ -1,6 +1,6 @@
 # Build distributable packages (names include Cargo workspace version):
 #   Windows → dist/Oxizip-Setup-<ver>-x64.exe
-#   Linux   → .deb / .rpm / .AppImage (+ tar.gz)
+#   Linux   → Oxizip_*.deb / Oxizip-*.rpm / Oxizip-*.AppImage (+ tar.gz)
 name: Package
 
 on:
@@ -139,8 +139,8 @@ jobs:
           VER="${{ steps.version.outputs.version }}"
           echo "==> dist contents"
           ls -la dist/
-          test -f "dist/oxizip_${VER}_amd64.deb" -o -f "dist/oxizip_${VER}_arm64.deb"
-          test -n "$(find dist -maxdepth 1 -name "oxizip-${VER}-*.rpm" -print -quit)"
+          test -f "dist/Oxizip_${VER}_amd64.deb" -o -f "dist/Oxizip_${VER}_arm64.deb"
+          test -n "$(find dist -maxdepth 1 -name "Oxizip-${VER}-*.rpm" -print -quit)"
           test -n "$(find dist -maxdepth 1 -name "Oxizip-${VER}-*.AppImage" -print -quit)"
 
       - name: Upload Linux artifacts
@@ -197,20 +197,20 @@ jobs:
           }
           # All of these must exist; otherwise do not create a Release.
           require "Windows Setup (.exe)" -name "Oxizip-Setup-${VER}-x64.exe"
-          require "Debian package (.deb)" -name "oxizip_${VER}_*.deb"
-          require "RPM package (.rpm)" -name "oxizip-${VER}-*.rpm"
+          require "Debian package (.deb)" -name "Oxizip_${VER}_*.deb"
+          require "RPM package (.rpm)" -name "Oxizip-${VER}-*.rpm"
           require "AppImage" -name "Oxizip-${VER}-*.AppImage"
-          require "Linux tarball (.tar.gz)" -name "oxizip-${VER}-linux-*.tar.gz"
+          require "Linux tarball (.tar.gz)" -name "Oxizip-${VER}-linux-*.tar.gz"
           if [[ "$missing" -ne 0 ]]; then
             echo "Incomplete artifacts — skipping GitHub Release." >&2
             exit 1
           fi
           {
             echo "setup=$(find release-assets -type f -name "Oxizip-Setup-${VER}-x64.exe" | head -n1)"
-            echo "deb=$(find release-assets -type f -name "oxizip_${VER}_*.deb" | head -n1)"
-            echo "rpm=$(find release-assets -type f -name "oxizip-${VER}-*.rpm" | head -n1)"
+            echo "deb=$(find release-assets -type f -name "Oxizip_${VER}_*.deb" | head -n1)"
+            echo "rpm=$(find release-assets -type f -name "Oxizip-${VER}-*.rpm" | head -n1)"
             echo "appimage=$(find release-assets -type f -name "Oxizip-${VER}-*.AppImage" | head -n1)"
-            echo "tarball=$(find release-assets -type f -name "oxizip-${VER}-linux-*.tar.gz" | head -n1)"
+            echo "tarball=$(find release-assets -type f -name "Oxizip-${VER}-linux-*.tar.gz" | head -n1)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create / update GitHub Release

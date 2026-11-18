@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Build release binaries and produce system packages for Linux:
-#   - dist/oxizip_<ver>_<debarch>.deb   (dpkg-deb; installs under /usr)
-#   - dist/oxizip-<ver>-1.<rpmarch>.rpm (rpmbuild or fpm)
+#   - dist/Oxizip_<ver>_<debarch>.deb   (dpkg-deb; installs under /usr)
+#   - dist/Oxizip-<ver>-1.<rpmarch>.rpm (rpmbuild/fpm; keep RPM NEVRA Release in the filename)
 #   - dist/Oxizip-<ver>-<arch>.AppImage (portable; appimagetool / linuxdeploy)
-#   - dist/oxizip-<ver>-linux-<arch>.tar.gz (same FHS tree, portable)
+#   - dist/Oxizip-<ver>-linux-<arch>.tar.gz (same FHS tree, portable)
 #
 # Prerequisites:
 #   - Rust toolchain, g++, pkg-config, X11/Wayland GUI deps
@@ -112,7 +112,7 @@ install_icons
 mkdir -p "$DIST"
 
 # --- tar.gz (portable FHS tree) ---
-TAR_NAME="oxizip-${VER}-linux-${TAR_ARCH}"
+TAR_NAME="Oxizip-${VER}-linux-${TAR_ARCH}"
 TAR_OUT="$DIST/${TAR_NAME}.tar.gz"
 echo "==> Writing $TAR_OUT"
 tar -C "$PKG_ROOT" -czf "$TAR_OUT" usr
@@ -151,7 +151,7 @@ EOF
   size_kb=$(du -sk "$root" | awk '{print $1}')
   printf 'Installed-Size: %s\n' "$size_kb" >>"$root/DEBIAN/control"
 
-  local deb_out="$DIST/oxizip_${VER}_${DEB_ARCH}.deb"
+  local deb_out="$DIST/Oxizip_${VER}_${DEB_ARCH}.deb"
   echo "==> Building $deb_out"
   dpkg-deb --root-owner-group --build "$root" "$deb_out"
 }
@@ -226,12 +226,14 @@ EOF
     local built
     built=$(find "$RPM_BUILD/RPMS" -name 'oxizip-*.rpm' | head -n1)
     if [[ -n "$built" ]]; then
-      rpm_out="$DIST/$(basename "$built")"
+      # Keep RPM NEVRA: Name-Version-Release.Arch.rpm (Release is required).
+      # Only capitalize the display name prefix for Release assets.
+      rpm_out="$DIST/Oxizip-${VER}-1.${RPM_ARCH}.rpm"
       cp -f "$built" "$rpm_out"
     fi
   elif command -v fpm >/dev/null 2>&1; then
     echo "==> Building .rpm via fpm"
-    rpm_out="$DIST/oxizip-${VER}-1.${RPM_ARCH}.rpm"
+    rpm_out="$DIST/Oxizip-${VER}-1.${RPM_ARCH}.rpm"
     fpm -s dir -t rpm -n oxizip -v "$VER" \
       --iteration 1 \
       --architecture "$RPM_ARCH" \
@@ -401,7 +403,7 @@ EOF
     local ld_rc=$?
     set -e
     if [[ $ld_rc -eq 0 ]]; then
-      built=$(ls -1t Oxizip*.AppImage oxizip*.AppImage 2>/dev/null | head -n1 || true)
+      built=$(ls -1t Oxizip-*.AppImage oxizip-*.AppImage 2>/dev/null | head -n1 || true)
       if [[ -z "$built" ]]; then
         built=$(ls -1t ./*.AppImage 2>/dev/null | head -n1 || true)
       fi
@@ -428,9 +430,9 @@ build_appimage
 
 echo ""
 echo "Done. Artifacts:"
-ls -la "$DIST"/oxizip* "$DIST"/Oxizip*.AppImage 2>/dev/null || ls -la "$DIST" || true
+ls -la "$DIST"/Oxizip* 2>/dev/null || ls -la "$DIST" || true
 echo ""
 echo "Install / uninstall examples:"
-echo "  sudo dpkg -i dist/oxizip_${VER}_${DEB_ARCH}.deb && sudo apt remove oxizip"
-echo "  sudo rpm -Uvh dist/oxizip-*.rpm && sudo rpm -e oxizip"
+echo "  sudo dpkg -i dist/Oxizip_${VER}_${DEB_ARCH}.deb && sudo apt remove oxizip"
+echo "  sudo rpm -Uvh dist/Oxizip-*.rpm && sudo rpm -e oxizip"
 echo "  chmod +x dist/Oxizip-${VER}-${APPIMAGE_ARCH}.AppImage && ./dist/Oxizip-${VER}-${APPIMAGE_ARCH}.AppImage"
