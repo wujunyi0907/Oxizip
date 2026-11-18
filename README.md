@@ -1,5 +1,7 @@
 # Oxizip
 
+[English](README.en.md)
+
 用 Rust **干净室**实现的跨格式压缩 / 解压工具：共享引擎，提供命令行与桌面界面。
 
 ## 特性
@@ -80,7 +82,7 @@ cargo run -p oxizip-cli -- shell install
 
 ## 打包安装包
 
-GitHub Actions：推送 `main`、打 `v*` 标签或手动运行 [Package](.github/workflows/package.yml) 工作流，会产出 Windows Setup 与 Linux deb/rpm/AppImage；`v*` 标签还会挂到 GitHub Release。
+GitHub Actions：打 `v*` 标签或手动运行 [Package](.github/workflows/package.yml) 会产出 Windows Setup 与 Linux deb/rpm/AppImage；`v*` 标签还会挂到 GitHub Release（不在每次推送 `main` 时打包，避免与打标签重复跑两遍）。
 
 ### Windows（自定义安装器 `Oxizip-Setup-<version>-x64.exe`）
 

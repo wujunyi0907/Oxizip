@@ -4,8 +4,8 @@
 name: Package
 
 on:
+  # Only tags + manual. Avoid double runs when pushing main and then tagging the same commit.
   push:
-    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
 
