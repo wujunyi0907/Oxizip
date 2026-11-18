@@ -14,6 +14,8 @@ pub enum ErrorCode {
     InvalidPassword,
     UnrarMissing,
     UnrarFailed,
+    WimlibMissing,
+    WimlibFailed,
     EntryNotFound,
     Other,
 }
@@ -30,6 +32,8 @@ impl ErrorCode {
             Self::InvalidPassword => "invalid_password",
             Self::UnrarMissing => "unrar_missing",
             Self::UnrarFailed => "unrar_failed",
+            Self::WimlibMissing => "wimlib_missing",
+            Self::WimlibFailed => "wimlib_failed",
             Self::EntryNotFound => "entry_not_found",
             Self::Other => "other",
         }
@@ -65,6 +69,12 @@ pub enum CoreError {
     #[error("UnRAR failed: {0}")]
     UnrarFailed(String),
 
+    #[error("wimlib-imagex CLI not found")]
+    WimlibMissing,
+
+    #[error("wimlib failed: {0}")]
+    WimlibFailed(String),
+
     #[error("entry not found: {0}")]
     EntryNotFound(String),
 
@@ -84,6 +94,8 @@ impl CoreError {
             Self::InvalidPassword => ErrorCode::InvalidPassword,
             Self::UnrarMissing => ErrorCode::UnrarMissing,
             Self::UnrarFailed(_) => ErrorCode::UnrarFailed,
+            Self::WimlibMissing => ErrorCode::WimlibMissing,
+            Self::WimlibFailed(_) => ErrorCode::WimlibFailed,
             Self::EntryNotFound(_) => ErrorCode::EntryNotFound,
             Self::Other(_) => ErrorCode::Other,
         }

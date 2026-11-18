@@ -1,4 +1,4 @@
-//! Raw byte-split multi-volume archives (`.001` / `.002` / …), 7-Zip style.
+//! Multi-volume archives: 7-Zip-style `.001` and PKZIP-style `.z01` + `.zip`.
 
 use std::fs::{self, File};
 use std::io::{copy, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
@@ -7,13 +7,21 @@ use std::path::{Path, PathBuf};
 use oxizip_core::{CoreError, CoreResult};
 use tempfile::NamedTempFile;
 
-/// True if `path` looks like a split volume (`.001` or `.7z.001` / `.zip.001`).
+/// True if `path` looks like a split volume (`.001` / `.z01` / `.zip` with siblings).
 pub fn is_volume_path(path: &Path) -> bool {
-    let name = path
-        .file_name()
+    is_numeric_volume_path(path) || is_zip_split_path(path)
+}
+
+fn file_name_lower(path: &Path) -> String {
+    path.file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("")
-        .to_ascii_lowercase();
+        .to_ascii_lowercase()
+}
+
+/// 7-Zip / raw byte split: `.001` … `.999`.
+pub fn is_numeric_volume_path(path: &Path) -> bool {
+    let name = file_name_lower(path);
     if let Some(ext) = name.rsplit('.').next() {
         if ext.len() == 3 && ext.chars().all(|c| c.is_ascii_digit()) {
             let n: u32 = ext.parse().unwrap_or(0);
@@ -23,13 +31,53 @@ pub fn is_volume_path(path: &Path) -> bool {
     false
 }
 
-/// Resolve the first volume path for joining (normalize `.002` → `.001`).
+fn parse_z_ext(ext: &str) -> Option<u32> {
+    let ext = ext.to_ascii_lowercase();
+    if ext.len() == 3 && ext.starts_with('z') {
+        let n: u32 = ext[1..].parse().ok()?;
+        if (1..=99).contains(&n) {
+            return Some(n);
+        }
+    }
+    None
+}
+
+/// PKZIP spanned set: `name.z01`…`name.zNN` + final `name.zip`.
+pub fn is_zip_split_path(path: &Path) -> bool {
+    let name = file_name_lower(path);
+    if let Some((_, ext)) = name.rsplit_once('.') {
+        if parse_z_ext(ext).is_some() {
+            return true;
+        }
+        if ext == "zip" {
+            if let Some(stem) = path.file_stem() {
+                let sibling = path
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .join(format!("{}.z01", stem.to_string_lossy()));
+                return sibling.is_file();
+            }
+        }
+    }
+    false
+}
+
+/// Resolve the first volume path for joining (normalize `.002` → `.001`, `.z02` → `.z01`).
 pub fn first_volume_path(path: &Path) -> PathBuf {
     let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
     if let Some((stem, ext)) = name.rsplit_once('.') {
         if ext.len() == 3 && ext.chars().all(|c| c.is_ascii_digit()) {
-            let parent = path.parent().unwrap_or_else(|| Path::new("."));
             return parent.join(format!("{stem}.001"));
+        }
+        if parse_z_ext(ext).is_some() {
+            return parent.join(format!("{stem}.z01"));
+        }
+        if ext.eq_ignore_ascii_case("zip") {
+            let z01 = parent.join(format!("{stem}.z01"));
+            if z01.is_file() {
+                return z01;
+            }
         }
     }
     path.to_path_buf()
@@ -44,7 +92,7 @@ fn volume_path_for_stem(stem: &Path, index: u32) -> PathBuf {
     parent.join(format!("{name}.{index:03}"))
 }
 
-/// Concatenate `.001`, `.002`, … into a temp file. Keep the returned handle alive while reading.
+/// Concatenate split volumes into a temp file. Keep the returned handle alive while reading.
 pub fn join_volumes(first: &Path) -> CoreResult<NamedTempFile> {
     let first = first_volume_path(first);
     if !first.is_file() {
@@ -53,6 +101,13 @@ pub fn join_volumes(first: &Path) -> CoreResult<NamedTempFile> {
             first.display()
         )));
     }
+    if is_zip_split_path(&first) || file_name_lower(&first).ends_with(".z01") {
+        return join_zip_split_volumes(&first);
+    }
+    join_numeric_volumes(&first)
+}
+
+fn join_numeric_volumes(first: &Path) -> CoreResult<NamedTempFile> {
     let mut out = NamedTempFile::new().map_err(CoreError::Io)?;
     let mut part: u32 = 1;
     loop {
@@ -77,11 +132,57 @@ pub fn join_volumes(first: &Path) -> CoreResult<NamedTempFile> {
         copy(&mut input, out.as_file_mut())?;
         part += 1;
     }
+    finish_joined(&mut out)?;
+    Ok(out)
+}
+
+/// Join `stem.z01`, `stem.z02`, … then final `stem.zip`.
+fn join_zip_split_volumes(first_z01: &Path) -> CoreResult<NamedTempFile> {
+    let parent = first_z01.parent().unwrap_or_else(|| Path::new("."));
+    let name = first_z01.file_name().and_then(|s| s.to_str()).unwrap_or("a.z01");
+    let stem = name
+        .rsplit_once('.')
+        .map(|(s, _)| s)
+        .unwrap_or(name);
+    let mut out = NamedTempFile::new().map_err(CoreError::Io)?;
+    let mut part: u32 = 1;
+    loop {
+        let part_path = parent.join(format!("{stem}.z{part:02}"));
+        if !part_path.is_file() {
+            if part == 1 {
+                return Err(CoreError::Other(format!(
+                    "volume not found: {}",
+                    part_path.display()
+                )));
+            }
+            break;
+        }
+        let mut input = BufReader::new(File::open(&part_path)?);
+        copy(&mut input, out.as_file_mut())?;
+        part += 1;
+    }
+    let zip_last = parent.join(format!("{stem}.zip"));
+    if zip_last.is_file() {
+        let mut input = BufReader::new(File::open(&zip_last)?);
+        copy(&mut input, out.as_file_mut())?;
+    } else if part == 2 {
+        // Only .z01 present and no .zip — still allow (some tools misuse naming).
+    } else {
+        return Err(CoreError::Other(format!(
+            "zip split last volume not found: {}",
+            zip_last.display()
+        )));
+    }
+    finish_joined(&mut out)?;
+    Ok(out)
+}
+
+fn finish_joined(out: &mut NamedTempFile) -> CoreResult<()> {
     out.as_file_mut().flush()?;
     out.as_file_mut()
         .seek(SeekFrom::Start(0))
         .map_err(CoreError::Io)?;
-    Ok(out)
+    Ok(())
 }
 
 /// Split `src` into `dest_stem.001`, `.002`, … of at most `volume_size` bytes.
@@ -158,5 +259,19 @@ mod tests {
         let joined = join_volumes(&parts[0]).unwrap();
         let bytes = fs::read(joined.path()).unwrap();
         assert_eq!(bytes, payload);
+    }
+
+    #[test]
+    fn zip_z01_join_order() {
+        let dir = tempdir().unwrap();
+        let z01 = dir.path().join("pack.z01");
+        let z02 = dir.path().join("pack.z02");
+        let zip = dir.path().join("pack.zip");
+        fs::write(&z01, b"AAA").unwrap();
+        fs::write(&z02, b"BBB").unwrap();
+        fs::write(&zip, b"CCC").unwrap();
+        assert!(is_zip_split_path(&zip));
+        let joined = join_volumes(&zip).unwrap();
+        assert_eq!(fs::read(joined.path()).unwrap(), b"AAABBBCCC");
     }
 }

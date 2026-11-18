@@ -143,6 +143,38 @@ impl ArchiveReader for ZipReader {
         }
         Ok(())
     }
+
+    fn test(
+        &mut self,
+        opts: &ListOptions,
+        progress: &dyn Progress,
+        cancel: &CancellationToken,
+    ) -> CoreResult<()> {
+        cancel.check()?;
+        let mut archive = self.archive()?;
+        let total = archive.len() as u64;
+        let password = opts.password.as_deref().map(str::as_bytes);
+        for i in 0..archive.len() {
+            cancel.check()?;
+            let mut file = open_zip_entry(&mut archive, i, password)?;
+            let name = file.name().to_string();
+            progress.report(ProgressUpdate {
+                stage: JobStage::Test,
+                bytes_done: 0,
+                bytes_total: Some(file.size()),
+                entries_done: (i as u64) + 1,
+                entries_total: Some(total),
+                current_entry: Some(name),
+                message: None,
+            });
+            if file.is_dir() {
+                continue;
+            }
+            // Decompress fully; the zip crate checks CRC on drop/EOF.
+            std::io::copy(&mut file, &mut std::io::sink()).map_err(map_zip_io_err)?;
+        }
+        Ok(())
+    }
 }
 
 fn open_zip_entry<'a>(

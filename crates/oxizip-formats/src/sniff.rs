@@ -54,6 +54,22 @@ fn sniff_magic(header: &[u8]) -> Option<FormatId> {
     if header.starts_with(b"Rar!\x1A\x07\x00") || header.starts_with(b"Rar!\x1A\x07\x01\x00") {
         return Some(FormatId::Rar);
     }
+    // Microsoft Cabinet
+    if header.starts_with(b"MSCF") {
+        return Some(FormatId::Cab);
+    }
+    // Microsoft WIM
+    if header.starts_with(b"MSWIM\0\0") || header.starts_with(b"WLPWM\0\0") {
+        return Some(FormatId::Wim);
+    }
+    // ALZip ALZ
+    if header.starts_with(b"ALZ\x01") {
+        return Some(FormatId::Alz);
+    }
+    // ESTsoft EGG ("EGGA" little-endian = 0x41474745)
+    if header.starts_with(b"EGGA") {
+        return Some(FormatId::Egg);
+    }
     // ustar tar
     if header.len() >= 265 && &header[257..262] == b"ustar" {
         return Some(FormatId::Tar);
@@ -122,6 +138,18 @@ fn sniff_extension(path: &Path) -> Option<FormatId> {
     }
     if name.ends_with(".rar") {
         return Some(FormatId::Rar);
+    }
+    if name.ends_with(".cab") {
+        return Some(FormatId::Cab);
+    }
+    if name.ends_with(".wim") || name.ends_with(".esd") || name.ends_with(".swm") {
+        return Some(FormatId::Wim);
+    }
+    if name.ends_with(".alz") {
+        return Some(FormatId::Alz);
+    }
+    if name.ends_with(".egg") {
+        return Some(FormatId::Egg);
     }
     None
 }

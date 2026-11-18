@@ -6,6 +6,9 @@ pub enum JobStage {
     Extract,
     Create,
     Test,
+    Checksum,
+    Repair,
+    RecoverPassword,
 }
 
 /// Progress payload reported by the engine/formats layer.

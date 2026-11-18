@@ -18,6 +18,9 @@ lzma-rs = { workspace = true }
 sevenz-turbo = { workspace = true }
 walkdir = { workspace = true }
 tempfile = { workspace = true }
+cab = { workspace = true }
+unalz = { workspace = true }
+unegg = { workspace = true }
 
 [build-dependencies]
 cc = "1"

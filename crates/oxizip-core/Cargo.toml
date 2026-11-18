@@ -8,3 +8,5 @@ authors.workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
+crc32fast = { workspace = true }
+sha2 = { workspace = true }

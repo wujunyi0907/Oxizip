@@ -3,16 +3,20 @@
 use std::path::{Path, PathBuf};
 
 use oxizip_formats::{
-    is_volume_path, join_volumes, maybe_split_archive, open_reader, open_writer, sniff_path,
+    is_volume_path, join_volumes, maybe_split_archive, open_reader, open_writer, recover_password,
+    repair_sevenz, repair_zip, sevenz_add_paths, sevenz_delete_entries, sevenz_rename_entry,
+    sniff_path, zip_add_paths, zip_delete_entries, zip_rename_entry,
 };
 use tempfile::NamedTempFile;
 
 pub use oxizip_core::{
-    CancellationToken, CoreError, CoreResult, ErrorCode, FnProgress, JobStage, NullProgress,
-    Progress, ProgressUpdate,
+    checksum_file, checksum_paths, propagate_zone_identifier, CancellationToken, CoreError,
+    CoreResult, ErrorCode, FileChecksum, FnProgress, JobStage, NullProgress, Progress,
+    ProgressUpdate,
 };
 pub use oxizip_formats::{
-    CreateOptions, EntryMeta, ExtractOptions, FormatId, ListOptions, MethodId, ZipCryptoKind,
+    CreateOptions, EntryMeta, ExtractOptions, FormatId, ListOptions, MethodId,
+    RecoverPasswordOptions as PasswordRecoverOptions, ZipCryptoKind,
 };
 
 struct ResolvedArchive {
@@ -68,7 +72,16 @@ pub fn extract(
     let resolved = resolve_archive(path)?;
     let format = sniff_path(&resolved.path)?;
     let mut reader = open_reader(&resolved.path, format)?;
-    reader.extract(opts, progress, cancel)
+    reader.extract(opts, progress, cancel)?;
+    // Mark-of-the-Web: copy the archive's Zone.Identifier onto extracted files
+    // (Windows NTFS ADS). No-op on other platforms / when ADS is absent.
+    let zone_src = if resolved.path != path {
+        path
+    } else {
+        &resolved.path
+    };
+    propagate_zone_identifier(zone_src, &opts.dest_dir)?;
+    Ok(())
 }
 
 pub fn test_archive(
@@ -111,4 +124,111 @@ pub fn create_format_names() -> Vec<&'static str> {
         .iter()
         .map(|f| f.as_str())
         .collect()
+}
+
+fn ensure_editable(path: &Path) -> CoreResult<FormatId> {
+    if is_volume_path(path) {
+        return Err(CoreError::Other(
+            "cannot edit multi-volume archives in-place".into(),
+        ));
+    }
+    let format = sniff_path(path)?;
+    match format {
+        FormatId::Zip | FormatId::Zipx | FormatId::SevenZ => Ok(format),
+        FormatId::ExeSfx => Err(CoreError::Other(
+            "cannot edit self-extracting (.exe) archives".into(),
+        )),
+        _ => Err(CoreError::UnsupportedFormat),
+    }
+}
+
+/// Append files/folders to an existing ZIP/ZIPX/7z archive.
+pub fn add_to_archive(
+    path: &Path,
+    inputs: &[impl AsRef<Path>],
+    opts: &CreateOptions,
+    progress: &dyn Progress,
+    cancel: &CancellationToken,
+) -> CoreResult<()> {
+    cancel.check()?;
+    let format = ensure_editable(path)?;
+    let inputs: Vec<PathBuf> = inputs.iter().map(|p| p.as_ref().to_path_buf()).collect();
+    match format {
+        FormatId::Zip | FormatId::Zipx => zip_add_paths(path, &inputs, opts, progress, cancel),
+        FormatId::SevenZ => sevenz_add_paths(path, &inputs, opts, progress, cancel),
+        _ => Err(CoreError::UnsupportedFormat),
+    }
+}
+
+/// Delete entries from an existing ZIP/ZIPX/7z archive.
+pub fn delete_entries(
+    path: &Path,
+    entries: &[String],
+    password: Option<&str>,
+    progress: &dyn Progress,
+    cancel: &CancellationToken,
+) -> CoreResult<()> {
+    cancel.check()?;
+    let format = ensure_editable(path)?;
+    match format {
+        FormatId::Zip | FormatId::Zipx => {
+            zip_delete_entries(path, entries, password, progress, cancel)
+        }
+        FormatId::SevenZ => sevenz_delete_entries(path, entries, password, progress, cancel),
+        _ => Err(CoreError::UnsupportedFormat),
+    }
+}
+
+/// Rename one entry inside an existing ZIP/ZIPX/7z archive.
+pub fn rename_entry(
+    path: &Path,
+    from: &str,
+    to: &str,
+    password: Option<&str>,
+    progress: &dyn Progress,
+    cancel: &CancellationToken,
+) -> CoreResult<()> {
+    cancel.check()?;
+    let format = ensure_editable(path)?;
+    match format {
+        FormatId::Zip | FormatId::Zipx => {
+            zip_rename_entry(path, from, to, password, progress, cancel)
+        }
+        FormatId::SevenZ => sevenz_rename_entry(path, from, to, password, progress, cancel),
+        _ => Err(CoreError::UnsupportedFormat),
+    }
+}
+
+/// Repair a damaged ZIP or 7z archive into a new output path.
+pub fn repair_archive(
+    path: &Path,
+    dest: Option<&Path>,
+    password: Option<&str>,
+    progress: &dyn Progress,
+    cancel: &CancellationToken,
+) -> CoreResult<PathBuf> {
+    cancel.check()?;
+    let resolved = resolve_archive(path)?;
+    let format = sniff_path(&resolved.path)?;
+    match format {
+        FormatId::Zip | FormatId::Zipx | FormatId::ExeSfx => {
+            repair_zip(&resolved.path, dest, progress, cancel)
+        }
+        FormatId::SevenZ => repair_sevenz(&resolved.path, dest, password, progress, cancel),
+        _ => Err(CoreError::Other(
+            "repair supports ZIP/ZIPX/7z only".into(),
+        )),
+    }
+}
+
+/// Recover a forgotten ZIP/7z password via wordlist and optional short brute force.
+pub fn recover_archive_password(
+    path: &Path,
+    opts: &PasswordRecoverOptions,
+    progress: &dyn Progress,
+    cancel: &CancellationToken,
+) -> CoreResult<String> {
+    cancel.check()?;
+    let resolved = resolve_archive(path)?;
+    recover_password(&resolved.path, opts, progress, cancel)
 }

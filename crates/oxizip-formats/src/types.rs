@@ -22,6 +22,14 @@ pub enum FormatId {
     Bz2,
     Zpaq,
     Rar,
+    /// Microsoft Cabinet (read-only).
+    Cab,
+    /// Microsoft WIM (read-only via wimlib-imagex CLI).
+    Wim,
+    /// ALZip ALZ (read-only).
+    Alz,
+    /// ESTsoft EGG (read-only).
+    Egg,
 }
 
 impl FormatId {
@@ -44,6 +52,10 @@ impl FormatId {
             Self::Bz2 => "bz2",
             Self::Zpaq => "zpaq",
             Self::Rar => "rar",
+            Self::Cab => "cab",
+            Self::Wim => "wim",
+            Self::Alz => "alz",
+            Self::Egg => "egg",
         }
     }
 
