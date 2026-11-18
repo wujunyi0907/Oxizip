@@ -18,6 +18,6 @@ Oxizip **不包含、不修改**任何 RAR/unrar 源码，也不链接 UnRAR DLL
 
 缺失时返回可本地化错误（`UnrarMissing`）。
 
-## 说明
+## 本地放置（可选）
 
-`third_party/UnrarDLL/` 若存在，仅为参考/SDK，**Oxizip 不链接 DLL**。Windows 运行需要的是官方 `UnRAR.exe` CLI。
+可将官方 `UnRAR.exe` 放到 `third_party/unrar/`（该目录与 `*.exe` 默认 gitignore，勿提交二进制）。
