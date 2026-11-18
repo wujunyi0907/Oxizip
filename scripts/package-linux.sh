@@ -280,12 +280,15 @@ ensure_tool() {
   fi
   mkdir -p "$TOOLS_DIR"
   path="$TOOLS_DIR/$name"
-  if [[ -x "$path" ]]; then
+  # Drop broken symlinks left by older script versions.
+  if [[ -L "$path" && ! -e "$path" ]]; then
+    rm -f "$path"
+  fi
+  if [[ -f "$path" && -x "$path" ]]; then
     echo "$path"
     return 0
   fi
   if [[ "$OXIZIP_FETCH_APPIMAGE_TOOLS" != "1" ]]; then
-    echo "" >&2
     return 1
   fi
   echo "    fetching $name ..." >&2
@@ -330,9 +333,15 @@ build_appimage() {
   if [[ -n "$linuxdeploy" ]]; then
     plugin=$(ensure_tool linuxdeploy-plugin-appimage "$plug_url" || true)
     if [[ -n "$plugin" ]]; then
-      # linuxdeploy discovers the plugin by basename in PATH / next to itself.
-      ln -sfn "$(basename "$plugin")" "$(dirname "$plugin")/linuxdeploy-plugin-appimage"
-      export PATH="$(dirname "$plugin"):${PATH:-}"
+      # Discover by PATH name (do NOT symlink the file onto itself).
+      export PATH="${TOOLS_DIR}:${PATH:-}"
+      # Also place a copy next to linuxdeploy when it lives elsewhere.
+      local ld_dir
+      ld_dir=$(dirname "$linuxdeploy")
+      if [[ "$ld_dir" != "$TOOLS_DIR" ]]; then
+        cp -f "$plugin" "$ld_dir/linuxdeploy-plugin-appimage"
+        chmod +x "$ld_dir/linuxdeploy-plugin-appimage"
+      fi
     fi
   fi
 
@@ -374,8 +383,14 @@ EOF
   local out="$DIST/Oxizip-${VER}-${APPIMAGE_ARCH}.AppImage"
   rm -f "$out"
 
+  pack_with_appimagetool() {
+    ARCH="$APPIMAGE_ARCH" "$appimagetool" "$APPDIR" "$out"
+  }
+
+  local built=""
   if [[ -n "$linuxdeploy" && -n "$plugin" ]]; then
     echo "    bundling with linuxdeploy..."
+    set +e
     "$linuxdeploy" \
       --appdir "$APPDIR" \
       --executable "$APPDIR/usr/bin/oxizip" \
@@ -383,23 +398,27 @@ EOF
       --desktop-file "$APPDIR/oxizip.desktop" \
       --icon-file "$APPDIR/oxizip.png" \
       --output appimage
-    # linuxdeploy writes ./*.AppImage in cwd
-    local built
-    built=$(ls -1t Oxizip*.AppImage oxizip*.AppImage 2>/dev/null | head -n1 || true)
-    if [[ -z "$built" ]]; then
-      built=$(ls -1t ./*.AppImage 2>/dev/null | head -n1 || true)
+    local ld_rc=$?
+    set -e
+    if [[ $ld_rc -eq 0 ]]; then
+      built=$(ls -1t Oxizip*.AppImage oxizip*.AppImage 2>/dev/null | head -n1 || true)
+      if [[ -z "$built" ]]; then
+        built=$(ls -1t ./*.AppImage 2>/dev/null | head -n1 || true)
+      fi
+    else
+      echo "    linuxdeploy failed (exit $ld_rc)"
     fi
     if [[ -n "$built" && -f "$built" ]]; then
       mv -f "$built" "$out"
     elif [[ -n "$appimagetool" ]]; then
-      echo "    linuxdeploy did not emit AppImage; falling back to appimagetool"
-      ARCH="$APPIMAGE_ARCH" "$appimagetool" "$APPDIR" "$out"
+      echo "    falling back to appimagetool"
+      pack_with_appimagetool
     else
       echo "    AppImage build failed" >&2
       return 1
     fi
   else
-    ARCH="$APPIMAGE_ARCH" "$appimagetool" "$APPDIR" "$out"
+    pack_with_appimagetool
   fi
 
   chmod +x "$out"
