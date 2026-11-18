@@ -71,7 +71,7 @@ cargo run -p oxizip-cli -- repair damaged.zip -o repaired.zip
 cargo run -p oxizip-cli -- shell install
 ```
 
-Collaboration and coding conventions: [AGENTS.md](AGENTS.md).
+Collaboration and coding conventions: [AGENTS.md](AGENTS.md). Release notes: [CHANGELOG.md](CHANGELOG.md).
 
 ## UI language & fonts
 
@@ -82,7 +82,7 @@ Collaboration and coding conventions: [AGENTS.md](AGENTS.md).
 
 ## Packaging
 
-GitHub Actions: tagging `v*` or manually running [Package](.github/workflows/package.yml) builds the Windows Setup and Linux deb/rpm/AppImage. On a `v*` tag push, a GitHub Release is created **only if Setup, deb, rpm, AppImage, and tar.gz are all present**; any missing artifact fails the job and skips the Release (packaging is not run on every `main` push, to avoid duplicate runs when tagging the same commit).
+GitHub Actions: push a tag in the form **`vX.Y.Z`** (e.g. `v1.0.1` — the leading `v` is required; `Cargo.toml` keeps `1.0.1` without `v`) or run [Package](.github/workflows/package.yml) manually to build Windows Setup and Linux deb/rpm/AppImage. On such a tag, a GitHub Release is created **only if Setup, deb, rpm, AppImage, and tar.gz are all present**; any missing artifact fails the job and skips the Release (packaging is not run on every `main` push). See [AGENTS.md](AGENTS.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ### Windows (custom installer `Oxizip-Setup-<version>-x64.exe`)
 

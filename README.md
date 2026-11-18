@@ -71,7 +71,7 @@ cargo run -p oxizip-cli -- repair damaged.zip -o repaired.zip
 cargo run -p oxizip-cli -- shell install
 ```
 
-协作与编码约定见 [AGENTS.md](AGENTS.md)。
+协作与编码约定见 [AGENTS.md](AGENTS.md)。版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 界面语言与字体
 
@@ -82,7 +82,7 @@ cargo run -p oxizip-cli -- shell install
 
 ## 打包安装包
 
-GitHub Actions：打 `v*` 标签或手动运行 [Package](.github/workflows/package.yml) 会产出 Windows Setup 与 Linux deb/rpm/AppImage。打 `v*` 标签时，**仅当 Setup / deb / rpm / AppImage / tar.gz 全部齐全**才创建 GitHub Release 并上传；缺任一产物则失败且不发 Release（不在每次推送 `main` 时打包，避免与打标签重复跑两遍）。
+GitHub Actions：打 **`vX.Y.Z` 格式标签**（例：`v1.0.1`，必须带 `v` 前缀；`Cargo.toml` 里对应写 `1.0.1`）或手动运行 [Package](.github/workflows/package.yml) 会产出 Windows Setup 与 Linux deb/rpm/AppImage。打标签时，**仅当 Setup / deb / rpm / AppImage / tar.gz 全部齐全**才创建 GitHub Release 并上传；缺任一产物则失败且不发 Release（不在每次推送 `main` 时打包，避免与打标签重复跑两遍）。发版清单见 [AGENTS.md](AGENTS.md)、变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### Windows（自定义安装器 `Oxizip-Setup-<version>-x64.exe`）
 

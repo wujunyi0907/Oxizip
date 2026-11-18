@@ -66,6 +66,7 @@ oxizip-cli / oxizip-gui
 - 不要引入 WebView 广告、授权服务器校验、应用内文档/图片预览器
 - 不要在未要求时添加无关 markdown / 扩大范围
 - 用户未要求时不 `git commit` / 不 `push`
+- 不要在未更新 `Cargo.toml` 版本与 [CHANGELOG.md](CHANGELOG.md) 时打发布标签；发布标签必须是 `vX.Y.Z`（如 `v1.0.1`），禁止只有数字的标签名
 
 ## 编码规范
 
@@ -113,6 +114,25 @@ oxizip-cli / oxizip-gui
 - 提交说明写清动机；团队默认中文简述。
 - 注释解释「为什么」；公开 API 写 `///`；优先避免 `unsafe`。
 
+### 发版 / 打标签（必做清单）
+
+**Git 标签格式（强制）**：必须是小写 **`v` + 语义化版本**，例如 `v1.0.1`、`v0.1.2`。
+
+| 正确 | 错误 |
+|---|---|
+| `v1.0.1` | `1.0.1`（缺 `v` 前缀，CI / Package 不会按发布标签处理） |
+| `v0.2.0` | `V0.2.0`、`ver-0.2.0`、`release-0.2.0` |
+
+`Cargo.toml` 里的 `workspace.package.version` **只写数字**（如 `1.0.1`），**不要**写成 `v1.0.1`；标签名 = `v` + 该版本号。
+
+打标签或触发正式发布前，**不要遗漏**下列项（Agent 与人类均须遵守）：
+
+1. **版本号**：`Cargo.toml` 的 `version = "X.Y.Z"` 与标签 `vX.Y.Z` 对应（例如 toml=`1.0.1` ↔ tag=`v1.0.1`）。CI 会校验；不一致则失败。
+2. **CHANGELOG.md**：把 `[Unreleased]` 中的条目移到新版本节（日期用当天），写清 Added / Changed / Fixed 等；更新文末 compare / tag 链接；不要空着就打标签。
+3. **说明文档**：若安装方式、产物名、外部工具有变，同步 [README.md](README.md) / [README.en.md](README.en.md)。
+4. **提交后再打标签**：上述改动先 commit 并推到 `main`，再例如：`git tag -a v1.0.1 -m "Oxizip 1.0.1"` → `git push origin v1.0.1`（Package 仅匹配 `v*` 标签或手动触发）。
+5. **不要**：打纯数字标签（如 `1.0.1`）；不要在未更新 CHANGELOG / `Cargo.toml` 版本时打标签；不要用与 toml 不符的标签；不要指望只靠 GitHub 自动 Release Notes 代替 CHANGELOG。
+
 ## 工作方式
 
 1. 改动前确认落在正确 crate，保持边界。
@@ -120,6 +140,7 @@ oxizip-cli / oxizip-gui
 3. 测试样本放 `samples/`，只使用自造或明确许可的文件。
 4. 优先小步；用户未要求时不 commit/push。
 5. Windows 为主要目标平台；路径与进程调用考虑 Unicode。
+6. 用户要求发版 / 打标签时：先走「发版 / 打标签」清单；标签一律 `vX.Y.Z`（例 `v1.0.1`），再 push。
 
 ## 许可入口
 
