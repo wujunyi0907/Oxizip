@@ -95,7 +95,7 @@ cargo run -p oxizip-cli -- shell install
 - 安装完成后可启动程序并引导关联；卸载程序为安装目录下的 `Uninstall.exe`（同一套自定义界面）
 - 请分发 Setup；不要把单独的 `oxizip.exe` 当作安装包
 
-### Linux（系统级 `.deb` / `.rpm` + tar.gz）
+### Linux（`.deb` / `.rpm` / AppImage + tar.gz）
 
 在 Linux 本机或容器中（64 位）：
 
@@ -104,15 +104,14 @@ chmod +x scripts/package-linux.sh
 ./scripts/package-linux.sh
 ```
 
-产物（装到 `/usr`，由包管理器卸载）：
-
 | 产物 | 工具 | 安装 / 卸载 |
 |---|---|---|
 | `dist/oxizip_<ver>_<arch>.deb` | `dpkg-deb` | `sudo dpkg -i …` / `sudo apt remove oxizip` |
 | `dist/oxizip-<ver>-1.<arch>.rpm` | `rpmbuild` 或 `fpm` | `sudo rpm -Uvh …` / `sudo rpm -e oxizip` |
+| `dist/Oxizip-<ver>-<arch>.AppImage` | `linuxdeploy` + `appimagetool`（缺省自动下载） | `chmod +x` 后直接运行；删除文件即卸载 |
 | `dist/oxizip-<ver>-linux-<arch>.tar.gz` | tar | 手动解压 `usr/` 树 |
 
-包内布局：`/usr/bin/oxizip`、`/usr/bin/oxizip-cli`、`/usr/share/applications/oxizip.desktop`、文档与图标（有 ImageMagick 时从 ICO 生成）。缺 `dpkg-deb` / `rpmbuild`/`fpm` 时会跳过对应格式。
+包内布局：`/usr/bin/oxizip`、`/usr/bin/oxizip-cli`、`/usr/share/applications/oxizip.desktop`、文档与图标（有 ImageMagick 时从 ICO 生成；**AppImage 需要 PNG 图标**）。缺对应工具时会跳过该格式。离线构建可设 `OXIZIP_FETCH_APPIMAGE_TOOLS=0` 并自行把 `appimagetool` / `linuxdeploy` 放进 `PATH`。
 
 ## 运行时外部工具
 

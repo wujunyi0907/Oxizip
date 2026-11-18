@@ -17,7 +17,7 @@ Oxizip 是用 Rust **干净室**实现的压缩/解压工具（不复制第三�
 | ZPAQ | 进程内嵌入官方 `third_party/zpaq`（`OXIZIP_EMBEDDED`），不依赖外部 exe |
 | 架构 | **仅 64 位** |
 | 应用 ID | `cn.wujunyi.oxizip`（反向域名：`wujunyi.cn` + 软件名；显示名仍为 Oxizip） |
-| 安装器 | Windows：自研 `oxizip-setup`（iced），见 `scripts/package-windows.ps1`；Linux：系统级 deb/rpm（`/usr`），见 `scripts/package-linux.sh`；禁止嵌入第三方安装器资源 |
+| 安装器 | Windows：自研 `oxizip-setup`（iced），见 `scripts/package-windows.ps1`；Linux：deb/rpm（`/usr`）与 AppImage，见 `scripts/package-linux.sh`；禁止嵌入第三方安装器资源 |
 | 参考目录 | `reference/` 仅本地参考（已 gitignore），**禁止**纳入构建或拷贝进 `crates/` / `samples/` |
 
 ## 仓库布局
