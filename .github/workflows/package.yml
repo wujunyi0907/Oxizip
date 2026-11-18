@@ -1,0 +1,185 @@
+# Build distributable packages (names include Cargo workspace version):
+#   Windows → dist/Oxizip-Setup-<ver>-x64.exe
+#   Linux   → .deb / .rpm / .AppImage (+ tar.gz)
+name: Package
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  APPIMAGE_EXTRACT_AND_RUN: "1"
+  OXIZIP_FETCH_APPIMAGE_TOOLS: "1"
+
+jobs:
+  windows:
+    name: Windows Setup.exe
+    runs-on: windows-latest
+    timeout-minutes: 120
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read workspace version
+        id: version
+        shell: pwsh
+        run: |
+          $toml = Get-Content -Raw Cargo.toml
+          if ($toml -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
+            throw "Cannot read version from Cargo.toml"
+          }
+          $ver = $Matches[1]
+          if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -match '^v(.+)$') {
+            $tagVer = $Matches[1]
+            if ($tagVer -ne $ver) {
+              throw "Tag v$tagVer does not match Cargo.toml version $ver"
+            }
+          }
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "version=$ver"
+
+      - name: Install Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: package-windows
+
+      - name: Build installer
+        shell: pwsh
+        env:
+          # Limit parallelism to reduce peak memory on hosted runners.
+          CARGO_BUILD_JOBS: "2"
+        run: |
+          .\scripts\package-windows.ps1
+          $ver = "${{ steps.version.outputs.version }}"
+          $out = "dist\Oxizip-Setup-$ver-x64.exe"
+          if (-not (Test-Path $out)) { throw "missing $out" }
+          Get-Item $out | Format-List Name, Length, LastWriteTime
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oxizip-windows-setup-${{ steps.version.outputs.version }}
+          path: dist/Oxizip-Setup-*-x64.exe
+          if-no-files-found: error
+
+  linux:
+    name: Linux deb / rpm / AppImage
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read workspace version
+        id: version
+        run: |
+          VER=$(grep -E '^version\s*=' Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "version=$VER"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+            TAG_VER="${GITHUB_REF_NAME#v}"
+            if [[ "$TAG_VER" != "$VER" ]]; then
+              echo "Tag ${GITHUB_REF_NAME} does not match Cargo.toml version $VER" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            g++ \
+            pkg-config \
+            curl \
+            ca-certificates \
+            imagemagick \
+            dpkg-dev \
+            rpm \
+            libx11-dev \
+            libxcursor-dev \
+            libxcb1-dev \
+            libxi-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libwayland-dev \
+            wayland-protocols \
+            libegl1-mesa-dev \
+            libgl1-mesa-dev \
+            libfuse2
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: package-linux
+
+      - name: Build packages
+        run: |
+          chmod +x scripts/package-linux.sh
+          ./scripts/package-linux.sh
+          VER="${{ steps.version.outputs.version }}"
+          echo "==> dist contents"
+          ls -la dist/
+          test -f "dist/oxizip_${VER}_amd64.deb" -o -f "dist/oxizip_${VER}_arm64.deb"
+          test -n "$(find dist -maxdepth 1 -name "oxizip-${VER}-*.rpm" -print -quit)"
+          test -n "$(find dist -maxdepth 1 -name "Oxizip-${VER}-*.AppImage" -print -quit)"
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: oxizip-linux-packages-${{ steps.version.outputs.version }}
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Attach to GitHub Release
+    needs: [windows, linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: oxizip-windows-setup-${{ needs.windows.outputs.version }}
+          path: release-assets
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: oxizip-linux-packages-${{ needs.linux.outputs.version }}
+          path: release-assets
+
+      - name: List assets
+        run: ls -la release-assets/
+
+      - name: Create / update release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Oxizip ${{ needs.windows.outputs.version }}
+          files: release-assets/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

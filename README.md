@@ -80,7 +80,9 @@ cargo run -p oxizip-cli -- shell install
 
 ## 打包安装包
 
-### Windows（自定义安装器 `Oxizip-Setup-x64.exe`）
+GitHub Actions：推送 `main`、打 `v*` 标签或手动运行 [Package](.github/workflows/package.yml) 工作流，会产出 Windows Setup 与 Linux deb/rpm/AppImage；`v*` 标签还会挂到 GitHub Release。
+
+### Windows（自定义安装器 `Oxizip-Setup-<version>-x64.exe`）
 
 自研 iced 安装 / 卸载界面（路径选择、许可确认、可选文件关联）：
 
@@ -88,7 +90,7 @@ cargo run -p oxizip-cli -- shell install
 .\scripts\package-windows.ps1
 ```
 
-产物：`dist\Oxizip-Setup-x64.exe`。
+产物：`dist\Oxizip-Setup-<version>-x64.exe`（版本取自根目录 `Cargo.toml` 的 `workspace.package.version`）。
 
 - 默认安装到 `C:\Program Files\Oxizip`（会请求管理员权限）
 - 内嵌 `oxizip.exe`（GUI）与 `oxizip-cli.exe`（CLI）及格式图标
