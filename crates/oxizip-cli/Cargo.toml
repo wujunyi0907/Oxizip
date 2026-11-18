@@ -1,0 +1,19 @@
+[package]
+name = "oxizip-cli"
+description = "Oxizip command-line interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "oxizip"
+path = "src/main.rs"
+
+[dependencies]
+oxizip-core = { workspace = true }
+oxizip-engine = { workspace = true }
+oxizip-i18n = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

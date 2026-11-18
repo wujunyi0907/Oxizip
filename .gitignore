@@ -1,0 +1,27 @@
+# --- Rust / Cargo ---
+/target/
+**/target/
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- 本地环境 ---
+.env
+.env.*
+*.pdb
+
+# --- 本地参考材料（整目录禁止提交）---
+/reference/
+
+# --- third_party：只提交说明与 ZPAQ 源码；不提交 UnRAR/ZPAQ 二进制与 UnrarDLL SDK ---
+/third_party/UnrarDLL/
+/third_party/**/*.exe
+/third_party/**/*.dll
+/third_party/**/*.lib
+/third_party/**/*.pdb

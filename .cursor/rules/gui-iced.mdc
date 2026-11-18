@@ -1,0 +1,13 @@
+---
+description: iced GUI 与系统打开约定
+globs: "crates/oxizip-gui/**"
+alwaysApply: false
+---
+
+# iced GUI
+
+- 只依赖 `oxizip-engine` / `oxizip-i18n` / `oxizip-core`；禁止直接解析压缩格式。
+- 重活放 worker 线程；UI 线程只收进度/结果消息。
+- 禁止应用内预览控件（图片/PDF/文本阅读器等）。
+- 打开条目：受控临时目录解压 → 系统默认程序打开 → 任务或退出时清理。
+- 用户可见字符串全部走 i18n，禁止硬编码大段文案。

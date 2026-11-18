@@ -1,0 +1,21 @@
+---
+description: 干净室与许可红线（禁止复制 Bandizip / 修改 RAR）
+alwaysApply: true
+---
+
+# 干净室与许可
+
+## 禁止
+
+- 嵌入或链接 `ark*.dll` / Bandizip 专有二进制
+- 复制 Bandizip 的皮肤、图标、`.lang`、广告页、授权校验逻辑
+- 将 `reference/Bandizip/` 下文件加入 Cargo 构建或发布产物
+- Vendoring、编译或修改 unrar/RAR 源码；禁止在本仓库实现 RAR 压缩比特流
+
+## 允许
+
+- 参考公开行为与自有逆向笔记，用自研 Rust / 合规 crate 实现 zip/tar/7z 等
+- 通过 `Command` 调用**官方原版** UnRAR，并文档说明缺失时的错误
+- 自造 `samples/` 测试包
+
+涉及格式或资源时，默认选择干净室路径；有疑义先停并说明风险。

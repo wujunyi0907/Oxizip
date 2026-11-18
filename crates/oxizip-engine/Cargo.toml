@@ -1,0 +1,12 @@
+[package]
+name = "oxizip-engine"
+description = "Unified archive facade for Oxizip CLI and GUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+oxizip-core = { workspace = true }
+oxizip-formats = { workspace = true }
+tempfile = { workspace = true }

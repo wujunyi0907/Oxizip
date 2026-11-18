@@ -1,0 +1,22 @@
+---
+description: Rust 风格、错误处理与工具链约定
+globs: "**/*.rs"
+alwaysApply: false
+---
+
+# Rust 约定
+
+- 全 workspace 统一 edition；公共 API 用英文 `///` 文档。
+- 库内禁止无理由 `unwrap`/`expect`；用 `Result` + `thiserror`，保留 `source`。
+- 用户可见错误映射到 i18n key，勿在 GUI 只显示裸调试字符串。
+- 标识符英文 snake_case / UpperCamelCase；用户文案走 `oxizip-i18n`。
+- 改完跑：`cargo fmt`、`cargo clippy --workspace --all-targets -- -D warnings`。
+- 避免无必要 `unsafe`；新增依赖写入 workspace 依赖表并核对许可。
+
+```rust
+// 禁止
+File::open(path).unwrap();
+
+// 提倡
+File::open(path).map_err(EngineError::Io)?
+```

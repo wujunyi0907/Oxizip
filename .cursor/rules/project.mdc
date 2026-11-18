@@ -1,0 +1,14 @@
+---
+description: Oxizip 项目总则（架构、产品锁定决策）
+alwaysApply: true
+---
+
+# Oxizip 项目总则
+
+- 先读根目录 `AGENTS.md` 与 `docs/CODING_STANDARDS.md`。
+- Workspace 依赖方向：`cli/gui → engine → formats → core`；禁止反向依赖。
+- GUI 用 **iced**；不做应用内预览；打开条目走系统默认程序。
+- RAR **仅解压**，只调用官方未修改 UnRAR CLI；禁止自研/修改任何 RAR 代码。
+- `reference/Bandizip/` 与安装器仅供行为参考（gitignore），禁止拷贝进 `crates/` 或 `samples/`。
+- 长时间任务必须支持 Progress + 取消；解压必须防 zip-slip（经 `oxizip-core`）。
+- 用户未要求时不 git commit/push，不主动扩大范围或堆砌文档。

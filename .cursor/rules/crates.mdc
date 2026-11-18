@@ -1,0 +1,19 @@
+---
+description: Crate 边界与新格式接入方式
+globs: "crates/**"
+alwaysApply: false
+---
+
+# Crate 边界
+
+| Crate | 职责 | 不得包含 |
+|---|---|---|
+| `oxizip-core` | Progress/Cancel/Error/路径安全 | 具体格式解析、GUI |
+| `oxizip-formats` | sniff、Reader/Writer、RAR UnRAR 适配 | iced、clap |
+| `oxizip-engine` | 统一 Facade 与格式注册 | UI 控件 |
+| `oxizip-cli` | clap 与退出码 | 格式比特流解析 |
+| `oxizip-gui` | iced 与系统打开 | 格式比特流解析 |
+| `oxizip-i18n` | 文案 | 依赖 engine/formats |
+
+新格式步骤：`formats` 实现 → `engine` 注册 → CLI/GUI 只增加用户入口（若需要）→ `samples/` + 测试。
+RAR 模块仅允许 `std::process::Command` 调官方 UnRAR。

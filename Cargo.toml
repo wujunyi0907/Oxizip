@@ -1,0 +1,44 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/oxizip-core",
+    "crates/oxizip-formats",
+    "crates/oxizip-engine",
+    "crates/oxizip-i18n",
+    "crates/oxizip-cli",
+    "crates/oxizip-sfx-stub",
+]
+default-members = [
+    "crates/oxizip-cli",
+    "crates/oxizip-sfx-stub",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["wujunyi0907"]
+
+[workspace.dependencies]
+oxizip-core = { path = "crates/oxizip-core" }
+oxizip-formats = { path = "crates/oxizip-formats" }
+oxizip-engine = { path = "crates/oxizip-engine" }
+oxizip-i18n = { path = "crates/oxizip-i18n" }
+
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zip = { version = "2", default-features = false, features = ["deflate", "time", "xz", "zstd", "bzip2", "lzma", "aes-crypto"] }
+tar = "0.4"
+flate2 = "1"
+bzip2 = "0.5"
+zstd = "0.13"
+lzma-rs = "0.3"
+# Fork of sevenz-rust2 focused on speed (lzma-turbo). Prefer native-crypto to avoid AWS-LC C deps.
+sevenz-turbo = { version = "0.30", default-features = false, features = ["compress", "util", "aes256", "native-crypto", "bzip2-permissive", "deflate", "zstd", "ppmd"] }
+iced = { version = "0.13", default-features = true, features = ["tokio"] }
+open = "5"
+tempfile = "3"
+walkdir = "2"
+rfd = "0.15"

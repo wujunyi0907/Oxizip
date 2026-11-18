@@ -1,0 +1,25 @@
+[package]
+name = "oxizip-formats"
+description = "Archive format probing and readers/writers for Oxizip"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+oxizip-core = { workspace = true }
+thiserror = { workspace = true }
+zip = { workspace = true }
+tar = { workspace = true }
+flate2 = { workspace = true }
+bzip2 = { workspace = true }
+zstd = { workspace = true }
+lzma-rs = { workspace = true }
+sevenz-turbo = { workspace = true }
+walkdir = { workspace = true }
+tempfile = { workspace = true }
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
