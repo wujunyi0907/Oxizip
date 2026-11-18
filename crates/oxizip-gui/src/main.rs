@@ -1,5 +1,10 @@
 //! Oxizip iced GUI — list / extract / create; open via system default app.
 
+// Release builds: no console window on Windows. Keep console in debug for logs.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod icons;
+mod licenses;
 mod worker;
 
 use std::path::PathBuf;
@@ -7,20 +12,102 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iced::widget::{
-    button, column, container, pick_list, progress_bar, row, scrollable, text, text_input, Column,
-    Space,
+    button, column, container, image, pick_list, progress_bar, row, scrollable, text, text_input,
+    Column, Space,
 };
-use iced::{Element, Length, Subscription, Task};
+use iced::{Element, Length, Size, Subscription, Task};
+use icons::IconSet;
+use licenses::{catalog, ComponentKind};
 use oxizip_engine::{CreateOptions, EntryMeta, FormatId, MethodId};
 use oxizip_i18n::{t, Lang};
 use tempfile::TempDir;
 use worker::{spawn_job, JobKind, JobOutcome, ProgressSlot};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Screen {
+    #[default]
+    Main,
+    Licenses,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LicenseFilter {
+    All,
+    SelfProject,
+    Embedded,
+    ExternalCli,
+}
+
+impl LicenseFilter {
+    fn all() -> &'static [LicenseFilter] {
+        &[
+            Self::All,
+            Self::SelfProject,
+            Self::Embedded,
+            Self::ExternalCli,
+        ]
+    }
+
+    fn matches(self, kind: ComponentKind) -> bool {
+        match self {
+            Self::All => true,
+            Self::SelfProject => kind == ComponentKind::SelfProject,
+            Self::Embedded => kind == ComponentKind::Embedded,
+            Self::ExternalCli => kind == ComponentKind::ExternalCli,
+        }
+    }
+
+    fn label(self, lang: Lang) -> String {
+        match self {
+            Self::All => t(lang, "gui.licenses.filter_all").to_string(),
+            Self::SelfProject => ComponentKind::SelfProject.label(lang).to_string(),
+            Self::Embedded => ComponentKind::Embedded.label(lang).to_string(),
+            Self::ExternalCli => ComponentKind::ExternalCli.label(lang).to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for LicenseFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Fallback English labels for pick_list Display; real UI uses custom text rows.
+        f.write_str(match self {
+            Self::All => "All",
+            Self::SelfProject => "Project",
+            Self::Embedded => "Embedded",
+            Self::ExternalCli => "External CLI",
+        })
+    }
+}
+
 fn main() -> iced::Result {
+    let mut window = iced::window::Settings {
+        size: Size::new(980.0, 640.0),
+        ..Default::default()
+    };
+    window.icon = icons::window_icon();
+
     iced::application(OxizipApp::title, OxizipApp::update, OxizipApp::view)
         .subscription(OxizipApp::subscription)
-        .window_size((980.0, 640.0))
+        .default_font(ui_font())
+        .window(window)
         .run_with(OxizipApp::new)
+}
+
+/// Prefer a system CJK-capable font so zh-CN UI is not tofu boxes.
+fn ui_font() -> iced::Font {
+    #[cfg(windows)]
+    {
+        iced::Font::with_name("Microsoft YaHei UI")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        iced::Font::with_name("PingFang SC")
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // Requires fonts-noto-cjk (or equivalent) on the system.
+        iced::Font::with_name("Noto Sans CJK SC")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,7 +195,10 @@ struct Busy {
 
 struct OxizipApp {
     lang: Lang,
+    screen: Screen,
+    license_filter: LicenseFilter,
     archive: Option<PathBuf>,
+    archive_format: Option<FormatId>,
     entries: Vec<EntryMeta>,
     status: String,
     last_error: Option<String>,
@@ -120,13 +210,17 @@ struct OxizipApp {
     progress_fraction: f32,
     progress_detail: String,
     open_temp: Option<Arc<TempDir>>,
+    icons: IconSet,
 }
 
 impl Default for OxizipApp {
     fn default() -> Self {
         Self {
             lang: Lang::ZhCn,
+            screen: Screen::Main,
+            license_filter: LicenseFilter::All,
             archive: None,
+            archive_format: None,
             entries: Vec::new(),
             status: String::new(),
             last_error: None,
@@ -138,6 +232,7 @@ impl Default for OxizipApp {
             progress_fraction: 0.0,
             progress_detail: String::new(),
             open_temp: None,
+            icons: IconSet::load(),
         }
     }
 }
@@ -146,6 +241,11 @@ impl Default for OxizipApp {
 enum Message {
     OpenClicked,
     ExtractClicked,
+    ExtractHereClicked,
+    ExtractSmartClicked,
+    TestClicked,
+    AddClicked,
+    DeleteEntry(usize),
     CreateClicked,
     CancelClicked,
     FormatSelected(FormatLabel),
@@ -157,8 +257,12 @@ enum Message {
     ExtractDirChosen(Option<PathBuf>),
     CreateInputsChosen(Option<Vec<PathBuf>>),
     CreateOutputChosen(Option<PathBuf>),
+    AddInputsChosen(Option<Vec<PathBuf>>),
     Tick,
     JobFinished(JobOutcome),
+    ShowLicenses,
+    HideLicenses,
+    LicenseFilterSelected(LicenseFilter),
 }
 
 impl OxizipApp {
@@ -212,6 +316,9 @@ impl OxizipApp {
             JobKind::Extract => t(self.lang, "gui.busy.extract"),
             JobKind::Create => t(self.lang, "gui.busy.create"),
             JobKind::OpenEntry => t(self.lang, "gui.busy.open"),
+            JobKind::Test => t(self.lang, "gui.busy.test"),
+            JobKind::Add => t(self.lang, "gui.busy.add"),
+            JobKind::Delete => t(self.lang, "gui.busy.delete"),
         }
         .to_string();
         (cancel, progress)
@@ -243,6 +350,30 @@ impl OxizipApp {
                 }
                 Task::perform(pick_folder(), Message::ExtractDirChosen)
             }
+            Message::ExtractHereClicked => {
+                let Some(archive) = self.archive.clone() else {
+                    self.last_error = Some(t(self.lang, "gui.err.need_archive").into());
+                    return Task::none();
+                };
+                let dest = archive
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| PathBuf::from("."));
+                self.start_extract(dest)
+            }
+            Message::ExtractSmartClicked => self.start_extract_smart(),
+            Message::TestClicked => self.start_test(),
+            Message::AddClicked => {
+                if self.is_busy() {
+                    return Task::none();
+                }
+                if self.archive.is_none() {
+                    self.last_error = Some(t(self.lang, "gui.err.need_archive").into());
+                    return Task::none();
+                }
+                Task::perform(pick_inputs(), Message::AddInputsChosen)
+            }
+            Message::DeleteEntry(index) => self.start_delete(index),
             Message::CreateClicked => {
                 if self.is_busy() {
                     return Task::none();
@@ -293,6 +424,14 @@ impl OxizipApp {
                 self.pending_create_inputs = None;
                 Task::none()
             }
+            Message::AddInputsChosen(Some(inputs)) => {
+                if inputs.is_empty() {
+                    self.last_error = Some(t(self.lang, "gui.err.need_inputs").into());
+                    return Task::none();
+                }
+                self.start_add(inputs)
+            }
+            Message::AddInputsChosen(None) => Task::none(),
             Message::OpenEntry(index) => self.start_open_entry(index),
             Message::Tick => {
                 if let Some(busy) = &self.busy {
@@ -307,6 +446,18 @@ impl OxizipApp {
                 self.progress_fraction = 0.0;
                 self.progress_detail.clear();
                 self.apply_outcome(outcome)
+            }
+            Message::ShowLicenses => {
+                self.screen = Screen::Licenses;
+                Task::none()
+            }
+            Message::HideLicenses => {
+                self.screen = Screen::Main;
+                Task::none()
+            }
+            Message::LicenseFilterSelected(filter) => {
+                self.license_filter = filter;
+                Task::none()
             }
         }
     }
@@ -339,6 +490,103 @@ impl OxizipApp {
             progress,
             move |cancel, progress| {
                 worker::extract_archive(archive, dir, password, cancel, progress, lang)
+            },
+        )
+    }
+
+    fn start_extract_smart(&mut self) -> Task<Message> {
+        if self.is_busy() {
+            return Task::none();
+        }
+        let Some(archive) = self.archive.clone() else {
+            self.last_error = Some(t(self.lang, "gui.err.need_archive").into());
+            return Task::none();
+        };
+        let parent = archive
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let stem = archive
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "archive".into());
+        let tops: std::collections::BTreeSet<&str> = self
+            .entries
+            .iter()
+            .filter_map(|e| {
+                let name = e.name.trim_matches('/');
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(name.split('/').next().unwrap_or(name))
+                }
+            })
+            .collect();
+        let dest = if tops.len() == 1 {
+            parent
+        } else {
+            parent.join(stem)
+        };
+        self.start_extract(dest)
+    }
+
+    fn start_test(&mut self) -> Task<Message> {
+        if self.is_busy() {
+            return Task::none();
+        }
+        let Some(archive) = self.archive.clone() else {
+            self.last_error = Some(t(self.lang, "gui.err.need_archive").into());
+            return Task::none();
+        };
+        let (cancel, progress) = self.begin_busy(JobKind::Test);
+        let password = self.password_opt();
+        let lang = self.lang;
+        spawn_job(JobKind::Test, cancel, progress, move |cancel, progress| {
+            worker::test_archive_job(archive, password, cancel, progress, lang)
+        })
+    }
+
+    fn start_add(&mut self, inputs: Vec<PathBuf>) -> Task<Message> {
+        if self.is_busy() {
+            return Task::none();
+        }
+        let Some(archive) = self.archive.clone() else {
+            return Task::none();
+        };
+        let opts = self.create_options();
+        let (cancel, progress) = self.begin_busy(JobKind::Add);
+        let lang = self.lang;
+        spawn_job(JobKind::Add, cancel, progress, move |cancel, progress| {
+            worker::add_files(archive, inputs, opts, cancel, progress, lang)
+        })
+    }
+
+    fn start_delete(&mut self, index: usize) -> Task<Message> {
+        if self.is_busy() {
+            return Task::none();
+        }
+        let Some(archive) = self.archive.clone() else {
+            return Task::none();
+        };
+        let Some(entry) = self.entries.get(index).cloned() else {
+            return Task::none();
+        };
+        let (cancel, progress) = self.begin_busy(JobKind::Delete);
+        let password = self.password_opt();
+        let lang = self.lang;
+        spawn_job(
+            JobKind::Delete,
+            cancel,
+            progress,
+            move |cancel, progress| {
+                worker::delete_files(
+                    archive,
+                    vec![entry.name],
+                    password,
+                    cancel,
+                    progress,
+                    lang,
+                )
             },
         )
     }
@@ -397,6 +645,7 @@ impl OxizipApp {
                     self.last_error = Some(err);
                     self.status = t(self.lang, "gui.status.ready").into();
                 } else {
+                    self.archive_format = oxizip_engine::detect(&path).ok();
                     self.archive = Some(path.clone());
                     self.entries = entries;
                     self.last_error = None;
@@ -456,6 +705,34 @@ impl OxizipApp {
                 }
                 Task::none()
             }
+            JobOutcome::Tested { path, error } => {
+                if let Some(err) = error {
+                    self.last_error = Some(err);
+                    Task::none()
+                } else {
+                    self.last_error = None;
+                    self.status = format!(
+                        "{} {}",
+                        t(self.lang, "gui.status.tested"),
+                        path.display()
+                    );
+                    Task::none()
+                }
+            }
+            JobOutcome::Edited { path, error } => {
+                if let Some(err) = error {
+                    self.last_error = Some(err);
+                    Task::none()
+                } else {
+                    self.last_error = None;
+                    self.status = format!(
+                        "{} {}",
+                        t(self.lang, "gui.status.edited"),
+                        path.display()
+                    );
+                    self.start_list(path)
+                }
+            }
             JobOutcome::Canceled => {
                 self.status = t(self.lang, "gui.status.canceled").into();
                 Task::none()
@@ -464,6 +741,85 @@ impl OxizipApp {
     }
 
     fn view(&self) -> Element<'_, Message> {
+        match self.screen {
+            Screen::Main => self.view_main(),
+            Screen::Licenses => self.view_licenses(),
+        }
+    }
+
+    fn view_licenses(&self) -> Element<'_, Message> {
+        let filters: Vec<LicenseFilter> = LicenseFilter::all().to_vec();
+
+        let toolbar = row![
+            button(t(self.lang, "gui.licenses.back")).on_press(Message::HideLicenses),
+            Space::with_width(16),
+            text(t(self.lang, "gui.licenses.title")).size(20),
+            Space::with_width(Length::Fill),
+            text(t(self.lang, "gui.licenses.filter")),
+            pick_list(
+                filters,
+                Some(self.license_filter),
+                Message::LicenseFilterSelected,
+            )
+            .width(160),
+            Space::with_width(8),
+            text(self.license_filter.label(self.lang)).size(13),
+        ]
+        .padding(8)
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
+
+        let intro = text(t(self.lang, "gui.licenses.intro")).size(13);
+
+        let header = row![
+            text(t(self.lang, "gui.licenses.col.kind")).width(Length::FillPortion(2)),
+            text(t(self.lang, "gui.licenses.col.name")).width(Length::FillPortion(4)),
+            text(t(self.lang, "gui.licenses.col.license")).width(Length::FillPortion(3)),
+            text(t(self.lang, "gui.licenses.col.purpose")).width(Length::FillPortion(4)),
+            text(t(self.lang, "gui.licenses.col.note")).width(Length::FillPortion(4)),
+        ]
+        .padding([4, 8])
+        .spacing(8);
+
+        let mut list_col = Column::new().spacing(4).padding(4);
+        for item in catalog()
+            .iter()
+            .filter(|c| self.license_filter.matches(c.kind))
+        {
+            list_col = list_col.push(
+                container(
+                    row![
+                        text(item.kind.label(self.lang)).width(Length::FillPortion(2)),
+                        text(item.name).width(Length::FillPortion(4)),
+                        text(item.license).width(Length::FillPortion(3)),
+                        text(item.purpose(self.lang)).width(Length::FillPortion(4)),
+                        text(item.note(self.lang)).width(Length::FillPortion(4)),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
+                )
+                .padding(6),
+            );
+        }
+
+        let body = column![
+            toolbar,
+            container(intro).padding(iced::Padding {
+                top: 0.0,
+                right: 12.0,
+                bottom: 8.0,
+                left: 12.0,
+            }),
+            header,
+            container(scrollable(list_col)).height(Length::Fill),
+            container(text(t(self.lang, "gui.licenses.footer")).size(12)).padding(8),
+        ]
+        .spacing(4);
+
+        container(body).width(Length::Fill).height(Length::Fill).into()
+    }
+
+    fn view_main(&self) -> Element<'_, Message> {
         let formats: Vec<FormatLabel> = FormatId::create_choices()
             .iter()
             .copied()
@@ -489,6 +845,38 @@ impl OxizipApp {
                 b.on_press(Message::ExtractClicked)
             }
         };
+        let extract_here_btn = {
+            let b = button(t(self.lang, "gui.extract_here"));
+            if busy || self.archive.is_none() {
+                b
+            } else {
+                b.on_press(Message::ExtractHereClicked)
+            }
+        };
+        let extract_smart_btn = {
+            let b = button(t(self.lang, "gui.extract_smart"));
+            if busy || self.archive.is_none() {
+                b
+            } else {
+                b.on_press(Message::ExtractSmartClicked)
+            }
+        };
+        let test_btn = {
+            let b = button(t(self.lang, "gui.test"));
+            if busy || self.archive.is_none() {
+                b
+            } else {
+                b.on_press(Message::TestClicked)
+            }
+        };
+        let add_btn = {
+            let b = button(t(self.lang, "gui.add"));
+            if busy || self.archive.is_none() {
+                b
+            } else {
+                b.on_press(Message::AddClicked)
+            }
+        };
         let create_btn = {
             let b = button(t(self.lang, "gui.create"));
             if busy {
@@ -510,6 +898,14 @@ impl OxizipApp {
             open_btn,
             Space::with_width(6),
             extract_btn,
+            Space::with_width(6),
+            extract_here_btn,
+            Space::with_width(6),
+            extract_smart_btn,
+            Space::with_width(6),
+            test_btn,
+            Space::with_width(6),
+            add_btn,
             Space::with_width(6),
             create_btn,
             Space::with_width(6),
@@ -537,6 +933,8 @@ impl OxizipApp {
                 .on_input(Message::PasswordChanged)
                 .width(140),
             Space::with_width(Length::Fill),
+            button(t(self.lang, "gui.licenses")).on_press(Message::ShowLicenses),
+            Space::with_width(8),
             text(t(self.lang, "gui.lang")),
             pick_list(
                 langs,
@@ -550,13 +948,15 @@ impl OxizipApp {
         .align_y(iced::Alignment::Center);
 
         let header = row![
+            Space::with_width(22),
             text(t(self.lang, "gui.col.name")).width(Length::FillPortion(6)),
             text(t(self.lang, "gui.col.size")).width(Length::FillPortion(2)),
             text(t(self.lang, "gui.col.method")).width(Length::FillPortion(2)),
             text(t(self.lang, "gui.col.action")).width(Length::FillPortion(2)),
         ]
         .padding([4, 8])
-        .spacing(8);
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
 
         let mut list_col = Column::new().spacing(2).padding(4);
         for (i, entry) in self.entries.iter().enumerate() {
@@ -564,6 +964,11 @@ impl OxizipApp {
                 format!("[DIR] {}", entry.name)
             } else {
                 entry.name.clone()
+            };
+            let entry_icon = if entry.is_dir {
+                self.icons.oxizip()
+            } else {
+                self.icons.for_path_name(&entry.name)
             };
             let size = entry
                 .uncompressed_size
@@ -578,12 +983,22 @@ impl OxizipApp {
                     b.on_press(Message::OpenEntry(i))
                 }
             };
+            let del_btn = {
+                let b = button(t(self.lang, "gui.delete_entry"));
+                if busy {
+                    b
+                } else {
+                    b.on_press(Message::DeleteEntry(i))
+                }
+            };
             list_col = list_col.push(
                 row![
-                    text(name).width(Length::FillPortion(6)),
+                    image(entry_icon).width(16).height(16),
+                    text(name).width(Length::FillPortion(5)),
                     text(size).width(Length::FillPortion(2)),
                     text(method).width(Length::FillPortion(2)),
-                    open_btn.width(Length::FillPortion(2)),
+                    open_btn.width(Length::FillPortion(1)),
+                    del_btn.width(Length::FillPortion(1)),
                 ]
                 .spacing(8)
                 .align_y(iced::Alignment::Center),
@@ -606,9 +1021,20 @@ impl OxizipApp {
             column![Space::with_height(0)]
         };
 
+        let status_icon = match self.archive_format {
+            Some(fmt) => self.icons.for_format(fmt),
+            None => self.icons.oxizip(),
+        };
+        let status_row = row![
+            image(status_icon).width(20).height(20),
+            text(self.status.clone()).size(15),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
+
         let content = column![
             toolbar,
-            text(self.status.clone()).size(15),
+            status_row,
             err,
             progress_row,
             header,
@@ -646,7 +1072,7 @@ async fn pick_archive() -> Option<PathBuf> {
             "Archives",
             &[
                 "zip", "zipx", "tar", "gz", "tgz", "xz", "zst", "bz2", "7z", "rar", "exe", "lzh",
-                "iso", "zpaq", "001",
+                "iso", "zpaq", "cab", "wim", "esd", "swm", "alz", "egg", "001",
             ],
         )
         .pick_file()

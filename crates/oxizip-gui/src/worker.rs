@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex};
 use iced::futures::channel::oneshot;
 use iced::Task;
 use oxizip_engine::{
-    create, extract, list, CancellationToken, CreateOptions, EntryMeta, ExtractOptions, FormatId,
-    FnProgress, JobStage, ListOptions, ProgressUpdate,
+    add_to_archive, create, delete_entries, extract, list, test_archive, CancellationToken,
+    CreateOptions, EntryMeta, ExtractOptions, FormatId, FnProgress, JobStage, ListOptions,
+    ProgressUpdate,
 };
 use oxizip_i18n::{error_message, t, Lang};
 use tempfile::TempDir;
@@ -20,6 +21,9 @@ pub enum JobKind {
     Extract,
     Create,
     OpenEntry,
+    Test,
+    Add,
+    Delete,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -77,6 +81,9 @@ fn fraction_of(update: &ProgressUpdate) -> f32 {
         JobStage::List => 0.2,
         JobStage::Extract | JobStage::Create => 0.5,
         JobStage::Test => 0.4,
+        JobStage::Checksum => 0.3,
+        JobStage::Repair => 0.45,
+        JobStage::RecoverPassword => 0.35,
     }
 }
 
@@ -99,6 +106,14 @@ pub enum JobOutcome {
     Opened {
         name: String,
         temp: Option<Arc<TempDir>>,
+        error: Option<String>,
+    },
+    Tested {
+        path: PathBuf,
+        error: Option<String>,
+    },
+    Edited {
+        path: PathBuf,
         error: Option<String>,
     },
     Canceled,
@@ -156,6 +171,87 @@ pub fn list_archive(
         Err(err) => JobOutcome::Listed {
             path,
             entries: Vec::new(),
+            error: Some(error_message(lang, &err)),
+        },
+    }
+}
+
+pub fn add_files(
+    archive: PathBuf,
+    inputs: Vec<PathBuf>,
+    opts: CreateOptions,
+    cancel: &CancellationToken,
+    slot: &ProgressSlot,
+    lang: Lang,
+) -> JobOutcome {
+    let progress = FnProgress({
+        let slot = slot.clone();
+        move |u: ProgressUpdate| slot.set_from_update(&u)
+    });
+    match add_to_archive(&archive, &inputs, &opts, &progress, cancel) {
+        Ok(()) => JobOutcome::Edited {
+            path: archive,
+            error: None,
+        },
+        Err(err) if matches!(err, oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Err(err) => JobOutcome::Edited {
+            path: archive,
+            error: Some(error_message(lang, &err)),
+        },
+    }
+}
+
+pub fn delete_files(
+    archive: PathBuf,
+    entries: Vec<String>,
+    password: Option<String>,
+    cancel: &CancellationToken,
+    slot: &ProgressSlot,
+    lang: Lang,
+) -> JobOutcome {
+    let progress = FnProgress({
+        let slot = slot.clone();
+        move |u: ProgressUpdate| slot.set_from_update(&u)
+    });
+    match delete_entries(
+        &archive,
+        &entries,
+        password.as_deref(),
+        &progress,
+        cancel,
+    ) {
+        Ok(()) => JobOutcome::Edited {
+            path: archive,
+            error: None,
+        },
+        Err(err) if matches!(err, oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Err(err) => JobOutcome::Edited {
+            path: archive,
+            error: Some(error_message(lang, &err)),
+        },
+    }
+}
+
+pub fn test_archive_job(
+    path: PathBuf,
+    password: Option<String>,
+    cancel: &CancellationToken,
+    slot: &ProgressSlot,
+    lang: Lang,
+) -> JobOutcome {
+    let progress = FnProgress({
+        let slot = slot.clone();
+        move |u: ProgressUpdate| slot.set_from_update(&u)
+    });
+    let opts = ListOptions { password };
+    match test_archive(&path, &opts, &progress, cancel) {
+        Ok(()) => JobOutcome::Tested {
+            path,
+            error: None,
+        },
+        Err(err) if matches!(err, oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Err(err) => JobOutcome::Tested {
+            path,
             error: Some(error_message(lang, &err)),
         },
     }
