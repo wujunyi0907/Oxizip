@@ -43,7 +43,8 @@ jobs:
               throw "Tag v$tagVer does not match Cargo.toml version $ver"
             }
           }
-          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          # Avoid UTF-8 BOM which breaks GITHUB_OUTPUT / job outputs on Windows.
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version=$ver"
           Write-Host "version=$ver"
 
       - name: Install Rust (MSVC)
@@ -156,8 +157,11 @@ jobs:
   release:
     name: Attach to GitHub Release
     needs: [windows, linux]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Tag pushes only (workflow_dispatch on a branch will build artifacts but skip Release).
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
@@ -171,15 +175,60 @@ jobs:
           name: oxizip-linux-packages-${{ needs.linux.outputs.version }}
           path: release-assets
 
-      - name: List assets
-        run: ls -la release-assets/
+      - name: Require every package artifact
+        id: assets
+        env:
+          VER: ${{ needs.windows.outputs.version }}
+        run: |
+          set -euo pipefail
+          ls -laR release-assets/
+          missing=0
+          require() {
+            local label=$1
+            shift
+            local found
+            found=$(find release-assets -type f \( "$@" \) | head -n1 || true)
+            if [[ -z "$found" ]]; then
+              echo "MISSING: $label" >&2
+              missing=1
+            else
+              echo "OK: $label -> $found"
+            fi
+          }
+          # All of these must exist; otherwise do not create a Release.
+          require "Windows Setup (.exe)" -name "Oxizip-Setup-${VER}-x64.exe"
+          require "Debian package (.deb)" -name "oxizip_${VER}_*.deb"
+          require "RPM package (.rpm)" -name "oxizip-${VER}-*.rpm"
+          require "AppImage" -name "Oxizip-${VER}-*.AppImage"
+          require "Linux tarball (.tar.gz)" -name "oxizip-${VER}-linux-*.tar.gz"
+          if [[ "$missing" -ne 0 ]]; then
+            echo "Incomplete artifacts — skipping GitHub Release." >&2
+            exit 1
+          fi
+          {
+            echo "setup=$(find release-assets -type f -name "Oxizip-Setup-${VER}-x64.exe" | head -n1)"
+            echo "deb=$(find release-assets -type f -name "oxizip_${VER}_*.deb" | head -n1)"
+            echo "rpm=$(find release-assets -type f -name "oxizip-${VER}-*.rpm" | head -n1)"
+            echo "appimage=$(find release-assets -type f -name "Oxizip-${VER}-*.AppImage" | head -n1)"
+            echo "tarball=$(find release-assets -type f -name "oxizip-${VER}-linux-*.tar.gz" | head -n1)"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Create / update release
+      - name: Create / update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: Oxizip ${{ needs.windows.outputs.version }}
-          files: release-assets/*
+          tag_name: ${{ github.ref_name }}
+          name: Oxizip ${{ needs.windows.outputs.version || github.ref_name }}
+          draft: false
+          prerelease: false
+          make_latest: true
           generate_release_notes: true
           fail_on_unmatched_files: true
+          # Explicit paths only — never publish a partial set.
+          files: |
+            ${{ steps.assets.outputs.setup }}
+            ${{ steps.assets.outputs.deb }}
+            ${{ steps.assets.outputs.rpm }}
+            ${{ steps.assets.outputs.appimage }}
+            ${{ steps.assets.outputs.tarball }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

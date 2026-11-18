@@ -82,7 +82,7 @@ cargo run -p oxizip-cli -- shell install
 
 ## 打包安装包
 
-GitHub Actions：打 `v*` 标签或手动运行 [Package](.github/workflows/package.yml) 会产出 Windows Setup 与 Linux deb/rpm/AppImage；`v*` 标签还会挂到 GitHub Release（不在每次推送 `main` 时打包，避免与打标签重复跑两遍）。
+GitHub Actions：打 `v*` 标签或手动运行 [Package](.github/workflows/package.yml) 会产出 Windows Setup 与 Linux deb/rpm/AppImage。打 `v*` 标签时，**仅当 Setup / deb / rpm / AppImage / tar.gz 全部齐全**才创建 GitHub Release 并上传；缺任一产物则失败且不发 Release（不在每次推送 `main` 时打包，避免与打标签重复跑两遍）。
 
 ### Windows（自定义安装器 `Oxizip-Setup-<version>-x64.exe`）
 

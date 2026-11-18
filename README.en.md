@@ -82,7 +82,7 @@ Collaboration and coding conventions: [AGENTS.md](AGENTS.md).
 
 ## Packaging
 
-GitHub Actions: tagging `v*` or manually running [Package](.github/workflows/package.yml) builds the Windows Setup and Linux deb/rpm/AppImage; `v*` tags also attach assets to a GitHub Release (packaging is not run on every `main` push, to avoid duplicate runs when tagging the same commit).
+GitHub Actions: tagging `v*` or manually running [Package](.github/workflows/package.yml) builds the Windows Setup and Linux deb/rpm/AppImage. On a `v*` tag push, a GitHub Release is created **only if Setup, deb, rpm, AppImage, and tar.gz are all present**; any missing artifact fails the job and skips the Release (packaging is not run on every `main` push, to avoid duplicate runs when tagging the same commit).
 
 ### Windows (custom installer `Oxizip-Setup-<version>-x64.exe`)
 
