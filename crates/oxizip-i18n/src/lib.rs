@@ -162,6 +162,28 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
             "Transitive crates are not fully listed; bundling UnRAR/wimlib requires their terms."
         },
 
+        (Lang::ZhCn, "shell.open_with_oxizip") => "用 Oxizip 打开",
+        (Lang::En, "shell.open_with_oxizip") => "Open with Oxizip",
+        (Lang::ZhCn, "gui.setup.title") => "完成安装设置",
+        (Lang::En, "gui.setup.title") => "Finish setup",
+        (Lang::ZhCn, "gui.setup.intro") => {
+            "是否将常见压缩格式关联到 Oxizip，并安装右键菜单？（可稍后在设置中再次操作）"
+        }
+        (Lang::En, "gui.setup.intro") => {
+            "Associate common archive formats with Oxizip and install context menus? You can change this later."
+        }
+        (Lang::ZhCn, "gui.setup.associate") => "关联文件格式并安装右键菜单",
+        (Lang::En, "gui.setup.associate") => "Associate formats and install context menus",
+        (Lang::ZhCn, "gui.setup.continue") => "开始使用",
+        (Lang::En, "gui.setup.continue") => "Get started",
+        (Lang::ZhCn, "gui.setup.skip") => "暂时跳过",
+        (Lang::En, "gui.setup.skip") => "Skip for now",
+        (Lang::ZhCn, "gui.setup.ok") => "已完成文件关联",
+        (Lang::En, "gui.setup.ok") => "File associations installed",
+        (Lang::ZhCn, "gui.setup.failed") => "文件关联失败",
+        (Lang::En, "gui.setup.failed") => "Failed to install associations",
+        (Lang::ZhCn, "gui.setup.menu") => "文件关联…",
+        (Lang::En, "gui.setup.menu") => "Associations…",
         (Lang::ZhCn, "shell.extract_here") => "Oxizip 解压到此处",
         (Lang::En, "shell.extract_here") => "Oxizip Extract Here",
         (Lang::ZhCn, "shell.extract_smart") => "Oxizip 智能解压",

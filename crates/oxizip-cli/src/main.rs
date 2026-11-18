@@ -29,7 +29,7 @@ mod exit {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "oxizip", version, about = "Oxizip archive tool")]
+#[command(name = "oxizip-cli", version, about = "Oxizip archive tool")]
 struct Cli {
     /// Increase log verbosity
     #[arg(short, long, action = clap::ArgAction::Count)]

@@ -19,6 +19,23 @@ pub fn current_oxizip() -> Result<PathBuf, String> {
     std::env::current_exe().map_err(|e| e.to_string())
 }
 
+/// Locate GUI `oxizip` next to the CLI binary (same install directory).
+pub fn current_oxizip_gui() -> Result<PathBuf, String> {
+    let cli = current_oxizip()?;
+    let dir = cli
+        .parent()
+        .ok_or_else(|| "oxizip-cli has no parent directory".to_string())?;
+    #[cfg(windows)]
+    let gui = dir.join("oxizip.exe");
+    #[cfg(not(windows))]
+    let gui = dir.join("oxizip");
+    if gui.is_file() {
+        Ok(gui)
+    } else {
+        Err(format!("oxizip (GUI) not found beside {}", cli.display()))
+    }
+}
+
 pub fn run(action: ShellAction, lang: Lang) -> ExitCode {
     match action {
         ShellAction::Install => install(lang),
@@ -115,10 +132,11 @@ fn platform_status(_lang: Lang) -> Result<String, String> {
     Ok("macOS: shell menus not registered (unsupported in this build)".into())
 }
 
-/// Archive extensions registered for context actions.
+/// Archive extensions registered for context actions / default open / icons.
+/// Note: `.exe` is intentionally excluded — never hijack executable icons or Open.
 pub fn archive_extensions() -> &'static [&'static str] {
     &[
         "zip", "zipx", "7z", "rar", "tar", "tgz", "gz", "xz", "zst", "bz2", "lzh", "lha", "iso",
-        "zpaq", "cab", "wim", "esd", "swm", "alz", "egg", "exe", "001",
+        "zpaq", "cab", "wim", "esd", "swm", "alz", "egg", "001",
     ]
 }

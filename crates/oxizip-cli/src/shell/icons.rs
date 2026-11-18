@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 /// Icon file stem for a registered archive extension (without `.ico`).
 pub fn icon_stem_for_ext(ext: &str) -> &'static str {
     match ext {
-        "zip" | "jar" | "exe" => "zip",
+        "zip" | "jar" => "zip",
         "zipx" => "zipx",
         "7z" => "7z",
         "rar" => "rar",
@@ -52,11 +52,12 @@ const ICON_FILES: &[&str] = &[
     "egg.ico",
 ];
 
-/// Ensure icons live next to the oxizip binary and return that directory.
+/// Ensure icons live next to the binary and return that directory.
+/// Always refreshes from the best available source so format icons stay in sync.
 pub fn ensure_icons_dir(exe: &Path) -> Result<PathBuf, String> {
     let dest = exe
         .parent()
-        .ok_or_else(|| "oxizip has no parent directory".to_string())?
+        .ok_or_else(|| "oxizip-cli has no parent directory".to_string())?
         .join("assets")
         .join("icons");
     fs::create_dir_all(&dest).map_err(|e| format!("create icons dir {}: {e}", dest.display()))?;
@@ -64,16 +65,16 @@ pub fn ensure_icons_dir(exe: &Path) -> Result<PathBuf, String> {
     let src = find_source_icons_dir(exe);
     for name in ICON_FILES {
         let target = dest.join(name);
-        if target.is_file() {
-            continue;
-        }
         if let Some(ref src_dir) = src {
             let from = src_dir.join(name);
             if from.is_file() {
-                fs::copy(&from, &target)
-                    .map_err(|e| format!("copy {} -> {}: {e}", from.display(), target.display()))?;
+                // Refresh even if present (installer / GUI assets may update).
+                let _ = fs::copy(&from, &target);
+                continue;
             }
         }
+        // Keep existing target if source missing.
+        let _ = target;
     }
 
     if !dest.join("oxizip.ico").is_file() {
@@ -87,14 +88,37 @@ pub fn ensure_icons_dir(exe: &Path) -> Result<PathBuf, String> {
 }
 
 /// Absolute path to the ico used for `ext`, falling back to `oxizip.ico`.
+/// Never returns a `\\?\` path — Explorer DefaultIcon rejects that prefix.
 pub fn icon_path_for_ext(icons_dir: &Path, ext: &str) -> PathBuf {
     let stem = icon_stem_for_ext(ext);
     let preferred = icons_dir.join(format!("{stem}.ico"));
-    if preferred.is_file() {
+    let path = if preferred.is_file() {
         preferred
     } else {
         icons_dir.join("oxizip.ico")
-    }
+    };
+    normalize_shell_path(&path)
+}
+
+/// Format for registry DefaultIcon / Icon values: `"C:\path\file.ico",0`
+pub fn icon_registry_value(icon: &Path) -> String {
+    let path = normalize_shell_path(icon);
+    format!("\"{}\",0", path.display())
+}
+
+fn normalize_shell_path(path: &Path) -> PathBuf {
+    let raw = match path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => path.to_path_buf(),
+    };
+    let s = raw.to_string_lossy();
+    // Strip Windows extended-length prefix which breaks shell icon lookup.
+    let trimmed = s
+        .strip_prefix(r"\\?\UNC\")
+        .map(|rest| format!(r"\\{rest}"))
+        .or_else(|| s.strip_prefix(r"\\?\").map(|rest| rest.to_string()))
+        .unwrap_or_else(|| s.into_owned());
+    PathBuf::from(trimmed)
 }
 
 fn find_source_icons_dir(exe: &Path) -> Option<PathBuf> {
@@ -103,7 +127,6 @@ fn find_source_icons_dir(exe: &Path) -> Option<PathBuf> {
     if let Some(dir) = exe.parent() {
         candidates.push(dir.join("assets").join("icons"));
         candidates.push(dir.join("icons"));
-        // cargo run: target/{debug,release}/oxizip.exe → walk up to workspace
         for ancestor in dir.ancestors().take(8) {
             candidates.push(
                 ancestor

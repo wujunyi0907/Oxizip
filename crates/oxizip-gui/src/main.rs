@@ -5,6 +5,7 @@
 
 mod icons;
 mod licenses;
+mod setup;
 mod worker;
 
 use std::path::PathBuf;
@@ -27,6 +28,7 @@ use worker::{spawn_job, JobKind, JobOutcome, ProgressSlot};
 enum Screen {
     #[default]
     Main,
+    Setup,
     Licenses,
 }
 
@@ -211,6 +213,8 @@ struct OxizipApp {
     progress_detail: String,
     open_temp: Option<Arc<TempDir>>,
     icons: IconSet,
+    setup_associate: bool,
+    pending_open: Option<PathBuf>,
 }
 
 impl Default for OxizipApp {
@@ -233,6 +237,8 @@ impl Default for OxizipApp {
             progress_detail: String::new(),
             open_temp: None,
             icons: IconSet::load(),
+            setup_associate: true,
+            pending_open: None,
         }
     }
 }
@@ -263,17 +269,61 @@ enum Message {
     ShowLicenses,
     HideLicenses,
     LicenseFilterSelected(LicenseFilter),
+    ShowSetup,
+    SetupAssociateToggled(bool),
+    SetupConfirm,
+    SetupSkip,
 }
 
 impl OxizipApp {
     fn new() -> (Self, Task<Message>) {
-        (
-            Self {
-                status: t(Lang::ZhCn, "gui.placeholder").to_string(),
-                ..Self::default()
-            },
-            Task::none(),
-        )
+        let (force_setup, pending_open) = setup::parse_launch_args();
+        let screen = if setup::needs_first_run_setup(force_setup) {
+            Screen::Setup
+        } else {
+            Screen::Main
+        };
+        let mut app = Self {
+            status: t(Lang::ZhCn, "gui.placeholder").to_string(),
+            screen,
+            pending_open,
+            ..Self::default()
+        };
+        let task = if app.screen == Screen::Main {
+            app.take_pending_open_task()
+        } else {
+            Task::none()
+        };
+        (app, task)
+    }
+
+    fn take_pending_open_task(&mut self) -> Task<Message> {
+        if let Some(path) = self.pending_open.take() {
+            self.start_list(path)
+        } else {
+            Task::none()
+        }
+    }
+
+    fn finish_setup(&mut self, associate: bool) -> Task<Message> {
+        if associate {
+            let lang_arg = match self.lang {
+                Lang::ZhCn => "zh-cn",
+                Lang::En => "en",
+            };
+            match setup::install_associations(lang_arg) {
+                Ok(msg) => {
+                    self.status = format!("{} — {msg}", t(self.lang, "gui.setup.ok"));
+                    self.last_error = None;
+                }
+                Err(e) => {
+                    self.last_error = Some(format!("{}: {e}", t(self.lang, "gui.setup.failed")));
+                }
+            }
+        }
+        setup::mark_setup_done();
+        self.screen = Screen::Main;
+        self.take_pending_open_task()
     }
 
     fn title(&self) -> String {
@@ -455,6 +505,17 @@ impl OxizipApp {
                 self.screen = Screen::Main;
                 Task::none()
             }
+            Message::ShowSetup => {
+                self.screen = Screen::Setup;
+                self.setup_associate = true;
+                Task::none()
+            }
+            Message::SetupAssociateToggled(v) => {
+                self.setup_associate = v;
+                Task::none()
+            }
+            Message::SetupConfirm => self.finish_setup(self.setup_associate),
+            Message::SetupSkip => self.finish_setup(false),
             Message::LicenseFilterSelected(filter) => {
                 self.license_filter = filter;
                 Task::none()
@@ -743,8 +804,40 @@ impl OxizipApp {
     fn view(&self) -> Element<'_, Message> {
         match self.screen {
             Screen::Main => self.view_main(),
+            Screen::Setup => self.view_setup(),
             Screen::Licenses => self.view_licenses(),
         }
+    }
+
+    fn view_setup(&self) -> Element<'_, Message> {
+        let associate_label = if self.setup_associate {
+            format!("[x] {}", t(self.lang, "gui.setup.associate"))
+        } else {
+            format!("[ ] {}", t(self.lang, "gui.setup.associate"))
+        };
+        let body = column![
+            image(self.icons.oxizip()).width(64).height(64),
+            text(t(self.lang, "gui.setup.title")).size(24),
+            text(t(self.lang, "gui.setup.intro")).size(15),
+            button(text(associate_label))
+                .on_press(Message::SetupAssociateToggled(!self.setup_associate)),
+            row![
+                button(t(self.lang, "gui.setup.continue")).on_press(Message::SetupConfirm),
+                Space::with_width(12),
+                button(t(self.lang, "gui.setup.skip")).on_press(Message::SetupSkip),
+            ]
+            .spacing(8),
+        ]
+        .spacing(16)
+        .padding(32)
+        .align_x(iced::Alignment::Center);
+
+        container(body)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .into()
     }
 
     fn view_licenses(&self) -> Element<'_, Message> {
@@ -933,6 +1026,8 @@ impl OxizipApp {
                 .on_input(Message::PasswordChanged)
                 .width(140),
             Space::with_width(Length::Fill),
+            button(t(self.lang, "gui.setup.menu")).on_press(Message::ShowSetup),
+            Space::with_width(8),
             button(t(self.lang, "gui.licenses")).on_press(Message::ShowLicenses),
             Space::with_width(8),
             text(t(self.lang, "gui.lang")),

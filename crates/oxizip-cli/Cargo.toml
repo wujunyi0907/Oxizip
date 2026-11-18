@@ -7,7 +7,7 @@ license.workspace = true
 authors.workspace = true
 
 [[bin]]
-name = "oxizip"
+name = "oxizip-cli"
 path = "src/main.rs"
 
 [dependencies]
@@ -21,3 +21,6 @@ open = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }
+
+[build-dependencies]
+winresource = { workspace = true }
