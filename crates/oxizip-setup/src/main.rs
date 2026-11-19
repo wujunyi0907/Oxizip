@@ -59,6 +59,7 @@ fn run_installer_ui(
     window_pos: Option<(f32, f32)>,
 ) -> iced::Result {
     // Request UAC first; only the elevated process shows the install UI and writes files.
+    // If the user cancels or elevation fails, exit — do not show an unelevated installer.
     #[cfg(windows)]
     {
         if !is_elevated() {
@@ -70,8 +71,8 @@ fn run_installer_ui(
             match relaunch_elevated(&args) {
                 Ok(()) => std::process::exit(0),
                 Err(e) => {
-                    // Fall through to UI so the user still sees an error path / retry on Install.
                     eprintln!("UAC elevation failed: {e}");
+                    std::process::exit(1);
                 }
             }
         }

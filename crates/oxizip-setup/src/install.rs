@@ -245,7 +245,10 @@ pub fn relaunch_elevated(extra_args: &[String]) -> InstallResult<()> {
             1,
         )
     };
-    if rc <= 32 {
+    // ShellExecute errors are normally <= 32. UAC "No"/cancel often returns
+    // ERROR_CANCELLED (1223), which is > 32 and must not be treated as success.
+    const ERROR_CANCELLED: isize = 1223;
+    if rc <= 32 || rc == ERROR_CANCELLED {
         return Err(InstallError::Msg(format!(
             "UAC elevation failed (ShellExecute={rc})"
         )));
