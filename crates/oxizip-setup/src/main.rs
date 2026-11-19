@@ -62,6 +62,25 @@ fn run_installer_ui(
     auto_install: Option<InstallOptions>,
     window_pos: Option<(f32, f32)>,
 ) -> iced::Result {
+    // Request UAC first; only the elevated process shows the install UI and writes files.
+    #[cfg(windows)]
+    {
+        if !is_elevated() {
+            let mut args = Vec::new();
+            if let Some(ref opts) = auto_install {
+                args = encode_install_args(opts);
+            }
+            append_window_pos(&mut args, window_pos);
+            match relaunch_elevated(&args) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    // Fall through to UI so the user still sees an error path / retry on Install.
+                    eprintln!("UAC elevation failed: {e}");
+                }
+            }
+        }
+    }
+
     iced::application(SetupApp::title, SetupApp::update, SetupApp::view)
         .subscription(SetupApp::subscription)
         .window(undecorated_window(Size::new(600.0, 440.0), window_pos))
