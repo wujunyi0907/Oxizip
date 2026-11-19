@@ -87,10 +87,8 @@ mod tests {
 
     #[test]
     fn roundtrip_zone_ads() {
-        let path = std::env::temp_dir().join(format!(
-            "oxizip-zone-test-{}.bin",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("oxizip-zone-test-{}.bin", std::process::id()));
         {
             let mut f = std::fs::File::create(&path).unwrap();
             f.write_all(b"x").unwrap();

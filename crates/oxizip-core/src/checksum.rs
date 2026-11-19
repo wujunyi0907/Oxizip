@@ -47,7 +47,9 @@ pub fn checksum_file(
     cancel.check()?;
     let meta = std::fs::metadata(path)?;
     if meta.is_dir() {
-        return Err(CoreError::Other("checksum requires a file, not a directory".into()));
+        return Err(CoreError::Other(
+            "checksum requires a file, not a directory".into(),
+        ));
     }
     let size = meta.len();
     let mut file = File::open(path)?;
@@ -127,10 +129,8 @@ mod tests {
 
     #[test]
     fn checksum_known_bytes() {
-        let path = std::env::temp_dir().join(format!(
-            "oxizip-checksum-test-{}.txt",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("oxizip-checksum-test-{}.txt", std::process::id()));
         {
             let mut f = File::create(&path).unwrap();
             f.write_all(b"hello").unwrap();
