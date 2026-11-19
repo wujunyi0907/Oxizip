@@ -9,11 +9,7 @@ use oxizip_engine::FormatId;
 
 macro_rules! ico {
     ($file:literal) => {
-        include_bytes!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/icons/",
-            $file
-        ))
+        include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/icons/", $file))
     };
 }
 
@@ -28,6 +24,8 @@ pub fn window_icon() -> Option<window::Icon> {
 pub struct IconSet {
     by_key: HashMap<&'static str, iced_image::Handle>,
     fallback: iced_image::Handle,
+    home_open: iced_image::Handle,
+    home_create: iced_image::Handle,
 }
 
 impl IconSet {
@@ -64,7 +62,31 @@ impl IconSet {
                 by_key.insert(*key, h);
             }
         }
-        Self { by_key, fallback }
+        let home_open = handle_from_png(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/home/open.png"
+        )))
+        .unwrap_or_else(|| fallback.clone());
+        let home_create = handle_from_png(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/home/create.png"
+        )))
+        .unwrap_or_else(|| fallback.clone());
+
+        Self {
+            by_key,
+            fallback,
+            home_open,
+            home_create,
+        }
+    }
+
+    pub fn home_open(&self) -> iced_image::Handle {
+        self.home_open.clone()
+    }
+
+    pub fn home_create(&self) -> iced_image::Handle {
+        self.home_create.clone()
     }
 
     pub fn for_format(&self, format: FormatId) -> iced_image::Handle {
@@ -101,9 +123,10 @@ impl IconSet {
             "tbz2"
         } else if lower.ends_with(".tbz") {
             "tbz"
-        } else if lower.ends_with(".tar.xz") || lower.ends_with(".txz") {
-            "xz"
-        } else if lower.ends_with(".tar.zst") {
+        } else if lower.ends_with(".tar.xz")
+            || lower.ends_with(".txz")
+            || lower.ends_with(".tar.zst")
+        {
             "xz"
         } else if let Some(ext) = std::path::Path::new(&lower)
             .extension()
@@ -147,17 +170,24 @@ fn handle_from_ico(data: &[u8]) -> Option<iced_image::Handle> {
     reader.set_format(::image::ImageFormat::Ico);
     let rgba = reader.decode().ok()?.to_rgba8();
     let (w, h, pixels) = if rgba.width() > 32 || rgba.height() > 32 {
-        let resized = ::image::imageops::resize(
-            &rgba,
-            16,
-            16,
-            ::image::imageops::FilterType::Triangle,
-        );
+        let resized =
+            ::image::imageops::resize(&rgba, 16, 16, ::image::imageops::FilterType::Triangle);
         (16, 16, resized.into_raw())
     } else {
         (rgba.width(), rgba.height(), rgba.into_raw())
     };
     Some(iced_image::Handle::from_rgba(w, h, pixels))
+}
+
+fn handle_from_png(data: &[u8]) -> Option<iced_image::Handle> {
+    let mut reader = ::image::io::Reader::new(Cursor::new(data));
+    reader.set_format(::image::ImageFormat::Png);
+    let rgba = reader.decode().ok()?.to_rgba8();
+    Some(iced_image::Handle::from_rgba(
+        rgba.width(),
+        rgba.height(),
+        rgba.into_raw(),
+    ))
 }
 
 fn empty_handle() -> iced_image::Handle {

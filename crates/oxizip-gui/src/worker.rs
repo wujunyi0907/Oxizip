@@ -6,9 +6,10 @@ use std::sync::{Arc, Mutex};
 use iced::futures::channel::oneshot;
 use iced::Task;
 use oxizip_engine::{
-    add_to_archive, create, delete_entries, extract, list, test_archive, CancellationToken,
-    CreateOptions, EntryMeta, ExtractOptions, FormatId, FnProgress, JobStage, ListOptions,
-    ProgressUpdate,
+    add_to_archive, checksum_paths, create, delete_entries, extract, list,
+    recover_archive_password, rename_entry, repair_archive, test_archive, write_archive_comment,
+    CancellationToken, CreateOptions, EntryMeta, ExtractOptions, FileChecksum, FnProgress,
+    FormatId, JobStage, ListOptions, PasswordRecoverOptions, Progress, ProgressUpdate,
 };
 use oxizip_i18n::{error_message, t, Lang};
 use tempfile::TempDir;
@@ -24,6 +25,12 @@ pub enum JobKind {
     Test,
     Add,
     Delete,
+    Rename,
+    Repair,
+    Checksum,
+    RecoverPassword,
+    WriteComment,
+    ExtractForClipboard,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -45,10 +52,7 @@ impl ProgressSlot {
     }
 
     pub fn snapshot(&self) -> ProgressSnapshot {
-        self.inner
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default()
+        self.inner.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     pub fn set_from_update(&self, update: &ProgressUpdate) {
@@ -116,6 +120,32 @@ pub enum JobOutcome {
         path: PathBuf,
         error: Option<String>,
     },
+    Renamed {
+        path: PathBuf,
+        error: Option<String>,
+    },
+    Repaired {
+        path: PathBuf,
+        error: Option<String>,
+    },
+    Checksummed {
+        report: String,
+        error: Option<String>,
+    },
+    PasswordRecovered {
+        password: String,
+        error: Option<String>,
+    },
+    CommentWritten {
+        path: PathBuf,
+        comment: String,
+        error: Option<String>,
+    },
+    ClipboardFiles {
+        paths: Vec<PathBuf>,
+        temp: Option<Arc<TempDir>>,
+        error: Option<String>,
+    },
     Canceled,
 }
 
@@ -167,7 +197,7 @@ pub fn list_archive(
             entries,
             error: None,
         },
-        Err(err) if matches!(err, oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Err(oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
         Err(err) => JobOutcome::Listed {
             path,
             entries: Vec::new(),
@@ -193,7 +223,7 @@ pub fn add_files(
             path: archive,
             error: None,
         },
-        Err(err) if matches!(err, oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Err(oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
         Err(err) => JobOutcome::Edited {
             path: archive,
             error: Some(error_message(lang, &err)),
@@ -213,18 +243,12 @@ pub fn delete_files(
         let slot = slot.clone();
         move |u: ProgressUpdate| slot.set_from_update(&u)
     });
-    match delete_entries(
-        &archive,
-        &entries,
-        password.as_deref(),
-        &progress,
-        cancel,
-    ) {
+    match delete_entries(&archive, &entries, password.as_deref(), &progress, cancel) {
         Ok(()) => JobOutcome::Edited {
             path: archive,
             error: None,
         },
-        Err(err) if matches!(err, oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Err(oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
         Err(err) => JobOutcome::Edited {
             path: archive,
             error: Some(error_message(lang, &err)),
@@ -245,11 +269,8 @@ pub fn test_archive_job(
     });
     let opts = ListOptions { password };
     match test_archive(&path, &opts, &progress, cancel) {
-        Ok(()) => JobOutcome::Tested {
-            path,
-            error: None,
-        },
-        Err(err) if matches!(err, oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Ok(()) => JobOutcome::Tested { path, error: None },
+        Err(oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
         Err(err) => JobOutcome::Tested {
             path,
             error: Some(error_message(lang, &err)),
@@ -272,11 +293,8 @@ pub fn extract_archive(
     let mut opts = ExtractOptions::to_dir(&dest);
     opts.password = password;
     match extract(&archive, &opts, &progress, cancel) {
-        Ok(()) => JobOutcome::Extracted {
-            dest,
-            error: None,
-        },
-        Err(err) if matches!(err, oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Ok(()) => JobOutcome::Extracted { dest, error: None },
+        Err(oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
         Err(err) => JobOutcome::Extracted {
             dest,
             error: Some(error_message(lang, &err)),
@@ -303,7 +321,7 @@ pub fn create_archive(
             format,
             error: None,
         },
-        Err(err) if matches!(err, oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Err(oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
         Err(err) => JobOutcome::Created {
             path: out,
             format,
@@ -360,4 +378,246 @@ pub fn open_entry(
         temp: Some(Arc::new(temp)),
         error: None,
     }
+}
+
+pub fn rename_entry_job(
+    archive: PathBuf,
+    from: String,
+    to: String,
+    password: Option<String>,
+    cancel: &CancellationToken,
+    slot: &ProgressSlot,
+    lang: Lang,
+) -> JobOutcome {
+    let progress = FnProgress({
+        let slot = slot.clone();
+        move |u: ProgressUpdate| slot.set_from_update(&u)
+    });
+    match rename_entry(&archive, &from, &to, password.as_deref(), &progress, cancel) {
+        Ok(()) => JobOutcome::Renamed {
+            path: archive,
+            error: None,
+        },
+        Err(oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Err(err) => JobOutcome::Renamed {
+            path: archive,
+            error: Some(error_message(lang, &err)),
+        },
+    }
+}
+
+pub fn repair_job(
+    archive: PathBuf,
+    dest: Option<PathBuf>,
+    password: Option<String>,
+    cancel: &CancellationToken,
+    slot: &ProgressSlot,
+    lang: Lang,
+) -> JobOutcome {
+    let progress = FnProgress({
+        let slot = slot.clone();
+        move |u: ProgressUpdate| slot.set_from_update(&u)
+    });
+    match repair_archive(
+        &archive,
+        dest.as_deref(),
+        password.as_deref(),
+        &progress,
+        cancel,
+    ) {
+        Ok(path) => JobOutcome::Repaired { path, error: None },
+        Err(oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Err(err) => JobOutcome::Repaired {
+            path: dest.unwrap_or(archive),
+            error: Some(error_message(lang, &err)),
+        },
+    }
+}
+
+pub fn recover_password_job(
+    archive: PathBuf,
+    opts: PasswordRecoverOptions,
+    cancel: &CancellationToken,
+    slot: &ProgressSlot,
+    lang: Lang,
+) -> JobOutcome {
+    let progress = FnProgress({
+        let slot = slot.clone();
+        move |u: ProgressUpdate| slot.set_from_update(&u)
+    });
+    match recover_archive_password(&archive, &opts, &progress, cancel) {
+        Ok(password) => JobOutcome::PasswordRecovered {
+            password,
+            error: None,
+        },
+        Err(oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Err(err) => JobOutcome::PasswordRecovered {
+            password: String::new(),
+            error: Some(error_message(lang, &err)),
+        },
+    }
+}
+
+pub fn write_comment_job(
+    archive: PathBuf,
+    comment: String,
+    cancel: &CancellationToken,
+    _slot: &ProgressSlot,
+    lang: Lang,
+) -> JobOutcome {
+    if cancel.is_canceled() {
+        return JobOutcome::Canceled;
+    }
+    match write_archive_comment(&archive, &comment) {
+        Ok(()) => JobOutcome::CommentWritten {
+            path: archive,
+            comment,
+            error: None,
+        },
+        Err(oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Err(err) => JobOutcome::CommentWritten {
+            path: archive,
+            comment,
+            error: Some(error_message(lang, &err)),
+        },
+    }
+}
+
+pub fn extract_for_clipboard_job(
+    archive: PathBuf,
+    names: Vec<String>,
+    password: Option<String>,
+    cancel: &CancellationToken,
+    slot: &ProgressSlot,
+    lang: Lang,
+) -> JobOutcome {
+    let progress = FnProgress({
+        let slot = slot.clone();
+        move |u: ProgressUpdate| slot.set_from_update(&u)
+    });
+    let temp = match TempDir::new() {
+        Ok(t) => t,
+        Err(e) => {
+            return JobOutcome::ClipboardFiles {
+                paths: Vec::new(),
+                temp: None,
+                error: Some(e.to_string()),
+            };
+        }
+    };
+    let mut opts = ExtractOptions::to_dir(temp.path());
+    opts.password = password;
+    opts.entries = Some(names.clone());
+    if let Err(err) = extract(&archive, &opts, &progress, cancel) {
+        if matches!(err, oxizip_engine::CoreError::Canceled) {
+            return JobOutcome::Canceled;
+        }
+        return JobOutcome::ClipboardFiles {
+            paths: Vec::new(),
+            temp: None,
+            error: Some(error_message(lang, &err)),
+        };
+    }
+    let paths: Vec<PathBuf> = names
+        .iter()
+        .map(|name| temp.path().join(name))
+        .filter(|path| path.is_file())
+        .collect();
+    if paths.is_empty() {
+        return JobOutcome::ClipboardFiles {
+            paths,
+            temp: None,
+            error: Some(t(lang, "gui.err.clipboard_empty").into()),
+        };
+    }
+    JobOutcome::ClipboardFiles {
+        paths,
+        temp: Some(Arc::new(temp)),
+        error: None,
+    }
+}
+
+pub fn checksum_job(
+    archive: PathBuf,
+    names: Vec<String>,
+    password: Option<String>,
+    cancel: &CancellationToken,
+    slot: &ProgressSlot,
+    lang: Lang,
+) -> JobOutcome {
+    let progress = FnProgress({
+        let slot = slot.clone();
+        move |u: ProgressUpdate| slot.set_from_update(&u)
+    });
+    if names.is_empty() {
+        return checksum_outcome(&[archive], &progress, cancel, lang);
+    }
+    let temp = match TempDir::new() {
+        Ok(t) => t,
+        Err(e) => {
+            return JobOutcome::Checksummed {
+                report: String::new(),
+                error: Some(e.to_string()),
+            };
+        }
+    };
+    let mut opts = ExtractOptions::to_dir(temp.path());
+    opts.password = password;
+    opts.entries = Some(names.clone());
+    if let Err(err) = extract(&archive, &opts, &progress, cancel) {
+        if matches!(err, oxizip_engine::CoreError::Canceled) {
+            return JobOutcome::Canceled;
+        }
+        return JobOutcome::Checksummed {
+            report: String::new(),
+            error: Some(error_message(lang, &err)),
+        };
+    }
+    let paths: Vec<PathBuf> = names
+        .iter()
+        .map(|name| temp.path().join(name))
+        .filter(|path| path.is_file())
+        .collect();
+    if paths.is_empty() {
+        return JobOutcome::Checksummed {
+            report: String::new(),
+            error: Some(t(lang, "gui.err.checksum_empty").into()),
+        };
+    }
+    checksum_outcome(&paths, &progress, cancel, lang)
+}
+
+fn checksum_outcome(
+    paths: &[PathBuf],
+    progress: &dyn Progress,
+    cancel: &CancellationToken,
+    lang: Lang,
+) -> JobOutcome {
+    match checksum_paths(paths, progress, cancel) {
+        Ok(items) => JobOutcome::Checksummed {
+            report: format_checksums(lang, &items),
+            error: None,
+        },
+        Err(oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Err(err) => JobOutcome::Checksummed {
+            report: String::new(),
+            error: Some(error_message(lang, &err)),
+        },
+    }
+}
+
+fn format_checksums(lang: Lang, items: &[FileChecksum]) -> String {
+    let mut out = String::new();
+    for item in items {
+        out.push_str(&item.path);
+        out.push('\n');
+        out.push_str(&format!(
+            "  {} {}\n  CRC32 {}\n  SHA256 {}\n",
+            t(lang, "gui.col.size"),
+            item.size,
+            item.crc32_hex(),
+            item.sha256_hex(),
+        ));
+    }
+    out
 }

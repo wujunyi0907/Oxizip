@@ -89,8 +89,7 @@ pub fn recover_password(
         let chars: Vec<char> = opts.charset.chars().collect();
         for len in 1..=opts.max_len {
             cancel.check()?;
-            if let Some(pw) =
-                brute_len(archive, format, &chars, len, &mut tried, progress, cancel)?
+            if let Some(pw) = brute_len(archive, format, &chars, len, &mut tried, progress, cancel)?
             {
                 return Ok(pw);
             }
@@ -120,7 +119,7 @@ fn brute_len(
         cancel.check()?;
         let pw: String = idx.iter().map(|&i| chars[i]).collect();
         *tried += 1;
-        if *tried % 64 == 0 {
+        if (*tried).is_multiple_of(64) {
             progress.report(ProgressUpdate {
                 stage: JobStage::RecoverPassword,
                 bytes_done: *tried,

@@ -68,8 +68,7 @@ pub fn sevenz_delete_entries(
     if entries.is_empty() {
         return Ok(());
     }
-    let remove: std::collections::HashSet<String> =
-        entries.iter().map(|s| norm_name(s)).collect();
+    let remove: std::collections::HashSet<String> = entries.iter().map(|s| norm_name(s)).collect();
 
     let mut reader = SevenZReader::open(path)?;
     let listed = reader.list(
@@ -103,8 +102,10 @@ pub fn sevenz_delete_entries(
         }
     }
 
-    let mut opts = CreateOptions::default();
-    opts.password = password.map(str::to_string);
+    let opts = CreateOptions {
+        password: password.map(str::to_string),
+        ..Default::default()
+    };
     recreate_from_dir(path, tmp.path(), &opts, progress, cancel)
 }
 
@@ -121,13 +122,7 @@ pub fn sevenz_add_paths(
         return Err(CoreError::Other("add requires at least one input".into()));
     }
     let tmp = TempDir::new().map_err(CoreError::Io)?;
-    extract_all_to(
-        path,
-        tmp.path(),
-        opts.password.as_deref(),
-        progress,
-        cancel,
-    )?;
+    extract_all_to(path, tmp.path(), opts.password.as_deref(), progress, cancel)?;
 
     for input in inputs {
         cancel.check()?;
@@ -181,8 +176,10 @@ pub fn sevenz_rename_entry(
     }
     fs::rename(&src, &dest)?;
 
-    let mut opts = CreateOptions::default();
-    opts.password = password.map(str::to_string);
+    let opts = CreateOptions {
+        password: password.map(str::to_string),
+        ..Default::default()
+    };
     recreate_from_dir(path, tmp.path(), &opts, progress, cancel)
 }
 

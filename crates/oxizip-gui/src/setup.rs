@@ -15,7 +15,11 @@ pub fn config_dir() -> Option<PathBuf> {
     #[cfg(not(windows))]
     {
         let home = std::env::var_os("HOME")?;
-        Some(PathBuf::from(home).join(".config").join("cn.wujunyi.oxizip"))
+        Some(
+            PathBuf::from(home)
+                .join(".config")
+                .join("cn.wujunyi.oxizip"),
+        )
     }
 }
 
@@ -60,7 +64,12 @@ pub fn install_associations(lang_arg: &str, exts: &[&str]) -> Result<String, Str
             "oxizip-cli not found beside oxizip; reinstall or run: oxizip-cli shell install",
         )
     })?;
-    let mut args = vec!["--lang".into(), lang_arg.into(), "shell".into(), "install".into()];
+    let mut args = vec![
+        "--lang".into(),
+        lang_arg.into(),
+        "shell".into(),
+        "install".into(),
+    ];
     if !exts.is_empty() {
         args.push("--ext".into());
         args.push(exts.join(","));

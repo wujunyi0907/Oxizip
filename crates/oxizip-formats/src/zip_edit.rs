@@ -15,8 +15,7 @@ use crate::types::{CreateOptions, MethodId, ZipCryptoKind};
 
 fn open_archive(path: &Path) -> CoreResult<ZipArchive<BufReader<File>>> {
     let file = File::open(path)?;
-    ZipArchive::new(BufReader::new(file))
-        .map_err(|e| CoreError::Other(format!("invalid zip: {e}")))
+    ZipArchive::new(BufReader::new(file)).map_err(|e| CoreError::Other(format!("invalid zip: {e}")))
 }
 
 fn norm_name(name: &str) -> String {
@@ -373,7 +372,7 @@ mod tests {
 
         zip_add_paths(
             &zip_path,
-            &[b.clone()],
+            std::slice::from_ref(&b),
             &CreateOptions::default(),
             &NullProgress,
             &cancel,
@@ -399,14 +398,7 @@ mod tests {
             &cancel,
         )
         .unwrap();
-        zip_delete_entries(
-            &zip_path,
-            &["b.txt".into()],
-            None,
-            &NullProgress,
-            &cancel,
-        )
-        .unwrap();
+        zip_delete_entries(&zip_path, &["b.txt".into()], None, &NullProgress, &cancel).unwrap();
 
         let mut reader = ZipReader::open(&zip_path).unwrap();
         let names: Vec<_> = reader

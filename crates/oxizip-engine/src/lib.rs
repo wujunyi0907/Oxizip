@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use oxizip_formats::{
     is_volume_path, join_volumes, maybe_split_archive, open_reader, open_writer, recover_password,
     repair_sevenz, repair_zip, sevenz_add_paths, sevenz_delete_entries, sevenz_rename_entry,
-    sniff_path, zip_add_paths, zip_delete_entries, zip_rename_entry,
+    sniff_path, zip_add_paths, zip_delete_entries, zip_read_comment, zip_rename_entry,
+    zip_write_comment,
 };
 use tempfile::NamedTempFile;
 
@@ -215,9 +216,7 @@ pub fn repair_archive(
             repair_zip(&resolved.path, dest, progress, cancel)
         }
         FormatId::SevenZ => repair_sevenz(&resolved.path, dest, password, progress, cancel),
-        _ => Err(CoreError::Other(
-            "repair supports ZIP/ZIPX/7z only".into(),
-        )),
+        _ => Err(CoreError::Other("repair supports ZIP/ZIPX/7z only".into())),
     }
 }
 
@@ -231,4 +230,24 @@ pub fn recover_archive_password(
     cancel.check()?;
     let resolved = resolve_archive(path)?;
     recover_password(&resolved.path, opts, progress, cancel)
+}
+
+/// Read ZIP/ZIPX archive comment (empty string when absent). Other formats → unsupported.
+pub fn read_archive_comment(path: &Path) -> CoreResult<String> {
+    let resolved = resolve_archive(path)?;
+    match sniff_path(&resolved.path)? {
+        FormatId::Zip | FormatId::Zipx | FormatId::ExeSfx => zip_read_comment(&resolved.path),
+        _ => Err(CoreError::UnsupportedFormat),
+    }
+}
+
+/// Write ZIP/ZIPX archive comment. Other formats → unsupported.
+pub fn write_archive_comment(path: &Path, comment: &str) -> CoreResult<()> {
+    let resolved = resolve_archive(path)?;
+    match sniff_path(&resolved.path)? {
+        FormatId::Zip | FormatId::Zipx | FormatId::ExeSfx => {
+            zip_write_comment(&resolved.path, comment)
+        }
+        _ => Err(CoreError::UnsupportedFormat),
+    }
 }

@@ -19,6 +19,20 @@ image = { workspace = true }
 rfd = { workspace = true }
 open = { workspace = true }
 tempfile = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+arboard = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Memory",
+    "Win32_System_DataExchange",
+    "Win32_System_Ole",
+] }
 
 [build-dependencies]
 winresource = { workspace = true }
