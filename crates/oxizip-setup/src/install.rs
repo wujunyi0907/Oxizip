@@ -326,8 +326,11 @@ fn write_uninstall_registry(dir: &Path) -> InstallResult<()> {
             &format!("{uninstall_cmd} --uninstall --quiet"),
         )
         .map_err(|e| InstallError::Msg(e.to_string()))?;
+    // Prefer the stand-alone .ico — PE resource icons sometimes fail to render
+    // in Start Menu / Apps & features until the icon cache is rebuilt.
+    let display_icon = app_icon_path(dir);
     uninstall
-        .set_value("DisplayIcon", &dir.join("oxizip.exe").display().to_string())
+        .set_value("DisplayIcon", &format!("{},0", display_icon.display()))
         .map_err(|e| InstallError::Msg(e.to_string()))?;
     uninstall
         .set_value("Publisher", &"wujunyi.cn")
@@ -362,38 +365,131 @@ fn write_uninstall_registry(_dir: &Path) -> InstallResult<()> {
     Ok(())
 }
 
+/// Best icon path for shortcuts / ARP: packaged `.ico`, else the GUI exe.
+fn app_icon_path(dir: &Path) -> PathBuf {
+    let ico = dir.join("assets").join("icons").join("oxizip.ico");
+    if ico.is_file() {
+        ico
+    } else {
+        dir.join(if cfg!(windows) {
+            "oxizip.exe"
+        } else {
+            "oxizip"
+        })
+    }
+}
+
 #[cfg(windows)]
-fn create_start_menu_shortcut(dir: &Path) -> InstallResult<()> {
-    let program_data = std::env::var_os("ProgramData").map(PathBuf::from);
-    let Some(pd) = program_data else {
-        return Ok(());
-    };
-    let menu = pd
-        .join("Microsoft\\Windows\\Start Menu\\Programs")
-        .join(APP_NAME);
-    fs::create_dir_all(&menu)?;
-    // Prefer a .lnk via PowerShell for reliability without extra crates.
-    let target = dir.join("oxizip.exe");
-    let link = menu.join("Oxizip.lnk");
-    let uninstall_link = menu.join("Uninstall Oxizip.lnk");
+fn ps_quote(path: &Path) -> String {
+    path.display().to_string().replace('\'', "''")
+}
+
+#[cfg(windows)]
+fn start_menu_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(pd) = std::env::var_os("ProgramData").map(PathBuf::from) {
+        roots.push(
+            pd.join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs"),
+        );
+    }
+    // Also refresh the installing user's Start Menu so a stale per-user .lnk
+    // (from an older install) does not keep a broken / blank icon.
+    if let Some(appdata) = std::env::var_os("APPDATA").map(PathBuf::from) {
+        roots.push(
+            appdata
+                .join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs"),
+        );
+    }
+    roots
+}
+
+#[cfg(windows)]
+fn create_shortcut_lnk(
+    link: &Path,
+    target: &Path,
+    workdir: &Path,
+    icon_loc: &str,
+    description: &str,
+) -> bool {
     let ps = format!(
         "$ws = New-Object -ComObject WScript.Shell; \
-         $s = $ws.CreateShortcut('{}'); $s.TargetPath = '{}'; $s.IconLocation = '{}'; $s.Save(); \
-         $u = $ws.CreateShortcut('{}'); $u.TargetPath = '{}'; $u.Save();",
-        link.display().to_string().replace('\'', "''"),
-        target.display().to_string().replace('\'', "''"),
-        target.display().to_string().replace('\'', "''"),
-        uninstall_link.display().to_string().replace('\'', "''"),
-        dir.join("Uninstall.exe")
-            .display()
-            .to_string()
-            .replace('\'', "''"),
+         $s = $ws.CreateShortcut('{}'); \
+         $s.TargetPath = '{}'; \
+         $s.WorkingDirectory = '{}'; \
+         $s.IconLocation = '{}'; \
+         $s.Description = '{}'; \
+         $s.Save();",
+        ps_quote(link),
+        ps_quote(target),
+        ps_quote(workdir),
+        icon_loc.replace('\'', "''"),
+        description.replace('\'', "''"),
     );
     let mut cmd = Command::new("powershell");
-    let _ = hide_console(&mut cmd)
+    hide_console(&mut cmd)
         .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps])
-        .status();
+        .status()
+        .map(|s| s.success() && link.is_file())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn create_start_menu_shortcut(dir: &Path) -> InstallResult<()> {
+    let target = dir.join("oxizip.exe");
+    let uninstaller = dir.join("Uninstall.exe");
+    let icon = app_icon_path(dir);
+    // IconLocation must be "path,index" — use the .ico so Start Menu does not
+    // depend on PE resource extraction / icon cache for oxizip.exe.
+    let icon_loc = format!("{},0", icon.display());
+
+    let mut wrote = false;
+    for programs in start_menu_roots() {
+        let menu = programs.join(APP_NAME);
+        if fs::create_dir_all(&menu).is_err() {
+            continue;
+        }
+        let link = menu.join("Oxizip.lnk");
+        let uninstall_link = menu.join("Uninstall Oxizip.lnk");
+        let _ = fs::remove_file(menu.join("Uninstall.lnk"));
+
+        let ok_app = create_shortcut_lnk(&link, &target, dir, &icon_loc, "Oxizip");
+        let ok_un = create_shortcut_lnk(
+            &uninstall_link,
+            &uninstaller,
+            dir,
+            &icon_loc,
+            "Uninstall Oxizip",
+        );
+        if ok_app && ok_un {
+            wrote = true;
+        }
+    }
+    notify_shell_assoc_changed();
+    if !wrote {
+        return Err(InstallError::Msg(
+            "failed to create Start Menu shortcut".into(),
+        ));
+    }
     Ok(())
+}
+
+#[cfg(windows)]
+fn notify_shell_assoc_changed() {
+    #[link(name = "shell32")]
+    unsafe extern "system" {
+        fn SHChangeNotify(event: u32, flags: u32, item1: isize, item2: isize);
+    }
+    const SHCNE_ASSOCCHANGED: u32 = 0x0800_0000;
+    const SHCNF_IDLIST: u32 = 0x0000;
+    unsafe {
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, 0, 0);
+    }
 }
 
 #[cfg(not(windows))]
@@ -519,12 +615,11 @@ pub fn perform_uninstall(dir: Option<PathBuf>, progress: &mut ProgressCb<'_>) ->
         ));
         let _ = hklm.delete_subkey_all(format!("Software\\{APP_ID}"));
         report(progress, 0.65, "start_menu");
-        if let Some(pd) = std::env::var_os("ProgramData").map(PathBuf::from) {
-            let menu = pd
-                .join("Microsoft\\Windows\\Start Menu\\Programs")
-                .join(APP_NAME);
+        for programs in start_menu_roots() {
+            let menu = programs.join(APP_NAME);
             let _ = fs::remove_dir_all(menu);
         }
+        notify_shell_assoc_changed();
     }
 
     // Delete files. If this process is Uninstall.exe inside the dir, schedule
