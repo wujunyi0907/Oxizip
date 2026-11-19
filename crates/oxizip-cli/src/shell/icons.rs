@@ -151,5 +151,7 @@ fn find_source_icons_dir(exe: &Path) -> Option<PathBuf> {
         }
     }
 
-    candidates.into_iter().find(|p| p.join("oxizip.ico").is_file())
+    candidates
+        .into_iter()
+        .find(|p| p.join("oxizip.ico").is_file())
 }

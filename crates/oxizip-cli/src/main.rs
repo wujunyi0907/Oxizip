@@ -217,11 +217,9 @@ fn fail_msg(msg: &str) -> ExitCode {
 
 fn parse_method(method: Option<String>) -> Result<Option<MethodId>, String> {
     match method {
-        Some(m) => MethodId::parse(&m)
-            .map(Some)
-            .ok_or_else(|| {
-                format!("unknown method '{m}'. try: store,deflate,bzip2,lzma,xz,zstd,lzma2,ppmd")
-            }),
+        Some(m) => MethodId::parse(&m).map(Some).ok_or_else(|| {
+            format!("unknown method '{m}'. try: store,deflate,bzip2,lzma,xz,zstd,lzma2,ppmd")
+        }),
         None => Ok(None),
     }
 }
@@ -244,9 +242,7 @@ fn main() -> ExitCode {
 
     if let Commands::Shell { action } = &cli.command {
         let action = match action {
-            ShellCmd::Install { ext } => shell::ShellAction::Install {
-                exts: ext.clone(),
-            },
+            ShellCmd::Install { ext } => shell::ShellAction::Install { exts: ext.clone() },
             ShellCmd::Uninstall => shell::ShellAction::Uninstall,
             ShellCmd::Status => shell::ShellAction::Status,
         };
@@ -354,13 +350,7 @@ fn main() -> ExitCode {
             archive,
             entries,
             password,
-        } => delete_entries(
-            &archive,
-            &entries,
-            password.as_deref(),
-            &progress,
-            &cancel,
-        ),
+        } => delete_entries(&archive, &entries, password.as_deref(), &progress, &cancel),
         Commands::Rename {
             archive,
             from,
@@ -527,7 +517,7 @@ fn run_create(
             oxizip_engine::create_format_names().join(", ")
         )));
     };
-            let method = parse_method(method).map_err(CoreError::Other)?;
+    let method = parse_method(method).map_err(CoreError::Other)?;
     let Some(zip_crypto) = ZipCryptoKind::parse(&zip_crypto) else {
         return Err(CoreError::Other(format!(
             "unknown zip-crypto '{zip_crypto}'. try: aes256,aes128,aes192"

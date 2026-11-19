@@ -11,12 +11,12 @@ use oxizip_i18n::Lang;
 
 #[cfg(windows)]
 mod icons;
+#[cfg(all(unix, not(target_os = "macos")))]
+mod linux;
 #[cfg(windows)]
 mod user_choice;
 #[cfg(windows)]
 mod windows;
-#[cfg(all(unix, not(target_os = "macos")))]
-mod linux;
 
 pub fn current_oxizip() -> Result<PathBuf, String> {
     std::env::current_exe().map_err(|e| e.to_string())

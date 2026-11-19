@@ -74,9 +74,7 @@ fn write_format_icons(classes: &RegKey, ext: &str, icon: &Path) -> Result<(), St
 fn clear_user_choice(ext: &str) {
     // Prefer hashed rewrite via `user_choice::set_user_default`; this is a best-effort wipe.
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let path = format!(
-        "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.{ext}"
-    );
+    let path = format!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.{ext}");
     if let Ok(key) = hkcu.open_subkey_with_flags(&path, KEY_READ | KEY_WRITE) {
         let _ = key.delete_subkey_all("UserChoice");
         let _ = key.delete_subkey_all("UserChoiceLatest");
@@ -135,7 +133,12 @@ fn notify_assoc_changed() {
     const SHCNE_ASSOCCHANGED: i32 = 0x0800_0000;
     const SHCNF_IDLIST: u32 = 0x0000;
     unsafe {
-        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, std::ptr::null(), std::ptr::null());
+        SHChangeNotify(
+            SHCNE_ASSOCCHANGED,
+            SHCNF_IDLIST,
+            std::ptr::null(),
+            std::ptr::null(),
+        );
     }
 }
 
@@ -291,7 +294,11 @@ fn write_all_verbs(
 ) -> Result<(), String> {
     let archive_verbs = [
         ("ExtractHere", "shell.extract_here", "extract --here \"%1\""),
-        ("ExtractSmart", "shell.extract_smart", "extract --smart \"%1\""),
+        (
+            "ExtractSmart",
+            "shell.extract_smart",
+            "extract --smart \"%1\"",
+        ),
         (
             "ExtractToFolder",
             "shell.extract_to_folder",

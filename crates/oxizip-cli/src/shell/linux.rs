@@ -68,7 +68,11 @@ fn mimes_for_ext(ext: &str) -> &'static [&'static str] {
         "7z" => &["application/x-7z-compressed"],
         "rar" => &["application/vnd.rar", "application/x-rar-compressed"],
         "tar" => &["application/x-tar"],
-        "tgz" => &["application/gzip", "application/x-gzip", "application/x-gtar"],
+        "tgz" => &[
+            "application/gzip",
+            "application/x-gzip",
+            "application/x-gtar",
+        ],
         "gz" => &["application/gzip", "application/x-gzip"],
         "xz" => &["application/x-xz"],
         "zst" => &["application/zstd"],
@@ -90,7 +94,11 @@ fn custom_mime_defs() -> &'static [(&'static str, &'static str, &'static [&'stat
     &[
         ("application/x-zipx", "ZIPX archive", &["*.zipx"]),
         ("application/x-zpaq", "ZPAQ archive", &["*.zpaq"]),
-        ("application/x-ms-wim", "Windows Imaging Format", &["*.wim", "*.esd", "*.swm"]),
+        (
+            "application/x-ms-wim",
+            "Windows Imaging Format",
+            &["*.wim", "*.esd", "*.swm"],
+        ),
         ("application/x-alz", "ALZ archive", &["*.alz"]),
         ("application/x-egg", "EGG archive", &["*.egg"]),
         ("application/x-oxizip-001", "Split archive part", &["*.001"]),
@@ -278,7 +286,9 @@ fn shell_quote(s: &str) -> String {
 /// Escape for Desktop Entry `Exec=` (paths with spaces).
 fn shell_escape_desktop_exec(path: &Path) -> String {
     let s = path.display().to_string();
-    if s.chars().any(|c| c.is_whitespace() || matches!(c, '"' | '\\')) {
+    if s.chars()
+        .any(|c| c.is_whitespace() || matches!(c, '"' | '\\'))
+    {
         format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
     } else {
         s
@@ -327,9 +337,7 @@ Exec={exe} create --beside -f 7z %F
 fn build_mime_package(exts: &[&str]) -> Option<String> {
     let needed: Vec<_> = custom_mime_defs()
         .iter()
-        .filter(|(mime, _, _)| {
-            exts.iter().any(|ext| mimes_for_ext(ext).contains(mime))
-        })
+        .filter(|(mime, _, _)| exts.iter().any(|ext| mimes_for_ext(ext).contains(mime)))
         .collect();
     if needed.is_empty() {
         return None;
@@ -353,9 +361,7 @@ fn build_mime_package(exts: &[&str]) -> Option<String> {
 }
 
 fn refresh_desktop_db(apps: &Path) {
-    let _ = Command::new("update-desktop-database")
-        .arg(apps)
-        .status();
+    let _ = Command::new("update-desktop-database").arg(apps).status();
 }
 
 fn refresh_mime_db(home: &Path) {
@@ -426,10 +432,7 @@ pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> 
     // Clean previous default claims before rewriting the desktop + mimeapps entries.
     clear_oxizip_defaults(&home);
 
-    write_file(
-        &apps.join(OPEN_DESKTOP_ID),
-        &open_desktop(&gui, &mimes),
-    )?;
+    write_file(&apps.join(OPEN_DESKTOP_ID), &open_desktop(&gui, &mimes))?;
     write_file(
         &apps.join("oxizip-extract.desktop"),
         &extract_desktop(&cli, &mimes),

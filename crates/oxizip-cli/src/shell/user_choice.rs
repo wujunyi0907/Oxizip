@@ -29,11 +29,7 @@ const SALT_97B6: &str =
 
 #[link(name = "oxizip_user_choice_latest", kind = "static")]
 extern "C" {
-    fn oxizip_ucl_compute_hash(
-        canonical: *const u16,
-        out_hash: *mut u16,
-        out_chars: usize,
-    ) -> i32;
+    fn oxizip_ucl_compute_hash(canonical: *const u16, out_hash: *mut u16, out_chars: usize) -> i32;
 }
 
 fn file_exts_path(ext: &str) -> String {
@@ -97,10 +93,7 @@ fn word_swap(v: u32) -> u32 {
 
 /// Public Windows UserChoice scramble (Firefox / SetUserFTA algorithm).
 fn hash_user_choice_string(input: &str) -> Result<String, String> {
-    let mut bytes: Vec<u8> = input
-        .encode_utf16()
-        .flat_map(|c| c.to_le_bytes())
-        .collect();
+    let mut bytes: Vec<u8> = input.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
     bytes.extend_from_slice(&[0, 0]); // NUL terminator
 
     let md5 = Md5::digest(&bytes);
@@ -363,7 +356,12 @@ fn compute_latest_hash(canonical: &str) -> Result<String, String> {
     Ok(String::from_utf16_lossy(&out[..len]))
 }
 
-fn set_classic_user_choice(parent: &str, ext_dot: &str, sid: &str, progid: &str) -> Result<(), String> {
+fn set_classic_user_choice(
+    parent: &str,
+    ext_dot: &str,
+    sid: &str,
+    progid: &str,
+) -> Result<(), String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let (user_choice, _) = hkcu
         .create_subkey(format!("{parent}\\UserChoice"))
@@ -382,7 +380,12 @@ fn set_classic_user_choice(parent: &str, ext_dot: &str, sid: &str, progid: &str)
     Ok(())
 }
 
-fn set_latest_user_choice(parent: &str, ext_dot: &str, sid: &str, progid: &str) -> Result<(), String> {
+fn set_latest_user_choice(
+    parent: &str,
+    ext_dot: &str,
+    sid: &str,
+    progid: &str,
+) -> Result<(), String> {
     let machine_id = read_machine_id()?;
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let (latest, _) = hkcu
