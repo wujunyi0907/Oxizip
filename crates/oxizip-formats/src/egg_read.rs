@@ -20,7 +20,8 @@ impl EggReader {
     pub fn open(path: impl Into<PathBuf>) -> CoreResult<Self> {
         let path = path.into();
         let file = File::open(&path)?;
-        let _ = EggArchive::open(file).map_err(|e| CoreError::Other(format!("invalid egg: {e}")))?;
+        let _ =
+            EggArchive::open(file).map_err(|e| CoreError::Other(format!("invalid egg: {e}")))?;
         Ok(Self { path })
     }
 
@@ -109,9 +110,10 @@ impl ArchiveReader for EggReader {
             cancel.check()?;
             let name = entry.file_name.replace('\\', "/");
             if let Some(wanted) = filter {
-                if !wanted.iter().any(|e| {
-                    e == &name || e.trim_end_matches('/') == name.trim_end_matches('/')
-                }) {
+                if !wanted
+                    .iter()
+                    .any(|e| e == &name || e.trim_end_matches('/') == name.trim_end_matches('/'))
+                {
                     continue;
                 }
             }

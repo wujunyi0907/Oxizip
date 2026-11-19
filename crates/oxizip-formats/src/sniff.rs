@@ -167,7 +167,7 @@ fn reconcile(magic: FormatId, from_name: FormatId) -> FormatId {
                 magic
             }
             _ => from_name,
-        }
+        },
     }
 }
 

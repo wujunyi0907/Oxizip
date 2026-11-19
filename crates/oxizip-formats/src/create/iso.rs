@@ -93,7 +93,11 @@ fn iso_name(name: &str) -> CoreResult<String> {
     })
 }
 
-fn write_iso(path: &Path, files: &[(PathBuf, String)], cancel: &CancellationToken) -> CoreResult<()> {
+fn write_iso(
+    path: &Path,
+    files: &[(PathBuf, String)],
+    cancel: &CancellationToken,
+) -> CoreResult<()> {
     cancel.check()?;
     let mut payloads = Vec::new();
     for (src, name) in files {
@@ -136,7 +140,7 @@ fn write_iso(path: &Path, files: &[(PathBuf, String)], cancel: &CancellationToke
     write_both_endian_u16(&mut pvd[124..128], 1); // volume sequence
     write_both_endian_u16(&mut pvd[128..132], SECTOR as u16);
     write_both_endian_u32(&mut pvd[132..140], 1); // path table size (sectors*records simplified)
-    // L path table location
+                                                  // L path table location
     pvd[140..144].copy_from_slice(&18u32.to_le_bytes());
     // M path table location
     pvd[148..152].copy_from_slice(&19u32.to_be_bytes());

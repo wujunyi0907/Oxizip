@@ -14,9 +14,18 @@ fn main() {
         .expect("crates/oxizip-formats -> workspace root");
     let zpaq_dir = workspace_root.join("third_party").join("zpaq");
 
-    println!("cargo:rerun-if-changed={}", zpaq_dir.join("zpaq.cpp").display());
-    println!("cargo:rerun-if-changed={}", zpaq_dir.join("libzpaq.cpp").display());
-    println!("cargo:rerun-if-changed={}", zpaq_dir.join("libzpaq.h").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        zpaq_dir.join("zpaq.cpp").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        zpaq_dir.join("libzpaq.cpp").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        zpaq_dir.join("libzpaq.h").display()
+    );
     let native_zpaq = manifest_dir.join("native/zpaq");
     println!(
         "cargo:rerun-if-changed={}",

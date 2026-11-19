@@ -135,9 +135,7 @@ impl ArchiveReader for LzhReader {
             let mut data = vec![0u8; e.compressed_size as usize];
             file.read_exact(&mut data)?;
             if e.compressed_size != e.original_size {
-                return Err(CoreError::Other(
-                    "lzh stored entry size mismatch".into(),
-                ));
+                return Err(CoreError::Other("lzh stored entry size mismatch".into()));
             }
             let mut out = File::create(&out_path)?;
             out.write_all(&data)?;

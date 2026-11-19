@@ -84,7 +84,10 @@ impl ArchiveWriter for ZpaqWriter {
         };
 
         let mut names = Vec::new();
-        for entry in walkdir::WalkDir::new(&root).into_iter().filter_map(|e| e.ok()) {
+        for entry in walkdir::WalkDir::new(&root)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
             let p = entry.path();
             if !p.is_file() {
                 continue;

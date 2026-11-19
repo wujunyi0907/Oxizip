@@ -134,13 +134,7 @@ fn copy_stage_to_dest(
             }
             if path.is_dir() {
                 walk(
-                    &path,
-                    stage_root,
-                    dest_root,
-                    overwrite,
-                    progress,
-                    cancel,
-                    count,
+                    &path, stage_root, dest_root, overwrite, progress, cancel, count,
                 )?;
                 continue;
             }

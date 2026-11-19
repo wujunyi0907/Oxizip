@@ -50,17 +50,12 @@ impl ArchiveWriter for ExeSfxWriter {
     ) -> CoreResult<()> {
         cancel.check()?;
         // Finish the inner zip by reconstructing ownership.
-        let ExeSfxWriter {
-            path,
-            zip_tmp,
-            zip,
-        } = *self;
+        let ExeSfxWriter { path, zip_tmp, zip } = *self;
         Box::new(zip).finish(progress, cancel)?;
 
         let stub = find_sfx_stub().ok_or_else(|| {
             CoreError::Other(
-                "oxizip-sfx-stub not found; build workspace and keep stub beside oxizip"
-                    .into(),
+                "oxizip-sfx-stub not found; build workspace and keep stub beside oxizip".into(),
             )
         })?;
 

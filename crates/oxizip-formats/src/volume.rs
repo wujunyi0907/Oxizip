@@ -112,7 +112,10 @@ fn join_numeric_volumes(first: &Path) -> CoreResult<NamedTempFile> {
     let mut part: u32 = 1;
     loop {
         let part_path = {
-            let name = first.file_name().and_then(|s| s.to_str()).unwrap_or("a.001");
+            let name = first
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("a.001");
             let (stem, _) = name.rsplit_once('.').unwrap_or((name, "001"));
             first
                 .parent()
@@ -139,11 +142,11 @@ fn join_numeric_volumes(first: &Path) -> CoreResult<NamedTempFile> {
 /// Join `stem.z01`, `stem.z02`, … then final `stem.zip`.
 fn join_zip_split_volumes(first_z01: &Path) -> CoreResult<NamedTempFile> {
     let parent = first_z01.parent().unwrap_or_else(|| Path::new("."));
-    let name = first_z01.file_name().and_then(|s| s.to_str()).unwrap_or("a.z01");
-    let stem = name
-        .rsplit_once('.')
-        .map(|(s, _)| s)
-        .unwrap_or(name);
+    let name = first_z01
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("a.z01");
+    let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
     let mut out = NamedTempFile::new().map_err(CoreError::Io)?;
     let mut part: u32 = 1;
     loop {
@@ -186,7 +189,11 @@ fn finish_joined(out: &mut NamedTempFile) -> CoreResult<()> {
 }
 
 /// Split `src` into `dest_stem.001`, `.002`, … of at most `volume_size` bytes.
-pub fn split_into_volumes(src: &Path, dest_stem: &Path, volume_size: u64) -> CoreResult<Vec<PathBuf>> {
+pub fn split_into_volumes(
+    src: &Path,
+    dest_stem: &Path,
+    volume_size: u64,
+) -> CoreResult<Vec<PathBuf>> {
     if volume_size == 0 {
         return Err(CoreError::Other("volume size must be > 0".into()));
     }

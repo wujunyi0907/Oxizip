@@ -12,26 +12,32 @@ pub struct PackFile {
 }
 
 /// Expand user inputs (files and/or directories) into a flat file list.
-pub fn collect_pack_files(inputs: &[&Path], cancel: &CancellationToken) -> CoreResult<Vec<PackFile>> {
+pub fn collect_pack_files(
+    inputs: &[&Path],
+    cancel: &CancellationToken,
+) -> CoreResult<Vec<PackFile>> {
     let mut out = Vec::new();
     for input in inputs {
         cancel.check()?;
-        let path = input
-            .canonicalize()
-            .map_err(|e| CoreError::Io(std::io::Error::new(e.kind(), format!("{}: {e}", input.display()))))?;
+        let path = input.canonicalize().map_err(|e| {
+            CoreError::Io(std::io::Error::new(
+                e.kind(),
+                format!("{}: {e}", input.display()),
+            ))
+        })?;
         if path.is_file() {
             let name = path
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "file".into());
-            out.push(PackFile {
-                source: path,
-                name,
-            });
+            out.push(PackFile { source: path, name });
             continue;
         }
         if !path.is_dir() {
-            return Err(CoreError::Other(format!("not a file or directory: {}", path.display())));
+            return Err(CoreError::Other(format!(
+                "not a file or directory: {}",
+                path.display()
+            )));
         }
         let root = path.clone();
         for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {

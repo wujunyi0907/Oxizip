@@ -9,10 +9,10 @@ use zip::read::ZipArchive;
 use zip::write::SimpleFileOptions;
 use zip::{AesMode, CompressionMethod, ZipWriter};
 
+use crate::traits::{ArchiveReader, ArchiveWriter};
 use crate::types::{
     CreateOptions, EntryMeta, ExtractOptions, FormatId, ListOptions, MethodId, ZipCryptoKind,
 };
-use crate::traits::{ArchiveReader, ArchiveWriter};
 
 pub struct ZipReader {
     path: PathBuf,
@@ -276,8 +276,7 @@ impl ZipWriterBackend {
         let result = match (opts.password.as_deref(), opts.zip_crypto) {
             (Some(_), ZipCryptoKind::ZipCrypto) => {
                 return Err(CoreError::Other(
-                    "legacy ZipCrypto create is not available; use aes/aes128/aes192/aes256"
-                        .into(),
+                    "legacy ZipCrypto create is not available; use aes/aes128/aes192/aes256".into(),
                 ));
             }
             (Some(password), ZipCryptoKind::Aes256) => self

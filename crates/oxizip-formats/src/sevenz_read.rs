@@ -124,7 +124,10 @@ fn copy_tree(
     cancel: &CancellationToken,
 ) -> CoreResult<()> {
     let mut done = 0u64;
-    for entry in walkdir::WalkDir::new(stage).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(stage)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         cancel.check()?;
         let path = entry.path();
         if path.is_dir() {

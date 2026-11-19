@@ -169,7 +169,10 @@ fn maybe_strip_prefix(
 }
 
 fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
-    for entry in walkdir::WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+    for entry in walkdir::WalkDir::new(root)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if entry.file_type().is_file() {
             out.push(entry.path().to_path_buf());
         }

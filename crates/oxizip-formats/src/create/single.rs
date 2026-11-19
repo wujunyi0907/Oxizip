@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufReader, BufWriter, copy};
+use std::io::{copy, BufReader, BufWriter};
 use std::path::{Path, PathBuf};
 
 use flate2::write::GzEncoder;
@@ -20,10 +20,7 @@ impl GzWriter {
     pub fn create(path: impl Into<PathBuf>) -> CoreResult<Self> {
         let path = path.into();
         ensure_parent(&path)?;
-        Ok(Self {
-            path,
-            source: None,
-        })
+        Ok(Self { path, source: None })
     }
 }
 
@@ -72,7 +69,10 @@ impl ArchiveWriter for GzWriter {
             .source
             .ok_or_else(|| CoreError::Other("no input for gz".into()))?;
         let mut input = BufReader::new(File::open(source)?);
-        let mut enc = GzEncoder::new(BufWriter::new(File::create(&self.path)?), Compression::default());
+        let mut enc = GzEncoder::new(
+            BufWriter::new(File::create(&self.path)?),
+            Compression::default(),
+        );
         copy(&mut input, &mut enc)?;
         enc.finish()?;
         Ok(())
@@ -88,10 +88,7 @@ impl XzWriter {
     pub fn create(path: impl Into<PathBuf>) -> CoreResult<Self> {
         let path = path.into();
         ensure_parent(&path)?;
-        Ok(Self {
-            path,
-            source: None,
-        })
+        Ok(Self { path, source: None })
     }
 }
 

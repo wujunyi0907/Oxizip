@@ -98,7 +98,10 @@ impl ArchiveWriter for SevenZWriter {
     }
 }
 
-fn apply_7z_methods(writer: &mut SevenzArchiveWriter<File>, opts: &CreateOptions) -> CoreResult<()> {
+fn apply_7z_methods(
+    writer: &mut SevenzArchiveWriter<File>,
+    opts: &CreateOptions,
+) -> CoreResult<()> {
     let method = opts.method.unwrap_or(MethodId::Lzma2);
     let mut chain = Vec::new();
 

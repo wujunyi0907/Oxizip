@@ -19,8 +19,8 @@ impl CabReader {
     pub fn open(path: impl Into<PathBuf>) -> CoreResult<Self> {
         let path = path.into();
         let file = File::open(&path)?;
-        let _ = cab::Cabinet::new(file)
-            .map_err(|e| CoreError::Other(format!("invalid cab: {e}")))?;
+        let _ =
+            cab::Cabinet::new(file).map_err(|e| CoreError::Other(format!("invalid cab: {e}")))?;
         Ok(Self { path })
     }
 

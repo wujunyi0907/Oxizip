@@ -27,12 +27,7 @@ pub fn find_wimlib(explicit: Option<&Path>) -> Option<PathBuf> {
     }
 
     #[cfg(windows)]
-    let names = [
-        "wimlib-imagex.exe",
-        "wimlib-imagex",
-        "wimdir.exe",
-        "wimdir",
-    ];
+    let names = ["wimlib-imagex.exe", "wimlib-imagex", "wimdir.exe", "wimdir"];
     #[cfg(not(windows))]
     let names = ["wimlib-imagex", "wimdir"];
 
@@ -120,7 +115,10 @@ enum WimTool {
     /// Unified `wimlib-imagex` binary (subcommand form).
     Imagex(PathBuf),
     /// Separate `wimdir` / `wimextract` shims on PATH.
-    Split { dir: Option<PathBuf>, extract: PathBuf },
+    Split {
+        dir: Option<PathBuf>,
+        extract: PathBuf,
+    },
 }
 
 impl WimTool {
