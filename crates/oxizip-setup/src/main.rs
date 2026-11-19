@@ -4,67 +4,309 @@
 
 mod install;
 
-use iced::widget::{button, checkbox, column, container, row, text, text_input, Space};
-use iced::{Element, Length, Size, Task};
+use iced::widget::{
+    button, column, container, mouse_area, pick_list, progress_bar, row, scrollable, text,
+    text_input, Space,
+};
+use iced::{window, Alignment, Element, Length, Point, Size, Subscription, Task};
 use install::{
-    default_install_dir, encode_install_args, encode_uninstall_args, is_elevated, launch_app,
-    parse_cli, perform_install, perform_uninstall, relaunch_elevated, resolve_install_dir,
-    CliMode, InstallOptions, APP_NAME, VERSION,
+    append_window_pos, default_install_dir, encode_install_args, encode_uninstall_args,
+    is_elevated, launch_app, parse_cli, perform_install, perform_uninstall, relaunch_elevated,
+    resolve_install_dir, CliMode, InstallOptions, APP_NAME, VERSION,
 };
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::time::Duration;
+
+enum JobEvent {
+    Progress { fraction: f32, detail: String },
+    Finished(Result<(), String>),
+}
 
 fn main() -> iced::Result {
     match parse_cli() {
-        CliMode::ElevatedInstall(opts) => match perform_install(&opts) {
-            Ok(()) => {
-                let _ = launch_app(&opts.dir);
-                std::process::exit(0);
+        CliMode::ElevatedInstall(opts) => {
+            match perform_install(&opts, &mut |_, _| {}) {
+                Ok(()) => {
+                    let _ = launch_app(&opts.dir);
+                    std::process::exit(0);
+                }
+                Err(e) => {
+                    eprintln!("install failed: {e}");
+                    std::process::exit(1);
+                }
             }
-            Err(e) => {
-                eprintln!("install failed: {e}");
-                std::process::exit(1);
+        }
+        CliMode::ElevatedUninstall { dir } => {
+            match perform_uninstall(dir, &mut |_, _| {}) {
+                Ok(()) => std::process::exit(0),
+                Err(e) => {
+                    eprintln!("uninstall failed: {e}");
+                    std::process::exit(1);
+                }
             }
-        },
-        CliMode::ElevatedUninstall { dir } => match perform_uninstall(dir) {
-            Ok(()) => std::process::exit(0),
-            Err(e) => {
-                eprintln!("uninstall failed: {e}");
-                std::process::exit(1);
-            }
-        },
-        CliMode::UninstallUi { dir } => return run_uninstall_ui(dir),
-        CliMode::InstallerUi => {}
+        }
+        CliMode::UninstallUi {
+            dir,
+            auto_start,
+            window_pos,
+        } => run_uninstall_ui(dir, auto_start, window_pos),
+        CliMode::InstallerUi {
+            auto_install,
+            window_pos,
+        } => run_installer_ui(auto_install, window_pos),
     }
-
-    let mut window = iced::window::Settings {
-        size: Size::new(560.0, 420.0),
-        resizable: false,
-        ..Default::default()
-    };
-    window.icon = window_icon();
-
-    iced::application(SetupApp::title, SetupApp::update, SetupApp::view)
-        .window(window)
-        .default_font(ui_font())
-        .run_with(SetupApp::new)
 }
 
-fn run_uninstall_ui(dir: Option<PathBuf>) -> iced::Result {
-    let mut window = iced::window::Settings {
-        size: Size::new(520.0, 300.0),
-        resizable: false,
-        ..Default::default()
-    };
-    window.icon = window_icon();
+fn run_installer_ui(
+    auto_install: Option<InstallOptions>,
+    window_pos: Option<(f32, f32)>,
+) -> iced::Result {
+    iced::application(SetupApp::title, SetupApp::update, SetupApp::view)
+        .subscription(SetupApp::subscription)
+        .window(undecorated_window(Size::new(600.0, 440.0), window_pos))
+        .default_font(ui_font())
+        .run_with(move || SetupApp::new(auto_install))
+}
+
+fn run_uninstall_ui(
+    dir: Option<PathBuf>,
+    auto_start: bool,
+    window_pos: Option<(f32, f32)>,
+) -> iced::Result {
     iced::application(
         UninstallApp::title,
         UninstallApp::update,
         UninstallApp::view,
     )
-    .window(window)
+    .subscription(UninstallApp::subscription)
+    // ≈ golden ratio: 486 / 300 = 1.62
+    .window(undecorated_window(Size::new(486.0, 300.0), window_pos))
     .default_font(ui_font())
-    .run_with(move || UninstallApp::new(dir))
+    .run_with(move || UninstallApp::new(dir, auto_start))
 }
+
+fn progress_label(lang: Lang, key: &str) -> String {
+    match (lang, key) {
+        (Lang::Zh, "prepare") => "准备中…".into(),
+        (Lang::En, "prepare") => "Preparing…".into(),
+        (Lang::Zh, "extract") => "正在解压文件…".into(),
+        (Lang::En, "extract") => "Extracting files…".into(),
+        (Lang::Zh, "copy") => "正在复制文件…".into(),
+        (Lang::En, "copy") => "Copying files…".into(),
+        (Lang::Zh, "uninstall_stub") => "正在写入卸载程序…".into(),
+        (Lang::En, "uninstall_stub") => "Writing uninstaller…".into(),
+        (Lang::Zh, "registry") => "正在写入注册表…".into(),
+        (Lang::En, "registry") => "Updating registry…".into(),
+        (Lang::Zh, "shortcut") => "正在创建快捷方式…".into(),
+        (Lang::En, "shortcut") => "Creating shortcuts…".into(),
+        (Lang::Zh, "associate") => "正在配置文件关联…".into(),
+        (Lang::En, "associate") => "Configuring associations…".into(),
+        (Lang::Zh, "shell") => "正在移除右键菜单…".into(),
+        (Lang::En, "shell") => "Removing shell integration…".into(),
+        (Lang::Zh, "stop") => "正在结束进程…".into(),
+        (Lang::En, "stop") => "Stopping processes…".into(),
+        (Lang::Zh, "start_menu") => "正在清理开始菜单…".into(),
+        (Lang::En, "start_menu") => "Cleaning Start Menu…".into(),
+        (Lang::Zh, "schedule_delete" | "delete") => "正在删除文件…".into(),
+        (Lang::En, "schedule_delete" | "delete") => "Deleting files…".into(),
+        (Lang::Zh, "done") => "即将完成…".into(),
+        (Lang::En, "done") => "Finishing…".into(),
+        (Lang::Zh, _) => "处理中…".into(),
+        (Lang::En, _) => "Working…".into(),
+    }
+}
+
+type JobDrain = (Option<(f32, String)>, Option<Result<(), String>>);
+
+fn drain_job(rx: &Receiver<JobEvent>) -> JobDrain {
+    let mut progress = None;
+    let mut finished = None;
+    loop {
+        match rx.try_recv() {
+            Ok(JobEvent::Progress { fraction, detail }) => {
+                progress = Some((fraction, detail));
+            }
+            Ok(JobEvent::Finished(r)) => {
+                finished = Some(r);
+                break;
+            }
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) => {
+                if finished.is_none() {
+                    finished = Some(Err("worker disconnected".into()));
+                }
+                break;
+            }
+        }
+    }
+    (progress, finished)
+}
+
+const WINDOW_RADIUS: f32 = 12.0;
+const CONTROL_RADIUS: f32 = 8.0;
+
+fn center_on_monitor(size: Size, monitor: Size) -> Point {
+    Point::new(
+        ((monitor.width - size.width) / 2.0).max(0.0),
+        ((monitor.height - size.height) / 2.0).max(0.0),
+    )
+}
+
+fn undecorated_window(size: Size, window_pos: Option<(f32, f32)>) -> iced::window::Settings {
+    let mut settings = iced::window::Settings {
+        size,
+        resizable: false,
+        decorations: false,
+        transparent: true,
+        // Prefer explicit monitor centering; `Centered` is unreliable with undecorated windows.
+        position: match window_pos {
+            Some((x, y)) => window::Position::Specific(Point::new(x, y)),
+            None => window::Position::SpecificWith(center_on_monitor),
+        },
+        ..Default::default()
+    };
+    settings.icon = window_icon();
+    settings
+}
+
+#[cfg(windows)]
+fn apply_native_window_rounding(raw_id: u64) {
+    // Win11 DWM rounded corners for the HWND backing this iced window.
+    #[link(name = "dwmapi")]
+    extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: *mut core::ffi::c_void,
+            attr: u32,
+            value: *const core::ffi::c_void,
+            size: u32,
+        ) -> i32;
+    }
+    const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+    const DWMWCP_ROUND: i32 = 2;
+    unsafe {
+        let pref = DWMWCP_ROUND;
+        let _ = DwmSetWindowAttribute(
+            raw_id as *mut core::ffi::c_void,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            (&pref as *const i32).cast(),
+            std::mem::size_of_val(&pref) as u32,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn apply_native_window_rounding(_raw_id: u64) {}
+
+fn rounded_primary(theme: &iced::Theme, status: iced::widget::button::Status) -> iced::widget::button::Style {
+    let mut style = iced::widget::button::primary(theme, status);
+    style.border.radius = CONTROL_RADIUS.into();
+    style
+}
+
+fn rounded_danger(theme: &iced::Theme, status: iced::widget::button::Status) -> iced::widget::button::Style {
+    let mut style = iced::widget::button::danger(theme, status);
+    style.border.radius = CONTROL_RADIUS.into();
+    style
+}
+
+fn rounded_secondary(theme: &iced::Theme, status: iced::widget::button::Status) -> iced::widget::button::Style {
+    let mut style = iced::widget::button::secondary(theme, status);
+    style.border.radius = CONTROL_RADIUS.into();
+    style
+}
+
+fn rounded_text_btn(theme: &iced::Theme, status: iced::widget::button::Status) -> iced::widget::button::Style {
+    let mut style = iced::widget::button::text(theme, status);
+    style.border.radius = 6.0.into();
+    style
+}
+
+/// Custom caption bar: drag region + language dropdown immediately left of min/close.
+fn caption_bar<'a, Message: Clone + 'a>(
+    title: String,
+    lang: Lang,
+    on_lang: impl Fn(Lang) -> Message + 'a,
+    on_drag: Message,
+    on_minimize: Message,
+    on_close: Message,
+) -> Element<'a, Message> {
+    let drag_zone = mouse_area(
+        row![
+            text(title).size(12),
+            Space::with_width(Length::Fill),
+        ]
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(iced::Padding {
+            top: 0.0,
+            right: 8.0,
+            bottom: 0.0,
+            left: 10.0,
+        }),
+    )
+    .on_press(on_drag);
+
+    let caption_btn = |label: &'static str, msg: Message| {
+        button(container(text(label).size(12)).center_x(Length::Fill).center_y(Length::Fill))
+            .width(40)
+            .height(28)
+            .padding(0)
+            .style(rounded_text_btn)
+            .on_press(msg)
+    };
+
+    container(
+        row![
+            drag_zone,
+            pick_list(Lang::ALL, Some(lang), on_lang)
+                .text_size(12)
+                .width(78)
+                .padding(4),
+            Space::with_width(4),
+            caption_btn("—", on_minimize),
+            caption_btn("×", on_close),
+        ]
+        .spacing(2)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .height(32),
+    )
+    .width(Length::Fill)
+    .style(|theme: &iced::Theme| {
+        let palette = theme.extended_palette();
+        iced::widget::container::Style {
+            background: Some(iced::Background::Color(palette.background.weak.color)),
+            border: iced::Border {
+                color: palette.background.strong.color,
+                width: 0.0,
+                radius: iced::border::Radius {
+                    top_left: WINDOW_RADIUS,
+                    top_right: WINDOW_RADIUS,
+                    bottom_right: 0.0,
+                    bottom_left: 0.0,
+                },
+            },
+            ..Default::default()
+        }
+    })
+    .into()
+}
+
+fn frame_border(theme: &iced::Theme) -> iced::widget::container::Style {
+    let palette = theme.extended_palette();
+    iced::widget::container::Style {
+        background: Some(iced::Background::Color(palette.background.base.color)),
+        border: iced::Border {
+            color: palette.background.strong.color,
+            width: 1.0,
+            radius: WINDOW_RADIUS.into(),
+        },
+        ..Default::default()
+    }
+}
+
 
 fn ui_font() -> iced::Font {
     #[cfg(windows)]
@@ -92,6 +334,8 @@ enum Lang {
 }
 
 impl Lang {
+    const ALL: &'static [Lang] = &[Lang::Zh, Lang::En];
+
     fn label(self) -> &'static str {
         match self {
             Self::Zh => "简体中文",
@@ -106,40 +350,70 @@ impl Lang {
     }
 }
 
+impl std::fmt::Display for Lang {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 struct SetupApp {
     lang: Lang,
     dir: String,
-    associate: bool,
     status: String,
+    progress: f32,
     busy: bool,
     done: bool,
+    window_id: Option<window::Id>,
+    job_rx: Option<Receiver<JobEvent>>,
+    pending_elevate: Option<InstallOptions>,
 }
 
 #[derive(Debug, Clone)]
 enum Message {
-    LangZh,
-    LangEn,
+    WindowId(Option<window::Id>),
+    RawWindowId(u64),
+    TitleDrag,
+    Minimize,
+    Close,
+    LangSelected(Lang),
     DirChanged(String),
     Browse,
     BrowseDone(Option<PathBuf>),
-    AssociateToggled(bool),
     Install,
+    ElevateWithPosition(Option<Point>),
+    PollJob,
     InstallFinished(Result<(), String>),
 }
 
 impl SetupApp {
-    fn new() -> (Self, Task<Message>) {
-        (
-            Self {
-                lang: Lang::Zh,
-                dir: default_install_dir().display().to_string(),
-                associate: true,
-                status: String::new(),
-                busy: false,
-                done: false,
-            },
-            Task::none(),
-        )
+    fn new(auto_install: Option<InstallOptions>) -> (Self, Task<Message>) {
+        let mut lang = Lang::Zh;
+        let mut dir = default_install_dir().display().to_string();
+        if let Some(ref opts) = auto_install {
+            dir = opts.dir.display().to_string();
+            lang = if opts.lang.to_ascii_lowercase().starts_with("en") {
+                Lang::En
+            } else {
+                Lang::Zh
+            };
+        }
+        let app = Self {
+            lang,
+            dir,
+            status: String::new(),
+            progress: 0.0,
+            busy: false,
+            done: false,
+            window_id: None,
+            job_rx: None,
+            pending_elevate: None,
+        };
+        let boot = window::get_oldest().map(Message::WindowId);
+        if auto_install.is_some() {
+            (app, Task::batch([boot, Task::done(Message::Install)]))
+        } else {
+            (app, boot)
+        }
     }
 
     fn title(&self) -> String {
@@ -156,87 +430,157 @@ impl SetupApp {
         }
     }
 
+    fn subscription(&self) -> Subscription<Message> {
+        if self.job_rx.is_some() {
+            iced::time::every(Duration::from_millis(50)).map(|_| Message::PollJob)
+        } else {
+            Subscription::none()
+        }
+    }
+
+    fn spawn_install(&mut self, opts: InstallOptions) {
+        let (tx, rx) = mpsc::channel();
+        self.job_rx = Some(rx);
+        self.busy = true;
+        self.progress = 0.0;
+        self.status = progress_label(self.lang, "prepare");
+        std::thread::spawn(move || {
+            let tx_progress = tx.clone();
+            let result = perform_install(&opts, &mut |fraction, detail| {
+                let _ = tx_progress.send(JobEvent::Progress {
+                    fraction,
+                    detail: detail.to_string(),
+                });
+            })
+            .map(|_| {
+                let _ = launch_app(&opts.dir);
+            })
+            .map_err(|e| e.to_string());
+            let _ = tx.send(JobEvent::Finished(result));
+        });
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::LangZh => {
-                self.lang = Lang::Zh;
+            Message::WindowId(id) => {
+                self.window_id = id;
+                match id {
+                    Some(id) => window::get_raw_id::<Message>(id).map(Message::RawWindowId),
+                    None => Task::none(),
+                }
+            }
+            Message::RawWindowId(raw) => {
+                apply_native_window_rounding(raw);
                 Task::none()
             }
-            Message::LangEn => {
-                self.lang = Lang::En;
+            Message::TitleDrag => self
+                .window_id
+                .map(window::drag)
+                .unwrap_or_else(Task::none),
+            Message::Minimize => self
+                .window_id
+                .map(|id| window::minimize(id, true))
+                .unwrap_or_else(Task::none),
+            Message::Close => {
+                if self.busy {
+                    return Task::none();
+                }
+                self.window_id
+                    .map(window::close)
+                    .unwrap_or_else(Task::none)
+            }
+            Message::LangSelected(lang) => {
+                self.lang = lang;
                 Task::none()
             }
             Message::DirChanged(v) => {
-                self.dir = v;
+                if !self.busy {
+                    self.dir = v;
+                }
                 Task::none()
             }
-            Message::Browse => Task::perform(
-                async {
-                    rfd::AsyncFileDialog::new()
-                        .set_directory(default_install_dir())
-                        .pick_folder()
-                        .await
-                        .map(|f| f.path().to_path_buf())
-                },
-                Message::BrowseDone,
-            ),
+            Message::Browse => {
+                if self.busy {
+                    return Task::none();
+                }
+                Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .set_directory(default_install_dir())
+                            .pick_folder()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::BrowseDone,
+                )
+            }
             Message::BrowseDone(Some(p)) => {
                 self.dir = p.display().to_string();
                 Task::none()
             }
             Message::BrowseDone(None) => Task::none(),
-            Message::AssociateToggled(v) => {
-                self.associate = v;
-                Task::none()
-            }
             Message::Install => {
                 if self.busy || self.done {
                     return Task::none();
                 }
+                // File associations are configured on first GUI launch, not here.
                 let opts = InstallOptions {
                     dir: PathBuf::from(self.dir.trim()),
-                    associate: self.associate,
+                    associate: false,
                     lang: self.lang.code().to_string(),
                 };
                 if opts.dir.as_os_str().is_empty() {
                     self.status = self.tr("请选择安装目录", "Choose an install folder");
                     return Task::none();
                 }
-                self.busy = true;
-                self.status = self.tr("正在安装…", "Installing…");
 
                 #[cfg(windows)]
                 {
                     if !is_elevated() {
-                        let args = encode_install_args(&opts);
-                        match relaunch_elevated(&args) {
-                            Ok(()) => {
-                                // Parent exits; elevated child performs install.
-                                std::process::exit(0);
-                            }
-                            Err(e) => {
-                                self.busy = false;
-                                self.status = format!("{e}");
-                                return Task::none();
-                            }
-                        }
+                        self.pending_elevate = Some(opts);
+                        return if let Some(id) = self.window_id {
+                            window::get_position(id).map(Message::ElevateWithPosition)
+                        } else {
+                            Task::done(Message::ElevateWithPosition(None))
+                        };
                     }
                 }
 
-                Task::perform(
-                    async move {
-                        perform_install(&opts).map_err(|e| e.to_string())?;
-                        let _ = launch_app(&opts.dir);
-                        Ok(())
-                    },
-                    Message::InstallFinished,
-                )
+                self.spawn_install(opts);
+                Task::none()
+            }
+            Message::ElevateWithPosition(pos) => {
+                let Some(opts) = self.pending_elevate.take() else {
+                    return Task::none();
+                };
+                let mut args = encode_install_args(&opts);
+                append_window_pos(&mut args, pos.map(|p| (p.x, p.y)));
+                match relaunch_elevated(&args) {
+                    Ok(()) => std::process::exit(0),
+                    Err(e) => {
+                        self.status = format!("{e}");
+                        Task::none()
+                    }
+                }
+            }
+            Message::PollJob => {
+                let Some(rx) = self.job_rx.as_ref() else {
+                    return Task::none();
+                };
+                let (progress, finished) = drain_job(rx);
+                if let Some((fraction, detail)) = progress {
+                    self.progress = fraction.clamp(0.0, 1.0);
+                    self.status = progress_label(self.lang, &detail);
+                }
+                if let Some(result) = finished {
+                    self.job_rx = None;
+                    return Task::done(Message::InstallFinished(result));
+                }
+                Task::none()
             }
             Message::InstallFinished(Ok(())) => {
-                self.busy = false;
-                self.done = true;
-                self.status = self.tr("安装完成", "Installation complete");
-                Task::none()
+                // GUI already launched with --setup; exit installer reliably.
+                std::process::exit(0);
             }
             Message::InstallFinished(Err(e)) => {
                 self.busy = false;
@@ -247,132 +591,195 @@ impl SetupApp {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let title = text(self.title()).size(22);
-        let lang_row = row![
-            Space::with_width(Length::Fill),
-            button(text(Lang::Zh.label()))
-                .on_press(Message::LangZh)
-                .style(if self.lang == Lang::Zh {
-                    iced::widget::button::primary
-                } else {
-                    iced::widget::button::secondary
-                }),
-            Space::with_width(8),
-            button(text(Lang::En.label()))
-                .on_press(Message::LangEn)
-                .style(if self.lang == Lang::En {
-                    iced::widget::button::primary
-                } else {
-                    iced::widget::button::secondary
-                }),
-        ]
-        .align_y(iced::Alignment::Center);
+        const CONTENT_WIDTH: f32 = 520.0;
 
-        let path_label = text(self.tr("目标文件夹", "Destination folder"));
-        let path_row = row![
-            text_input("", &self.dir)
-                .on_input(Message::DirChanged)
+        let window_title = self.title();
+        let caption = caption_bar(
+            window_title.clone(),
+            self.lang,
+            Message::LangSelected,
+            Message::TitleDrag,
+            Message::Minimize,
+            Message::Close,
+        );
+
+        let heading = text(window_title)
+            .size(16)
+            .width(Length::Fixed(CONTENT_WIDTH));
+
+        let license_body = text(self.tr(LICENSE_TEXT_ZH, LICENSE_TEXT_EN)).size(11);
+        let license_box = container(
+            scrollable(license_body)
+                .height(Length::Fill)
                 .width(Length::Fill),
-            Space::with_width(8),
-            button(text("...")).on_press(Message::Browse),
-        ]
-        .align_y(iced::Alignment::Center);
-
-        let associate = checkbox(
-            self.tr(
-                "关联常见压缩格式，并安装资源管理器右键菜单",
-                "Associate archive formats and install Explorer context menus",
-            ),
-            self.associate,
         )
-        .on_toggle(Message::AssociateToggled);
-
-        let license_note = text(self.tr(
-            "点击下方按钮即表示同意 GNU AGPL-3.0 许可协议",
-            "By continuing you agree to the GNU AGPL-3.0 license",
-        ))
-        .size(12);
-
-        let install_btn = {
-            let label = if self.done {
-                self.tr("已安装", "Installed")
-            } else if self.busy {
-                self.tr("安装中…", "Installing…")
-            } else {
-                self.tr("同意并安装", "Agree and Install")
-            };
-            let b = button(text(label).size(18))
-                .width(Length::Fill)
-                .padding(14);
-            if self.busy || self.done {
-                b
-            } else {
-                b.on_press(Message::Install)
-                    .style(iced::widget::button::primary)
+        .padding(8)
+        .width(Length::Fixed(CONTENT_WIDTH))
+        .height(Length::Fill)
+        .style(|theme: &iced::Theme| {
+            let palette = theme.extended_palette();
+            iced::widget::container::Style {
+                background: Some(iced::Background::Color(palette.background.weak.color)),
+                border: iced::Border {
+                    color: palette.background.strong.color,
+                    width: 1.0,
+                    radius: CONTROL_RADIUS.into(),
+                },
+                ..Default::default()
             }
-        };
+        });
 
-        // Reserve a fixed line so the install button is never clipped.
-        let status = text(if self.status.is_empty() {
-            " "
+        let path_label = text(self.tr("目标文件夹", "Destination folder")).size(12);
+        let mut path_input = text_input("", &self.dir).size(12).width(Length::Fill);
+        if !self.busy && !self.done {
+            path_input = path_input.on_input(Message::DirChanged);
+        }
+        let mut browse = button(text("...").size(12)).style(rounded_secondary);
+        if !self.busy && !self.done {
+            browse = browse.on_press(Message::Browse);
+        }
+        let path_row = row![path_input, Space::with_width(8), browse].align_y(Alignment::Center);
+
+        let path_block = column![path_label, path_row]
+            .spacing(4)
+            .width(Length::Fixed(CONTENT_WIDTH));
+
+        // Fixed-height slot so swapping button ↔ progress does not shift layout.
+        const ACTION_H: f32 = 44.0;
+        let action_inner: Element<'_, Message> = if self.busy || self.done {
+            let status = text(if self.status.is_empty() {
+                " "
+            } else {
+                self.status.as_str()
+            })
+            .size(11)
+            .width(Length::Fill);
+            column![
+                progress_bar(0.0..=1.0, self.progress)
+                    .width(Length::Fill)
+                    .height(8),
+                status,
+            ]
+            .spacing(4)
+            .width(Length::Fill)
+            .into()
         } else {
-            self.status.as_str()
-        })
-        .size(13);
+            let label = container(text(self.tr("同意并安装", "Agree and Install")).size(14))
+                .width(Length::Fill)
+                .center_x(Length::Fill);
+            button(label)
+                .width(Length::Fill)
+                .padding(10)
+                .style(rounded_primary)
+                .on_press(Message::Install)
+                .into()
+        };
+        let action_area = container(action_inner)
+            .width(Length::Fixed(CONTENT_WIDTH))
+            .height(ACTION_H)
+            .center_y(ACTION_H);
 
-        let body = column![
-            lang_row,
-            title,
+        let content = column![
+            heading,
             Space::with_height(8),
-            path_label,
-            path_row,
-            Space::with_height(4),
-            associate,
-            license_note,
-            Space::with_height(Length::Fill),
-            install_btn,
-            status,
+            license_box,
+            Space::with_height(8),
+            path_block,
+            Space::with_height(8),
+            action_area,
         ]
-        .spacing(6)
-        .padding(16);
+        .spacing(4)
+        .padding(iced::Padding {
+            top: 10.0,
+            right: 16.0,
+            bottom: 12.0,
+            left: 16.0,
+        })
+        .align_x(Alignment::Center)
+        .width(Length::Fill)
+        .height(Length::Fill);
 
-        container(body)
+        container(column![caption, content].width(Length::Fill).height(Length::Fill))
             .width(Length::Fill)
             .height(Length::Fill)
+            .style(frame_border)
             .into()
     }
 }
+
+const LICENSE_TEXT_ZH: &str = "\
+Oxizip 最终用户许可协议
+
+Oxizip 是自由软件，采用 GNU Affero General Public License v3.0 only（AGPL-3.0-only）授权。
+
+在遵守 AGPL-3.0 条款的前提下，你可以再分发和/或修改本软件。
+完整许可文本见本软件附带的 LICENSE 文件，也可访问：
+https://www.gnu.org/licenses/agpl-3.0.html
+
+点击「同意并安装」即表示你已阅读并同意上述许可协议。
+";
+
+const LICENSE_TEXT_EN: &str = "\
+Oxizip End User License Agreement
+
+Oxizip is free software licensed under the GNU Affero General Public License
+v3.0 only (AGPL-3.0-only).
+
+You may redistribute and/or modify it under the terms of the AGPL-3.0.
+See the LICENSE file shipped with this software, or:
+https://www.gnu.org/licenses/agpl-3.0.html
+
+By clicking \"Agree and Install\" you acknowledge that you have read and
+agree to this license.
+";
 
 struct UninstallApp {
     lang: Lang,
     dir: PathBuf,
     status: String,
+    progress: f32,
     busy: bool,
     done: bool,
+    window_id: Option<window::Id>,
+    job_rx: Option<Receiver<JobEvent>>,
+    pending_elevate: bool,
 }
 
 #[derive(Debug, Clone)]
 enum UMessage {
-    LangZh,
-    LangEn,
+    WindowId(Option<window::Id>),
+    RawWindowId(u64),
+    TitleDrag,
+    Minimize,
+    Close,
+    LangSelected(Lang),
     Confirm,
     Cancel,
+    ElevateWithPosition(Option<Point>),
+    PollJob,
     Finished(Result<(), String>),
 }
 
 impl UninstallApp {
-    fn new(dir: Option<PathBuf>) -> (Self, Task<UMessage>) {
+    fn new(dir: Option<PathBuf>, auto_start: bool) -> (Self, Task<UMessage>) {
         let dir = resolve_install_dir(dir);
-        (
-            Self {
-                lang: Lang::Zh,
-                dir,
-                status: String::new(),
-                busy: false,
-                done: false,
-            },
-            Task::none(),
-        )
+        let app = Self {
+            lang: Lang::Zh,
+            dir,
+            status: String::new(),
+            progress: 0.0,
+            busy: false,
+            done: false,
+            window_id: None,
+            job_rx: None,
+            pending_elevate: false,
+        };
+        let boot = window::get_oldest().map(UMessage::WindowId);
+        if auto_start {
+            (app, Task::batch([boot, Task::done(UMessage::Confirm)]))
+        } else {
+            (app, boot)
+        }
     }
 
     fn title(&self) -> String {
@@ -396,18 +803,72 @@ impl UninstallApp {
         )
     }
 
+    fn subscription(&self) -> Subscription<UMessage> {
+        if self.job_rx.is_some() {
+            iced::time::every(Duration::from_millis(50)).map(|_| UMessage::PollJob)
+        } else {
+            Subscription::none()
+        }
+    }
+
+    fn spawn_uninstall(&mut self) {
+        let dir = Some(self.dir.clone());
+        let (tx, rx) = mpsc::channel();
+        self.job_rx = Some(rx);
+        self.busy = true;
+        self.progress = 0.0;
+        self.status = progress_label(self.lang, "prepare");
+        std::thread::spawn(move || {
+            let tx_progress = tx.clone();
+            let result = perform_uninstall(dir, &mut |fraction, detail| {
+                let _ = tx_progress.send(JobEvent::Progress {
+                    fraction,
+                    detail: detail.to_string(),
+                });
+            })
+            .map_err(|e| e.to_string());
+            let _ = tx.send(JobEvent::Finished(result));
+        });
+    }
+
     fn update(&mut self, message: UMessage) -> Task<UMessage> {
         match message {
-            UMessage::LangZh => {
-                self.lang = Lang::Zh;
+            UMessage::WindowId(id) => {
+                self.window_id = id;
+                match id {
+                    Some(id) => window::get_raw_id::<UMessage>(id).map(UMessage::RawWindowId),
+                    None => Task::none(),
+                }
+            }
+            UMessage::RawWindowId(raw) => {
+                apply_native_window_rounding(raw);
                 Task::none()
             }
-            UMessage::LangEn => {
-                self.lang = Lang::En;
+            UMessage::TitleDrag => self
+                .window_id
+                .map(window::drag)
+                .unwrap_or_else(Task::none),
+            UMessage::Minimize => self
+                .window_id
+                .map(|id| window::minimize(id, true))
+                .unwrap_or_else(Task::none),
+            UMessage::Close => {
+                if self.busy {
+                    return Task::none();
+                }
+                self.window_id
+                    .map(window::close)
+                    .unwrap_or_else(Task::none)
+            }
+            UMessage::LangSelected(lang) => {
+                self.lang = lang;
                 Task::none()
             }
             UMessage::Cancel => {
                 if !self.busy {
+                    if let Some(id) = self.window_id {
+                        return window::close(id);
+                    }
                     std::process::exit(0);
                 }
                 Task::none()
@@ -416,31 +877,54 @@ impl UninstallApp {
                 if self.busy || self.done {
                     return Task::none();
                 }
-                self.busy = true;
-                self.status = self.tr("正在卸载…", "Uninstalling…");
-                let dir = Some(self.dir.clone());
                 #[cfg(windows)]
                 {
                     if !is_elevated() {
-                        let args = encode_uninstall_args(dir.as_deref());
-                        match relaunch_elevated(&args) {
-                            Ok(()) => std::process::exit(0),
-                            Err(e) => {
-                                self.busy = false;
-                                self.status = format!("{e}");
-                                return Task::none();
-                            }
-                        }
+                        self.pending_elevate = true;
+                        return if let Some(id) = self.window_id {
+                            window::get_position(id).map(UMessage::ElevateWithPosition)
+                        } else {
+                            Task::done(UMessage::ElevateWithPosition(None))
+                        };
                     }
                 }
-                Task::perform(
-                    async move { perform_uninstall(dir).map_err(|e| e.to_string()) },
-                    UMessage::Finished,
-                )
+                self.spawn_uninstall();
+                Task::none()
+            }
+            UMessage::ElevateWithPosition(pos) => {
+                if !self.pending_elevate {
+                    return Task::none();
+                }
+                self.pending_elevate = false;
+                let mut args = encode_uninstall_args(Some(&self.dir));
+                append_window_pos(&mut args, pos.map(|p| (p.x, p.y)));
+                match relaunch_elevated(&args) {
+                    Ok(()) => std::process::exit(0),
+                    Err(e) => {
+                        self.status = format!("{e}");
+                        Task::none()
+                    }
+                }
+            }
+            UMessage::PollJob => {
+                let Some(rx) = self.job_rx.as_ref() else {
+                    return Task::none();
+                };
+                let (progress, finished) = drain_job(rx);
+                if let Some((fraction, detail)) = progress {
+                    self.progress = fraction.clamp(0.0, 1.0);
+                    self.status = progress_label(self.lang, &detail);
+                }
+                if let Some(result) = finished {
+                    self.job_rx = None;
+                    return Task::done(UMessage::Finished(result));
+                }
+                Task::none()
             }
             UMessage::Finished(Ok(())) => {
                 self.busy = false;
                 self.done = true;
+                self.progress = 1.0;
                 self.status = self.tr("Oxizip 已卸载。", "Oxizip has been removed.");
                 Task::none()
             }
@@ -453,91 +937,92 @@ impl UninstallApp {
     }
 
     fn view(&self) -> Element<'_, UMessage> {
-        let lang_row = row![
-            Space::with_width(Length::Fill),
-            button(text(Lang::Zh.label()))
-                .on_press(UMessage::LangZh)
-                .style(if self.lang == Lang::Zh {
-                    iced::widget::button::primary
-                } else {
-                    iced::widget::button::secondary
-                }),
-            Space::with_width(8),
-            button(text(Lang::En.label()))
-                .on_press(UMessage::LangEn)
-                .style(if self.lang == Lang::En {
-                    iced::widget::button::primary
-                } else {
-                    iced::widget::button::secondary
-                }),
-        ]
-        .align_y(iced::Alignment::Center);
+        let window_title = self.title();
+        let caption = caption_bar(
+            window_title.clone(),
+            self.lang,
+            UMessage::LangSelected,
+            UMessage::TitleDrag,
+            UMessage::Minimize,
+            UMessage::Close,
+        );
 
         let path_line = text(format!(
             "{} {}",
             self.tr("安装目录：", "Install folder:"),
             self.dir.display()
         ))
-        .size(13);
-
-        let actions = if self.done {
-            row![button(text(self.tr("完成", "Done")).size(16))
-                .width(Length::Fill)
-                .padding(12)
-                .on_press(UMessage::Cancel)
-                .style(iced::widget::button::primary)]
-        } else {
-            let uninstall = {
-                let label = if self.busy {
-                    self.tr("请稍候…", "Please wait…")
-                } else {
-                    self.tr("卸载", "Uninstall")
-                };
-                let b = button(text(label).size(16))
-                    .width(Length::Fill)
-                    .padding(12);
-                if self.busy {
-                    b
-                } else {
-                    b.on_press(UMessage::Confirm)
-                        .style(iced::widget::button::danger)
-                }
-            };
-            let cancel = {
-                let b = button(text(self.tr("取消", "Cancel")).size(16))
-                    .width(Length::Fill)
-                    .padding(12);
-                if self.busy {
-                    b
-                } else {
-                    b.on_press(UMessage::Cancel)
-                }
-            };
-            row![uninstall, Space::with_width(12), cancel]
-        };
+        .size(12);
 
         let status = if self.status.is_empty() {
-            text(self.prompt()).size(14)
+            text(self.prompt()).size(12)
         } else {
-            text(&self.status).size(14)
+            text(&self.status).size(12)
         };
 
-        container(
+        let action_area: Element<'_, UMessage> = if self.busy {
+            progress_bar(0.0..=1.0, self.progress)
+                .width(Length::Fill)
+                .height(8)
+                .into()
+        } else if self.done {
             column![
-                lang_row,
-                text(self.title()).size(22),
+                progress_bar(0.0..=1.0, self.progress)
+                    .width(Length::Fill)
+                    .height(8),
                 Space::with_height(8),
-                path_line,
-                Space::with_height(8),
-                status,
-                Space::with_height(Length::Fill),
-                actions,
+                button(
+                    container(text(self.tr("完成", "Done")).size(14))
+                        .width(Length::Fill)
+                        .center_x(Length::Fill)
+                )
+                .width(Length::Fill)
+                .padding(10)
+                .on_press(UMessage::Cancel)
+                .style(rounded_primary),
             ]
-            .spacing(8)
-            .padding(20),
-        )
+            .into()
+        } else {
+            let uninstall = button(
+                container(text(self.tr("卸载", "Uninstall")).size(14))
+                    .width(Length::Fill)
+                    .center_x(Length::Fill),
+            )
+            .width(Length::Fill)
+            .padding(10)
+            .style(rounded_danger)
+            .on_press(UMessage::Confirm);
+            let cancel = button(
+                container(text(self.tr("取消", "Cancel")).size(14))
+                    .width(Length::Fill)
+                    .center_x(Length::Fill),
+            )
+            .width(Length::Fill)
+            .padding(10)
+            .style(rounded_secondary)
+            .on_press(UMessage::Cancel);
+            row![uninstall, Space::with_width(12), cancel].into()
+        };
+
+        let content = column![
+            text(window_title).size(16),
+            Space::with_height(6),
+            path_line,
+            Space::with_height(6),
+            status,
+            Space::with_height(Length::Fill),
+            action_area,
+        ]
+        .spacing(6)
+        .padding(16)
         .width(Length::Fill)
         .height(Length::Fill)
-        .into()
+        .align_x(Alignment::Center);
+
+        container(column![caption, content].width(Length::Fill).height(Length::Fill))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(frame_border)
+            .into()
     }
 }

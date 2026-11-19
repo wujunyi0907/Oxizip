@@ -9,6 +9,19 @@ pub const APP_ID: &str = "cn.wujunyi.oxizip";
 pub const APP_NAME: &str = "Oxizip";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Avoid flashing a console window when spawning CLI helpers from the iced UI.
+#[cfg(windows)]
+fn hide_console(cmd: &mut Command) -> &mut Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW)
+}
+
+#[cfg(not(windows))]
+fn hide_console(cmd: &mut Command) -> &mut Command {
+    cmd
+}
+
 pub fn default_install_dir() -> PathBuf {
     #[cfg(windows)]
     {
@@ -61,7 +74,14 @@ impl From<io::Error> for InstallError {
 
 pub type InstallResult<T> = Result<T, InstallError>;
 
-pub fn extract_payload_to(dir: &Path) -> InstallResult<()> {
+/// Progress callback: fraction in `0.0..=1.0` plus a short status detail.
+pub type ProgressCb<'a> = dyn FnMut(f32, &str) + Send + 'a;
+
+fn report(progress: &mut ProgressCb<'_>, fraction: f32, detail: &str) {
+    progress(fraction.clamp(0.0, 1.0), detail);
+}
+
+pub fn extract_payload_to(dir: &Path, progress: &mut ProgressCb<'_>) -> InstallResult<()> {
     if !has_payload() {
         return Err(InstallError::Msg(
             "setup payload missing — rebuild with scripts/package-windows.ps1".into(),
@@ -71,6 +91,7 @@ pub fn extract_payload_to(dir: &Path) -> InstallResult<()> {
     let cursor = std::io::Cursor::new(payload_bytes());
     let mut archive = zip::ZipArchive::new(cursor)
         .map_err(|e| InstallError::Msg(format!("read payload zip: {e}")))?;
+    let total = archive.len().max(1) as f32;
     for i in 0..archive.len() {
         let mut file = archive
             .by_index(i)
@@ -82,13 +103,14 @@ pub fn extract_payload_to(dir: &Path) -> InstallResult<()> {
         let out = dir.join(&name);
         if file.is_dir() {
             fs::create_dir_all(&out)?;
-            continue;
+        } else {
+            if let Some(parent) = out.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut dest = fs::File::create(&out)?;
+            io::copy(&mut file, &mut dest)?;
         }
-        if let Some(parent) = out.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut dest = fs::File::create(&out)?;
-        io::copy(&mut file, &mut dest)?;
+        report(progress, (i + 1) as f32 / total, "extract");
     }
     Ok(())
 }
@@ -145,6 +167,43 @@ pub fn is_elevated() -> bool {
     false
 }
 
+/// Quote one argv token for `ShellExecuteW` / `CreateProcess` command lines.
+/// Without this, paths like `C:\Program Files\Oxizip` split on the space.
+fn quote_cmd_arg(arg: &str) -> String {
+    let needs_quotes = arg.is_empty()
+        || arg
+            .chars()
+            .any(|c| c.is_whitespace() || c == '"' || c == '\u{0000}');
+    if !needs_quotes {
+        return arg.to_string();
+    }
+    let mut out = String::from('"');
+    let mut backslashes = 0usize;
+    for c in arg.chars() {
+        match c {
+            '\\' => backslashes += 1,
+            '"' => {
+                out.push_str(&"\\".repeat(backslashes * 2 + 1));
+                out.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                if backslashes > 0 {
+                    out.push_str(&"\\".repeat(backslashes));
+                    backslashes = 0;
+                }
+                out.push(c);
+            }
+        }
+    }
+    // Trailing backslashes before the closing quote must be doubled.
+    if backslashes > 0 {
+        out.push_str(&"\\".repeat(backslashes * 2));
+    }
+    out.push('"');
+    out
+}
+
 /// Relaunch this executable elevated (UAC). Returns Ok(()) if relaunch was requested.
 #[cfg(windows)]
 pub fn relaunch_elevated(extra_args: &[String]) -> InstallResult<()> {
@@ -168,7 +227,11 @@ pub fn relaunch_elevated(extra_args: &[String]) -> InstallResult<()> {
     }
     let exe = std::env::current_exe().map_err(InstallError::Io)?;
     let exe_s = exe.to_string_lossy().to_string();
-    let params = extra_args.join(" ");
+    let params = extra_args
+        .iter()
+        .map(|a| quote_cmd_arg(a))
+        .collect::<Vec<_>>()
+        .join(" ");
     let op = wide("runas");
     let file = wide(&exe_s);
     let par = wide(&params);
@@ -197,16 +260,42 @@ pub fn relaunch_elevated(_extra_args: &[String]) -> InstallResult<()> {
     ))
 }
 
-fn copy_dir_recursive(src: &Path, dst: &Path) -> InstallResult<()> {
+fn count_files(dir: &Path) -> io::Result<usize> {
+    let mut n = 0usize;
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            n += count_files(&entry.path())?;
+        } else {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+fn copy_dir_recursive(
+    src: &Path,
+    dst: &Path,
+    progress: &mut ProgressCb<'_>,
+    done: &mut usize,
+    total: usize,
+) -> InstallResult<()> {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let ty = entry.file_type()?;
         let to = dst.join(entry.file_name());
         if ty.is_dir() {
-            copy_dir_recursive(&entry.path(), &to)?;
+            copy_dir_recursive(&entry.path(), &to, progress, done, total)?;
         } else {
             fs::copy(entry.path(), &to)?;
+            *done += 1;
+            let frac = if total == 0 {
+                1.0
+            } else {
+                *done as f32 / total as f32
+            };
+            report(progress, frac, "copy");
         }
     }
     Ok(())
@@ -295,8 +384,9 @@ fn create_start_menu_shortcut(dir: &Path) -> InstallResult<()> {
             .to_string()
             .replace('\'', "''"),
     );
-    let _ = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &ps])
+    let mut cmd = Command::new("powershell");
+    let _ = hide_console(&mut cmd)
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps])
         .status();
     Ok(())
 }
@@ -306,28 +396,51 @@ fn create_start_menu_shortcut(_dir: &Path) -> InstallResult<()> {
     Ok(())
 }
 
-pub fn perform_install(opts: &InstallOptions) -> InstallResult<()> {
+pub fn perform_install(
+    opts: &InstallOptions,
+    progress: &mut ProgressCb<'_>,
+) -> InstallResult<()> {
+    report(progress, 0.02, "prepare");
     let staging = tempfile::tempdir().map_err(InstallError::Io)?;
-    extract_payload_to(staging.path())?;
 
+    extract_payload_to(staging.path(), &mut |f, _| {
+        report(progress, 0.05 + f * 0.50, "extract");
+    })?;
+
+    report(progress, 0.56, "copy");
     fs::create_dir_all(&opts.dir)?;
-    copy_dir_recursive(staging.path(), &opts.dir)?;
+    let total_files = count_files(staging.path()).unwrap_or(1).max(1);
+    let mut copied = 0usize;
+    copy_dir_recursive(
+        staging.path(),
+        &opts.dir,
+        &mut |f, _| {
+            report(progress, 0.56 + f * 0.28, "copy");
+        },
+        &mut copied,
+        total_files,
+    )?;
 
+    report(progress, 0.86, "uninstall_stub");
     // Installer copy becomes Uninstall.exe (same binary, uninstall mode).
     let self_exe = std::env::current_exe().map_err(InstallError::Io)?;
     fs::copy(&self_exe, opts.dir.join("Uninstall.exe"))?;
 
+    report(progress, 0.90, "registry");
     write_uninstall_registry(&opts.dir)?;
+    report(progress, 0.94, "shortcut");
     create_start_menu_shortcut(&opts.dir)?;
 
     if opts.associate {
+        report(progress, 0.97, "associate");
         let cli = opts.dir.join(if cfg!(windows) {
             "oxizip-cli.exe"
         } else {
             "oxizip-cli"
         });
         if cli.is_file() {
-            let status = Command::new(&cli)
+            let mut cmd = Command::new(&cli);
+            let status = hide_console(&mut cmd)
                 .args(["--lang", &opts.lang, "shell", "install"])
                 .status()
                 .map_err(InstallError::Io)?;
@@ -338,6 +451,7 @@ pub fn perform_install(opts: &InstallOptions) -> InstallResult<()> {
             }
         }
     }
+    report(progress, 1.0, "done");
     Ok(())
 }
 
@@ -361,8 +475,12 @@ pub fn resolve_install_dir(dir: Option<PathBuf>) -> PathBuf {
     })
 }
 
-pub fn perform_uninstall(dir: Option<PathBuf>) -> InstallResult<()> {
+pub fn perform_uninstall(
+    dir: Option<PathBuf>,
+    progress: &mut ProgressCb<'_>,
+) -> InstallResult<()> {
     let dir = resolve_install_dir(dir);
+    report(progress, 0.05, "prepare");
 
     let cli = dir.join(if cfg!(windows) {
         "oxizip-cli.exe"
@@ -370,17 +488,22 @@ pub fn perform_uninstall(dir: Option<PathBuf>) -> InstallResult<()> {
         "oxizip-cli"
     });
     if cli.is_file() {
-        let _ = Command::new(&cli)
+        report(progress, 0.15, "shell");
+        let mut cmd = Command::new(&cli);
+        let _ = hide_console(&mut cmd)
             .args(["--lang", "zh-cn", "shell", "uninstall"])
             .status();
     }
 
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
+        report(progress, 0.30, "stop");
+        let mut kill_gui = Command::new("taskkill");
+        let _ = hide_console(&mut kill_gui)
             .args(["/F", "/IM", "oxizip.exe"])
             .status();
-        let _ = Command::new("taskkill")
+        let mut kill_cli = Command::new("taskkill");
+        let _ = hide_console(&mut kill_cli)
             .args(["/F", "/IM", "oxizip-cli.exe"])
             .status();
         std::thread::sleep(std::time::Duration::from_millis(500));
@@ -388,6 +511,7 @@ pub fn perform_uninstall(dir: Option<PathBuf>) -> InstallResult<()> {
 
     #[cfg(windows)]
     {
+        report(progress, 0.50, "registry");
         use winreg::enums::*;
         use winreg::RegKey;
         let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
@@ -395,6 +519,7 @@ pub fn perform_uninstall(dir: Option<PathBuf>) -> InstallResult<()> {
             "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{APP_ID}"
         ));
         let _ = hklm.delete_subkey_all(format!("Software\\{APP_ID}"));
+        report(progress, 0.65, "start_menu");
         if let Some(pd) = std::env::var_os("ProgramData").map(PathBuf::from) {
             let menu = pd
                 .join("Microsoft\\Windows\\Start Menu\\Programs")
@@ -413,18 +538,23 @@ pub fn perform_uninstall(dir: Option<PathBuf>) -> InstallResult<()> {
             .and_then(|p| p.parent().map(|parent| parent == dir))
             .unwrap_or(false);
         if self_in_dir {
+            report(progress, 0.85, "schedule_delete");
             let script = format!(
                 "ping 127.0.0.1 -n 3 >nul & rmdir /S /Q \"{}\"",
                 dir.display()
             );
-            let _ = Command::new("cmd").args(["/C", &script]).spawn();
+            let mut cmd = Command::new("cmd");
+            let _ = hide_console(&mut cmd).args(["/C", &script]).spawn();
+            report(progress, 1.0, "done");
             return Ok(());
         }
     }
 
+    report(progress, 0.85, "delete");
     if dir.is_dir() {
         let _ = fs::remove_dir_all(&dir);
     }
+    report(progress, 1.0, "done");
     Ok(())
 }
 
@@ -441,10 +571,10 @@ pub fn launch_app(dir: &Path) -> InstallResult<()> {
     Ok(())
 }
 
-/// Encode install options into CLI args for elevated relaunch.
+/// Encode install options for elevated relaunch that keeps the UI (progress bar).
 pub fn encode_install_args(opts: &InstallOptions) -> Vec<String> {
     let mut args = vec![
-        "--elevated-install".into(),
+        "--auto-install".into(),
         "--dir".into(),
         opts.dir.display().to_string(),
         "--lang".into(),
@@ -456,8 +586,9 @@ pub fn encode_install_args(opts: &InstallOptions) -> Vec<String> {
     args
 }
 
+/// Encode uninstall args for elevated relaunch that keeps the UI (progress bar).
 pub fn encode_uninstall_args(dir: Option<&Path>) -> Vec<String> {
-    let mut args = vec!["--elevated-uninstall".into()];
+    let mut args = vec!["--uninstall".into(), "--auto-uninstall".into()];
     if let Some(d) = dir {
         args.push("--dir".into());
         args.push(d.display().to_string());
@@ -465,14 +596,28 @@ pub fn encode_uninstall_args(dir: Option<&Path>) -> Vec<String> {
     args
 }
 
+/// Append `--pos-x` / `--pos-y` so an elevated child can reopen at the same place.
+pub fn append_window_pos(args: &mut Vec<String>, pos: Option<(f32, f32)>) {
+    if let Some((x, y)) = pos {
+        args.push("--pos-x".into());
+        args.push(x.to_string());
+        args.push("--pos-y".into());
+        args.push(y.to_string());
+    }
+}
+
 pub fn parse_cli() -> CliMode {
     let mut uninstall = false;
     let mut quiet = false;
     let mut elevated_install = false;
     let mut elevated_uninstall = false;
+    let mut auto_install = false;
+    let mut auto_uninstall = false;
     let mut associate = false;
     let mut dir = None;
     let mut lang = "zh-cn".to_string();
+    let mut pos_x = None;
+    let mut pos_y = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -480,6 +625,8 @@ pub fn parse_cli() -> CliMode {
             "--quiet" | "/S" => quiet = true,
             "--elevated-install" => elevated_install = true,
             "--elevated-uninstall" => elevated_uninstall = true,
+            "--auto-install" => auto_install = true,
+            "--auto-uninstall" => auto_uninstall = true,
             "--associate" => associate = true,
             "--dir" => dir = args.next().map(PathBuf::from),
             "--lang" => {
@@ -487,9 +634,19 @@ pub fn parse_cli() -> CliMode {
                     lang = v;
                 }
             }
+            "--pos-x" => {
+                pos_x = args.next().and_then(|v| v.parse().ok());
+            }
+            "--pos-y" => {
+                pos_y = args.next().and_then(|v| v.parse().ok());
+            }
             _ => {}
         }
     }
+    let window_pos = match (pos_x, pos_y) {
+        (Some(x), Some(y)) => Some((x, y)),
+        _ => None,
+    };
     // If this binary was installed as Uninstall.exe, default to uninstall UI.
     if let Ok(exe) = std::env::current_exe() {
         if exe
@@ -502,27 +659,69 @@ pub fn parse_cli() -> CliMode {
         }
     }
     if elevated_install {
+        // Quiet/script path (no UI).
         CliMode::ElevatedInstall(InstallOptions {
-            dir: dir.unwrap_or_else(default_install_dir),
+            dir: dir.clone().unwrap_or_else(default_install_dir),
             associate,
-            lang,
+            lang: lang.clone(),
         })
     } else if elevated_uninstall || (uninstall && quiet) {
-        CliMode::ElevatedUninstall { dir }
+        CliMode::ElevatedUninstall { dir: dir.clone() }
     } else if uninstall {
-        CliMode::UninstallUi { dir }
+        CliMode::UninstallUi {
+            dir,
+            auto_start: auto_uninstall,
+            window_pos,
+        }
     } else {
-        CliMode::InstallerUi
+        let auto = if auto_install {
+            Some(InstallOptions {
+                dir: dir.unwrap_or_else(default_install_dir),
+                associate,
+                lang,
+            })
+        } else {
+            None
+        };
+        CliMode::InstallerUi {
+            auto_install: auto,
+            window_pos,
+        }
     }
 }
 
 pub enum CliMode {
-    InstallerUi,
+    InstallerUi {
+        auto_install: Option<InstallOptions>,
+        window_pos: Option<(f32, f32)>,
+    },
     ElevatedInstall(InstallOptions),
     UninstallUi {
         dir: Option<PathBuf>,
+        auto_start: bool,
+        window_pos: Option<(f32, f32)>,
     },
     ElevatedUninstall {
         dir: Option<PathBuf>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quote_cmd_arg;
+
+    #[test]
+    fn quote_preserves_program_files_path() {
+        let path = r"C:\Program Files\Oxizip";
+        let quoted = quote_cmd_arg(path);
+        assert_eq!(quoted, r#""C:\Program Files\Oxizip""#);
+        let line = format!("--auto-install --dir {quoted} --lang zh-cn");
+        assert!(line.contains(r#""C:\Program Files\Oxizip""#));
+    }
+
+    #[test]
+    fn quote_skips_simple_tokens() {
+        assert_eq!(quote_cmd_arg("--dir"), "--dir");
+        assert_eq!(quote_cmd_arg(r"C:\Oxizip"), r"C:\Oxizip");
+    }
 }
