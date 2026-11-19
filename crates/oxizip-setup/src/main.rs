@@ -1020,7 +1020,7 @@ impl UninstallApp {
             .padding(10)
             .style(rounded_secondary)
             .on_press(UMessage::Cancel);
-            row![uninstall, Space::with_width(12), cancel].into()
+            row![cancel, Space::with_width(12), uninstall].into()
         };
 
         let content = column![

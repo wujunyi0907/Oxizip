@@ -57,6 +57,29 @@ oxizip-cli / oxizip-gui
 5c. **WIM**：只通过 wimlib CLI；查找：`OXIZIP_WIMLIB` → 同目录 → `third_party/wimlib/` → PATH。
 6. **打开文件**：解到受控临时目录后调用系统关联打开，不做内嵌预览控件。
 7. **中文沟通**：面向用户的说明、提交说明按仓库约定；代码标识符用英文。
+8. **跨平台可用性（Windows + Linux）**：见下一节；不得把功能做成「仅 Windows 可用」却在 Linux 构建中静默空实现（明确不支持的平台如 macOS 须返回可本地化错误）。
+
+## 跨平台可用性（Windows / Linux）
+
+主目标平台为 **Windows x64** 与 **Linux x86_64**（见打包脚本与 CI）。新增或改动用户可见功能时，**默认两边都要能用**，并在实现/PR 中写明验证面。
+
+| 能力 | Windows | Linux | 注意 |
+|---|---|---|---|
+| 文件关联 / 默认打开 | `oxizip-cli shell install`：ProgID + `UserChoice` / `UserChoiceLatest` + Capabilities | 同命令：用户级 `cn.wujunyi.oxizip.desktop` + `xdg-mime default` + 必要时 `~/.local/share/mime/packages`；卸载清理 `mimeapps.list` 中本应用条目 | GUI 关联页勾选的 `--ext` **两边都要生效**；勿只在 Win 写注册表而 Linux 忽略扩展过滤 |
+| 右键 / 文件管理器菜单 | Explorer 动词 | FreeDesktop Actions + Nautilus scripts + KDE service menus | 动作语义对齐（解压/压缩等）；路径含空格须正确引用 |
+| 安装 / 卸载 | `oxizip-setup` + `package-windows.ps1` | deb/rpm/AppImage（`package-linux.sh`） | 禁止嵌入第三方安装器资源；Linux 包内 `oxizip.desktop` 与用户级关联可并存 |
+| 外部工具 | UnRAR / wimlib 旁路查找 | PATH / 系统 `unrar`、`wimlib-imagex` | 缺失时返回可本地化错误，勿假定 exe 一定在旁 |
+| GUI | iced 620×480；字体 YaHei | iced 同尺寸；系统默认字体 | 勿把 Win 专用 API 写进跨平台 UI 路径且不加 `cfg` |
+| CLI | `oxizip-cli` | 同名二进制（无 `.exe`） | GUI 旁路查找 CLI 时注意平台文件名 |
+
+**Agent / 开发检查清单**（改功能时过一遍）：
+
+1. 该功能在 Linux 上是否有对等入口（同一 CLI 子命令 / 同一 GUI 流程）？
+2. 若行为依赖壳层（关联、图标、菜单、路径、进程创建），是否有 `cfg(windows)` / Unix 分支且 Linux 分支非空？
+3. 打包产物（deb/rpm/AppImage 与 Windows 安装器）是否仍能发现 GUI、CLI、图标与外部工具？
+4. 验证：至少 `cargo check -p <crate>`；有条件时 Linux 上跑对应 `shell install` / GUI 关联或打包脚本。
+
+明确暂不支持的平台（当前 **macOS**）可保留 stub 并返回清晰错误，但 **不得** 用「只做了 Windows」代替 Linux。
 
 ## 变更范围
 
@@ -118,6 +141,60 @@ oxizip-cli / oxizip-gui
 - 视图层不调用 formats；只发消息，由 update/worker 调 `oxizip-engine`。
 - 文案全部经 i18n。
 - CLI：`clap` derive；日志 `tracing`；`-v` 增加细节；与 GUI 共享 engine。
+
+### UI 风格、配色与控件规范
+
+安装 / 卸载界面（`oxizip-setup`）为**紧凑对话框**的视觉基准；主 GUI 的首次关联页等应向其对齐，避免另起一套皮肤。参考实现：`crates/oxizip-setup/src/main.rs`。图标资源：`crates/oxizip-gui/assets/icons/`（品牌标 `oxizip.ico`，各格式独立 `.ico`）。**禁止**从 `reference/` 或第三方安装器拷贝皮肤 / 图标。
+
+#### 整体风格
+
+| 项 | 约定 |
+|---|---|
+| 框架 | iced；默认浅色 `Theme`（跟随 iced Light palette） |
+| 字体 | Windows：`Microsoft YaHei UI`；其他平台：系统默认 |
+| 窗体 | 固定尺寸、不可缩放；默认**水平 + 垂直居中**（用 `Position::SpecificWith` 按显示器计算，勿依赖不可靠的 `Centered`） |
+| 安装器窗 | **无系统边框** + `transparent`；自绘圆角外框 + 自定义标题栏；Win11 可对 HWND 设 DWM 圆角 |
+| 圆角 | 窗口外框 / 标题栏顶角 **12px**（`WINDOW_RADIUS`）；按钮、输入区、许可/列表框 **8px**（`CONTROL_RADIUS`）；标题栏文字按钮约 **6px** |
+| 布局 | 安装器内容水平居中；GUI 关联页标题/正文**左对齐**；留白紧凑（内容 padding 约 10–16，控件间距 4–8） |
+| 推荐尺寸 | 安装 **600×440**；卸载 **486×300**（约黄金比）；**主 GUI 全屏页统一 620×480**（与文件关联页相同，含主界面 / 许可页等，禁止再切回更大主窗） |
+
+#### 配色（结合图标）
+
+品牌图标 `oxizip.ico` 主色为**深蓝底 + 青蓝高光**（采样约：`#001030` / `#002040` 深蓝、`#105080`–`#2070a0` 中蓝、`#40a0c0` / `#20d0c0` 青绿强调、浅部 `#f0f0f0`）。界面配色规则：
+
+| 角色 | 用法 | 说明 |
+|---|---|---|
+| 页面底 | `palette.background.base` | 窗外框填充 |
+| 弱底 / 分区 | `palette.background.weak` | 标题栏、许可框、列表框背景 |
+| 描边 | `palette.background.strong` | 1px 边框；外框与内嵌卡片一致 |
+| 正文 | theme 默认 text | 层级靠字号，不另造灰阶文本色 |
+| 主操作 | `button::primary` | 安装「同意并安装」、卸载完成「完成」、关联「立即应用」；色相与图标中蓝同族（iced Light 主色约 `#5E7CE2`，后续自定义主题时向图标青蓝靠拢，**避免**紫粉渐变或高饱和无关色） |
+| 次操作 | `button::secondary` | 「…」浏览、取消 |
+| 危险 | `button::danger` | 「卸载」等破坏性操作 |
+| 进度条 | iced `progress_bar` 默认（跟 primary） | 仅作业进行中 / 刚完成时出现 |
+
+格式图标（`zip.ico`、`7z.ico` 等）仅用于列表/关联勾选等**语义识别**，不要把某一格式的高饱和色当成全局主题色。
+
+#### 控件与交互规范
+
+- **标题栏（安装器）**：高 32；左侧拖拽区 + 标题 12px；**语言下拉紧挨最小化/关闭左侧**；min/close 为文字按钮（约 40×28），勿用系统默认标题栏控件混搭。
+- **字号**：窗口/页标题 **16**；主按钮文案 **14**；表单标签与正文 **12**；许可正文、状态行 **11**。忌大标题堆叠。
+- **主按钮**：通栏（或接近内容宽）、`padding` 约 10；圆角 8；同一时刻只突出一个 primary。
+- **进度**：开始安装/卸载后**隐藏**对应主按钮，在同一固定高度槽位显示进度条 + 状态文案，避免布局跳动；空闲时不要预留空白进度条。
+- **安装完成**：启动 GUI（`--setup` 进入关联页）后**立即退出**安装器；卸载完成保留界面与「完成」按钮，由用户关闭。
+- **路径**：目录输入 +「…」次按钮；作业中禁用编辑。提权命令行须正确引用含空格路径（如 `Program Files`）。
+- **UAC（安装）**：安装器启动时**先**请求提权，再显示许可/路径界面并执行安装；勿在未提权进程里先解压或写 Program Files。
+- **关联页（GUI）**：分组勾选扩展名（不显示格式图标）；列表放在弱底圆角容器内；左下角「全选 / 取消全选」合一按钮（未全选显示全选，已全选显示取消全选），右下角「确定」，「暂时跳过」用 plain（`button::text`）。
+- **GUI 窗口**：所有后续界面与文件关联页同为 **620×480** 且启动默认居中；页面切换**不要**改窗口尺寸。
+- **文案**：用户可见字符串走 i18n（安装器内可临时双语表，长期宜归 `oxizip-i18n`）；中英切换不得改变布局骨架。
+- **进程**：从 UI 拉起 CLI / 助手时隐藏控制台闪窗（Windows `CREATE_NO_WINDOW`）。
+
+#### 不要做（UI）
+
+- 不要复制 Bandizip / 第三方安装器的皮肤、广告页、授权墙或图标集
+- 不要引入 WebView、花哨多阴影卡片墙、无意义渐变英雄区
+- 不要在 iced UI 线程做重 CPU / 大文件解压；进度必须可感知
+- 不要让危险操作使用 primary 样式；不要让次要操作用 danger
 
 ### 测试
 

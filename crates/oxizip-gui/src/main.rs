@@ -16,7 +16,7 @@ use iced::widget::{
     button, checkbox, column, container, image, pick_list, progress_bar, row, scrollable, text,
     text_input, Column, Space,
 };
-use iced::{Alignment, Element, Length, Size, Subscription, Task};
+use iced::{window, Alignment, Element, Length, Point, Size, Subscription, Task};
 use std::collections::BTreeMap;
 use icons::IconSet;
 use licenses::{catalog, ComponentKind};
@@ -82,9 +82,21 @@ impl std::fmt::Display for LicenseFilter {
     }
 }
 
+/// Single size for all GUI screens (association, main, licenses, …).
+const APP_WINDOW_SIZE: Size = Size::new(620.0, 480.0);
+
+fn center_on_monitor(size: Size, monitor: Size) -> Point {
+    Point::new(
+        ((monitor.width - size.width) / 2.0).max(0.0),
+        ((monitor.height - size.height) / 2.0).max(0.0),
+    )
+}
+
 fn main() -> iced::Result {
     let mut window = iced::window::Settings {
-        size: Size::new(980.0, 640.0),
+        size: APP_WINDOW_SIZE,
+        // `Centered` is unreliable on Windows; compute from monitor size.
+        position: window::Position::SpecificWith(center_on_monitor),
         ..Default::default()
     };
     window.icon = icons::window_icon();
@@ -272,8 +284,7 @@ enum Message {
     LicenseFilterSelected(LicenseFilter),
     ShowSetup,
     SetupExtToggled(&'static str, bool),
-    SetupSelectAll,
-    SetupClearAll,
+    SetupToggleSelectAll,
     SetupConfirm,
     SetupSkip,
 }
@@ -526,15 +537,10 @@ impl OxizipApp {
                 }
                 Task::none()
             }
-            Message::SetupSelectAll => {
+            Message::SetupToggleSelectAll => {
+                let all_on = self.setup_all_selected();
                 for on in self.setup_exts.values_mut() {
-                    *on = true;
-                }
-                Task::none()
-            }
-            Message::SetupClearAll => {
-                for on in self.setup_exts.values_mut() {
-                    *on = false;
+                    *on = !all_on;
                 }
                 Task::none()
             }
@@ -833,28 +839,28 @@ impl OxizipApp {
         }
     }
 
+    fn setup_all_selected(&self) -> bool {
+        !self.setup_exts.is_empty() && self.setup_exts.values().all(|on| *on)
+    }
+
     fn view_setup(&self) -> Element<'_, Message> {
-        let mut groups = Column::new().spacing(12);
+        const CONTROL_RADIUS: f32 = 8.0;
+
+        let mut groups = Column::new().spacing(12).width(Length::Fill);
         for (group, exts) in setup::assoc_catalog() {
-            let mut chips = Column::new().spacing(4);
-            // Wrap extensions in rows of ~4.
-            let mut row_exts = row![].spacing(12).align_y(Alignment::Center);
+            let mut chips = Column::new().spacing(4).width(Length::Fill);
+            let mut row_exts = row![].spacing(8).align_y(Alignment::Center);
             let mut count_in_row = 0usize;
             for ext in *exts {
                 let checked = self.setup_exts.get(ext).copied().unwrap_or(false);
-                let cell = row![
-                    image(self.icons.for_ext(ext)).width(16).height(16),
-                    checkbox(format!(".{ext}"), checked)
-                        .on_toggle(move |on| Message::SetupExtToggled(ext, on)),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center)
-                .width(Length::Fixed(110.0));
+                let cell = checkbox(format!(".{ext}"), checked)
+                    .on_toggle(move |on| Message::SetupExtToggled(ext, on))
+                    .width(Length::Fixed(88.0));
                 row_exts = row_exts.push(cell);
                 count_in_row += 1;
-                if count_in_row >= 4 {
+                if count_in_row >= 5 {
                     chips = chips.push(row_exts);
-                    row_exts = row![].spacing(12).align_y(Alignment::Center);
+                    row_exts = row![].spacing(8).align_y(Alignment::Center);
                     count_in_row = 0;
                 }
             }
@@ -863,25 +869,21 @@ impl OxizipApp {
             }
             groups = groups.push(
                 column![
-                    text(t(self.lang, group.i18n_key())).size(14),
+                    text(t(self.lang, group.i18n_key())).size(13),
                     chips,
                 ]
-                .spacing(6),
+                .spacing(6)
+                .width(Length::Fill)
+                .align_x(Alignment::Start),
             );
         }
 
         let list = container(
-            scrollable(
-                column![
-                    text(t(self.lang, "gui.setup.list")).size(13),
-                    groups,
-                ]
-                .spacing(10)
-                .padding(12),
-            )
-            .height(Length::Fill),
+            scrollable(groups.padding(12))
+                .height(Length::Fill)
+                .width(Length::Fill),
         )
-        .width(Length::Fixed(520.0))
+        .width(Length::Fill)
         .height(Length::Fill)
         .style(|theme: &iced::Theme| {
             let palette = theme.extended_palette();
@@ -890,7 +892,7 @@ impl OxizipApp {
                 border: iced::Border {
                     color: palette.background.strong.color,
                     width: 1.0,
-                    radius: 4.0.into(),
+                    radius: CONTROL_RADIUS.into(),
                 },
                 ..Default::default()
             }
@@ -899,43 +901,53 @@ impl OxizipApp {
         let err = self
             .last_error
             .as_ref()
-            .map(|e| text(e.as_str()).size(13))
-            .unwrap_or_else(|| text(" ").size(13));
+            .map(|e| text(e.as_str()).size(12))
+            .unwrap_or_else(|| text(" ").size(12));
 
+        let toggle_label = if self.setup_all_selected() {
+            t(self.lang, "gui.setup.clear_all")
+        } else {
+            t(self.lang, "gui.setup.select_all")
+        };
+        // Bottom: toggle (left) · skip (plain) · OK (right)
         let actions = row![
-            button(text(t(self.lang, "gui.setup.select_all")))
-                .on_press(Message::SetupSelectAll),
-            button(text(t(self.lang, "gui.setup.clear_all"))).on_press(Message::SetupClearAll),
+            button(text(toggle_label).size(12))
+                .padding([6, 12])
+                .height(32)
+                .on_press(Message::SetupToggleSelectAll)
+                .style(iced::widget::button::secondary),
             Space::with_width(Length::Fill),
-            button(text(t(self.lang, "gui.setup.skip"))).on_press(Message::SetupSkip),
-            button(text(t(self.lang, "gui.setup.apply")).size(16))
-                .padding([10, 18])
+            button(text(t(self.lang, "gui.setup.skip")).size(12))
+                .padding([6, 10])
+                .height(32)
+                .on_press(Message::SetupSkip)
+                .style(iced::widget::button::text),
+            button(text(t(self.lang, "gui.setup.apply")).size(13))
+                .padding([6, 16])
+                .height(32)
                 .on_press(Message::SetupConfirm)
                 .style(iced::widget::button::primary),
         ]
-        .spacing(10)
+        .spacing(8)
         .align_y(Alignment::Center)
-        .width(Length::Fixed(520.0));
+        .width(Length::Fill);
 
         let body = column![
-            row![
-                image(self.icons.oxizip()).width(40).height(40),
-                column![
-                    text(t(self.lang, "gui.setup.title")).size(22),
-                    text(t(self.lang, "gui.setup.intro")).size(13),
-                ]
-                .spacing(4),
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center)
-            .width(Length::Fixed(520.0)),
+            text(t(self.lang, "gui.setup.title"))
+                .size(16)
+                .width(Length::Fill),
+            text(t(self.lang, "gui.setup.intro"))
+                .size(12)
+                .width(Length::Fill),
             list,
             err,
             actions,
         ]
-        .spacing(12)
-        .padding(24)
-        .align_x(Alignment::Center);
+        .spacing(10)
+        .padding(16)
+        .align_x(Alignment::Start)
+        .width(Length::Fill)
+        .height(Length::Fill);
 
         container(body)
             .width(Length::Fill)

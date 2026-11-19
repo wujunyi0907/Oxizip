@@ -1,7 +1,8 @@
 //! Cross-platform shell / file-manager integration.
 //!
-//! Windows: HKCU Explorer verbs calling this `oxizip` binary.
-//! Linux: FreeDesktop `.desktop` files + Nautilus scripts + KDE service menus.
+//! Windows: HKCU ProgID / UserChoice(+Latest) + Explorer verbs.
+//! Linux: FreeDesktop default open (`.desktop` + `xdg-mime`) + Nautilus / KDE menus.
+//! Both honor the GUI association page `--ext` selection.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -10,6 +11,8 @@ use oxizip_i18n::Lang;
 
 #[cfg(windows)]
 mod icons;
+#[cfg(windows)]
+mod user_choice;
 #[cfg(windows)]
 mod windows;
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -104,10 +107,8 @@ fn platform_status(lang: Lang) -> Result<String, String> {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn platform_install(lang: Lang, _exts: &[String]) -> Result<String, String> {
-    // Linux desktop files cover MIME types as a set; per-ext filter is Windows-oriented.
-    let _ = _exts;
-    linux::install(lang)
+fn platform_install(lang: Lang, exts: &[String]) -> Result<String, String> {
+    linux::install(lang, exts)
 }
 #[cfg(all(unix, not(target_os = "macos")))]
 fn platform_uninstall(lang: Lang) -> Result<String, String> {
@@ -141,4 +142,54 @@ pub fn archive_extensions() -> &'static [&'static str] {
         "zip", "zipx", "7z", "rar", "tar", "tgz", "gz", "xz", "zst", "bz2", "lzh", "lha", "iso",
         "zpaq", "cab", "wim", "esd", "swm", "alz", "egg", "001",
     ]
+}
+
+/// Resolve `--ext` / GUI selection against [`archive_extensions`]. Empty → all.
+pub(crate) fn resolve_install_exts(requested: &[String]) -> Result<Vec<&'static str>, String> {
+    let all = archive_extensions();
+    if requested.is_empty() {
+        return Ok(all.to_vec());
+    }
+    let mut out = Vec::new();
+    for raw in requested {
+        let e = raw.trim().trim_start_matches('.').to_ascii_lowercase();
+        if e.is_empty() {
+            continue;
+        }
+        match all.iter().copied().find(|a| *a == e) {
+            Some(known) => {
+                if !out.contains(&known) {
+                    out.push(known);
+                }
+            }
+            None => {
+                return Err(format!(
+                    "unsupported extension '.{e}'. supported: {}",
+                    all.join(", ")
+                ));
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err("no extensions selected".into());
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_empty_means_all() {
+        let all = resolve_install_exts(&[]).unwrap();
+        assert_eq!(all.len(), archive_extensions().len());
+    }
+
+    #[test]
+    fn resolve_filters_and_rejects_unknown() {
+        let got = resolve_install_exts(&[String::from("7z"), String::from(".zip")]).unwrap();
+        assert_eq!(got, vec!["7z", "zip"]);
+        assert!(resolve_install_exts(&[String::from("nope")]).is_err());
+    }
 }

@@ -1,0 +1,3 @@
+﻿Oxizip vendors an independent MIT-licensed UserChoiceLatest hash codec
+derived from https://github.com/cssxn/UserChoiceLatestHash (see LICENSE).
+No Microsoft or Bandizip proprietary code is included.

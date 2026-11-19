@@ -164,16 +164,19 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
 
         (Lang::ZhCn, "shell.open_with_oxizip") => "用 Oxizip 打开",
         (Lang::En, "shell.open_with_oxizip") => "Open with Oxizip",
+        // File type description (Explorer Properties); `{ext}` → e.g. 7z → "7z 压缩文件"
+        (Lang::ZhCn, "shell.assoc_type") => "{ext} 压缩文件",
+        (Lang::En, "shell.assoc_type") => "Compressed File ({ext})",
+        (Lang::ZhCn, "shell.app_desc") => "Oxizip 是一款干净室实现的压缩文件管理器。",
+        (Lang::En, "shell.app_desc") => "Oxizip is a clean-room archive manager.",
         (Lang::ZhCn, "gui.setup.title") => "将文件扩展名关联至 Oxizip",
         (Lang::En, "gui.setup.title") => "Associate file extensions with Oxizip",
         (Lang::ZhCn, "gui.setup.intro") => {
-            "选择要由 Oxizip 打开的格式；同时会安装资源管理器右键菜单。可稍后再次打开本页调整。"
+            "将 Oxizip 设为下列扩展名的默认打开程序；同时会安装资源管理器右键菜单。可稍后再次打开本页调整。"
         }
         (Lang::En, "gui.setup.intro") => {
-            "Choose formats Oxizip should open. Explorer context menus are installed too. You can revisit this later."
+            "Set Oxizip as the default app for the extensions below. Explorer context menus are installed too. You can revisit this later."
         }
-        (Lang::ZhCn, "gui.setup.list") => "扩展名关联",
-        (Lang::En, "gui.setup.list") => "Extension association",
         (Lang::ZhCn, "gui.setup.group.archive") => "压缩包文件",
         (Lang::En, "gui.setup.group.archive") => "Archive files",
         (Lang::ZhCn, "gui.setup.group.unix") => "UNIX",
@@ -184,10 +187,10 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
         (Lang::En, "gui.setup.group.disk") => "Disk images",
         (Lang::ZhCn, "gui.setup.select_all") => "全选",
         (Lang::En, "gui.setup.select_all") => "Select All",
-        (Lang::ZhCn, "gui.setup.clear_all") => "全不选",
-        (Lang::En, "gui.setup.clear_all") => "Clear All",
-        (Lang::ZhCn, "gui.setup.apply") => "立即应用",
-        (Lang::En, "gui.setup.apply") => "Apply Now",
+        (Lang::ZhCn, "gui.setup.clear_all") => "取消全选",
+        (Lang::En, "gui.setup.clear_all") => "Deselect All",
+        (Lang::ZhCn, "gui.setup.apply") => "确定",
+        (Lang::En, "gui.setup.apply") => "OK",
         (Lang::ZhCn, "gui.setup.skip") => "暂时跳过",
         (Lang::En, "gui.setup.skip") => "Skip for now",
         (Lang::ZhCn, "gui.setup.none") => "请至少选择一种格式，或点击暂时跳过",

@@ -7,11 +7,19 @@ use winreg::enums::*;
 use winreg::RegKey;
 
 use super::icons::{ensure_icons_dir, icon_path_for_ext, icon_registry_value};
-use super::{archive_extensions, current_oxizip, current_oxizip_gui};
+use super::user_choice;
+use super::{archive_extensions, current_oxizip, current_oxizip_gui, resolve_install_exts};
 
 const VERB_PREFIX: &str = "Oxizip";
 /// ProgID / 关联 ID（反向域名风格，对齐 identifier `cn.wujunyi.oxizip`）
 const PROGID_PREFIX: &str = "cn.wujunyi.oxizip";
+/// RegisteredApplications / Capabilities path (Default Programs registration).
+const CAPABILITIES_PATH: &str = "Software\\cn.wujunyi.oxizip\\Capabilities";
+const APP_REG_NAME: &str = "Oxizip";
+
+fn assoc_type_label(lang: Lang, ext: &str) -> String {
+    t(lang, "shell.assoc_type").replace("{ext}", ext)
+}
 
 fn classes_root() -> Result<RegKey, String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
@@ -64,12 +72,58 @@ fn write_format_icons(classes: &RegKey, ext: &str, icon: &Path) -> Result<(), St
 }
 
 fn clear_user_choice(ext: &str) {
+    // Prefer hashed rewrite via `user_choice::set_user_default`; this is a best-effort wipe.
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let path = format!(
         "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.{ext}"
     );
     if let Ok(key) = hkcu.open_subkey_with_flags(&path, KEY_READ | KEY_WRITE) {
         let _ = key.delete_subkey_all("UserChoice");
+        let _ = key.delete_subkey_all("UserChoiceLatest");
+    }
+}
+
+fn register_capabilities(lang: Lang, exts: &[&str]) -> Result<(), String> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let (caps, _) = hkcu
+        .create_subkey(CAPABILITIES_PATH)
+        .map_err(|e| format!("create Capabilities: {e}"))?;
+    caps.set_value("ApplicationName", &APP_REG_NAME.to_string())
+        .map_err(|e| format!("set ApplicationName: {e}"))?;
+    caps.set_value(
+        "ApplicationDescription",
+        &t(lang, "shell.app_desc").to_string(),
+    )
+    .map_err(|e| format!("set ApplicationDescription: {e}"))?;
+
+    let (fa, _) = caps
+        .create_subkey("FileAssociations")
+        .map_err(|e| format!("create FileAssociations: {e}"))?;
+    // Clear previous claims then rewrite selected exts only.
+    for name in fa.enum_values().filter_map(|v| v.ok().map(|(n, _)| n)) {
+        let _ = fa.delete_value(&name);
+    }
+    for ext in exts {
+        fa.set_value(format!(".{ext}"), &progid_for_ext(ext))
+            .map_err(|e| format!("set FileAssociations .{ext}: {e}"))?;
+    }
+
+    let (reg_apps, _) = hkcu
+        .create_subkey("Software\\RegisteredApplications")
+        .map_err(|e| format!("create RegisteredApplications: {e}"))?;
+    reg_apps
+        .set_value(APP_REG_NAME, &CAPABILITIES_PATH.to_string())
+        .map_err(|e| format!("set RegisteredApplications: {e}"))?;
+    Ok(())
+}
+
+fn unregister_capabilities() {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let _ = hkcu.delete_subkey_all("Software\\cn.wujunyi.oxizip");
+    if let Ok(reg_apps) =
+        hkcu.open_subkey_with_flags("Software\\RegisteredApplications", KEY_READ | KEY_WRITE)
+    {
+        let _ = reg_apps.delete_value(APP_REG_NAME);
     }
 }
 
@@ -96,8 +150,12 @@ fn write_open_association(
     let (prog, _) = classes
         .create_subkey(&progid)
         .map_err(|e| format!("create progid {progid}: {e}"))?;
-    prog.set_value("", &format!("Oxizip {ext}"))
+    // Bandizip-style friendly type: "7z 压缩文件" / "Compressed File (7z)".
+    // Explorer Properties appends " (.7z)" → "7z 压缩文件 (.7z)".
+    let type_label = assoc_type_label(lang, ext);
+    prog.set_value("", &type_label)
         .map_err(|e| format!("set progid label: {e}"))?;
+    let _ = prog.set_value("FriendlyTypeName", &type_label);
 
     write_format_icons(classes, ext, icon)?;
 
@@ -107,6 +165,7 @@ fn write_open_association(
     open.set_value("", &t(lang, "shell.open_with_oxizip").to_string())
         .map_err(|e| format!("set open label: {e}"))?;
     let _ = open.set_value("Icon", &icon_registry_value(icon));
+    let _ = open.set_value("FriendlyAppName", &APP_REG_NAME.to_string());
     let (cmd, _) = open
         .create_subkey("command")
         .map_err(|e| format!("create progid command: {e}"))?;
@@ -127,8 +186,16 @@ fn write_open_association(
         .set_value(&progid, &"")
         .map_err(|e| format!("set OpenWithProgids: {e}"))?;
 
-    // Drop previous UserChoice so our ProgID (and its icon) become active.
-    clear_user_choice(ext);
+    // Also list under FileExts OpenWithProgids (Explorer “Open with”).
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    if let Ok((fe, _)) = hkcu.create_subkey(format!(
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.{ext}\\OpenWithProgids"
+    )) {
+        let _ = fe.set_value(&progid, &"");
+    }
+
+    // Hashed UserChoice / UserChoiceLatest so the per-user default sticks on Win10/11.
+    user_choice::set_user_default(ext, &progid)?;
     Ok(())
 }
 
@@ -336,37 +403,6 @@ fn cleanup_exe_association(classes: &RegKey) {
     let _ = delete_open_association(classes, "exe");
 }
 
-fn resolve_install_exts(requested: &[String]) -> Result<Vec<&'static str>, String> {
-    let all = archive_extensions();
-    if requested.is_empty() {
-        return Ok(all.to_vec());
-    }
-    let mut out = Vec::new();
-    for raw in requested {
-        let e = raw.trim().trim_start_matches('.').to_ascii_lowercase();
-        if e.is_empty() {
-            continue;
-        }
-        match all.iter().copied().find(|a| *a == e) {
-            Some(known) => {
-                if !out.contains(&known) {
-                    out.push(known);
-                }
-            }
-            None => {
-                return Err(format!(
-                    "unsupported extension '.{e}'. supported: {}",
-                    all.join(", ")
-                ));
-            }
-        }
-    }
-    if out.is_empty() {
-        return Err("no extensions selected".into());
-    }
-    Ok(out)
-}
-
 pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> {
     let exts = resolve_install_exts(requested_exts)?;
     let exe = current_oxizip()?;
@@ -376,6 +412,7 @@ pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> 
     cleanup_exe_association(&classes);
     // Clean slate so unchecked formats from a previous Apply are removed.
     delete_all_verbs(&classes)?;
+    register_capabilities(lang, &exts)?;
     write_all_verbs(&classes, &exe, &gui, &icons_dir, lang, &exts)?;
     notify_assoc_changed();
     Ok(format!(
@@ -392,6 +429,10 @@ pub fn uninstall(lang: Lang) -> Result<String, String> {
     let classes = classes_root()?;
     cleanup_exe_association(&classes);
     delete_all_verbs(&classes)?;
+    unregister_capabilities();
+    for ext in archive_extensions() {
+        clear_user_choice(ext);
+    }
     notify_assoc_changed();
     Ok(t(lang, "shell.uninstall_ok").to_string())
 }

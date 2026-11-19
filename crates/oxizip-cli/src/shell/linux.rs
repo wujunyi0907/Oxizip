@@ -1,12 +1,23 @@
-//! FreeDesktop / Nautilus / KDE service-menu integration.
+//! FreeDesktop file associations + Nautilus / KDE service-menu integration.
+//!
+//! Mirrors the Windows shell install surface for the GUI association page:
+//! - default open handler for selected extensions (`.desktop` + `xdg-mime default`)
+//! - optional custom MIME package for uncommon types
+//! - context actions via `.desktop` Actions / Nautilus scripts / KDE service menus
 
+use std::collections::BTreeSet;
 use std::fs;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use oxizip_i18n::{t, Lang};
 
-use super::current_oxizip;
+use super::{current_oxizip, current_oxizip_gui, resolve_install_exts};
+
+/// Desktop file id used with `xdg-mime default` (must match the file name).
+const OPEN_DESKTOP_ID: &str = "cn.wujunyi.oxizip.desktop";
+const MIME_PACKAGE_NAME: &str = "oxizip-associations.xml";
 
 fn home_dir() -> Result<PathBuf, String> {
     std::env::var_os("HOME")
@@ -16,6 +27,16 @@ fn home_dir() -> Result<PathBuf, String> {
 
 fn applications_dir(home: &Path) -> PathBuf {
     home.join(".local/share/applications")
+}
+
+fn mime_packages_dir(home: &Path) -> PathBuf {
+    home.join(".local/share/mime/packages")
+}
+
+fn config_dir(home: &Path) -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"))
 }
 
 fn nautilus_scripts_dir(home: &Path) -> PathBuf {
@@ -28,13 +49,62 @@ fn kde_servicemenus_dir(home: &Path) -> PathBuf {
 
 fn marker_files(home: &Path) -> Vec<PathBuf> {
     vec![
+        applications_dir(home).join(OPEN_DESKTOP_ID),
         applications_dir(home).join("oxizip-extract.desktop"),
         applications_dir(home).join("oxizip-compress.desktop"),
+        mime_packages_dir(home).join(MIME_PACKAGE_NAME),
         nautilus_scripts_dir(home).join("Oxizip Extract Here"),
         nautilus_scripts_dir(home).join("Oxizip Extract Smart"),
         nautilus_scripts_dir(home).join("Oxizip Compress ZIP"),
         kde_servicemenus_dir(home).join("oxizip.desktop"),
     ]
+}
+
+/// FreeDesktop MIME types claimed for an extension (may include Oxizip-private types).
+fn mimes_for_ext(ext: &str) -> &'static [&'static str] {
+    match ext {
+        "zip" => &["application/zip", "application/x-zip-compressed"],
+        "zipx" => &["application/x-zipx"],
+        "7z" => &["application/x-7z-compressed"],
+        "rar" => &["application/vnd.rar", "application/x-rar-compressed"],
+        "tar" => &["application/x-tar"],
+        "tgz" => &["application/gzip", "application/x-gzip", "application/x-gtar"],
+        "gz" => &["application/gzip", "application/x-gzip"],
+        "xz" => &["application/x-xz"],
+        "zst" => &["application/zstd"],
+        "bz2" => &["application/x-bzip2"],
+        "lzh" | "lha" => &["application/x-lzh-compressed"],
+        "iso" => &["application/x-iso9660-image"],
+        "zpaq" => &["application/x-zpaq"],
+        "cab" => &["application/vnd.ms-cab-compressed"],
+        "wim" | "esd" | "swm" => &["application/x-ms-wim"],
+        "alz" => &["application/x-alz"],
+        "egg" => &["application/x-egg"],
+        "001" => &["application/x-oxizip-001"],
+        _ => &[],
+    }
+}
+
+/// MIME types that need a user-local shared-mime-info package (not always shipped).
+fn custom_mime_defs() -> &'static [(&'static str, &'static str, &'static [&'static str])] {
+    &[
+        ("application/x-zipx", "ZIPX archive", &["*.zipx"]),
+        ("application/x-zpaq", "ZPAQ archive", &["*.zpaq"]),
+        ("application/x-ms-wim", "Windows Imaging Format", &["*.wim", "*.esd", "*.swm"]),
+        ("application/x-alz", "ALZ archive", &["*.alz"]),
+        ("application/x-egg", "EGG archive", &["*.egg"]),
+        ("application/x-oxizip-001", "Split archive part", &["*.001"]),
+    ]
+}
+
+fn collect_mimes(exts: &[&str]) -> Vec<&'static str> {
+    let mut set = BTreeSet::new();
+    for ext in exts {
+        for mime in mimes_for_ext(ext) {
+            set.insert(*mime);
+        }
+    }
+    set.into_iter().collect()
 }
 
 fn write_file(path: &Path, contents: &str) -> Result<(), String> {
@@ -61,8 +131,44 @@ fn write_file(path: &Path, contents: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn extract_desktop(exe: &Path) -> String {
-    let exe_s = exe.display();
+fn mime_type_list(mimes: &[&str]) -> String {
+    let mut s = mimes.join(";");
+    if !s.is_empty() && !s.ends_with(';') {
+        s.push(';');
+    }
+    s
+}
+
+fn open_desktop(gui: &Path, mimes: &[&str]) -> String {
+    format!(
+        r#"[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Oxizip
+GenericName=Archive Manager
+GenericName[zh_CN]=压缩管理器
+Comment={desc_en}
+Comment[zh_CN]={desc_zh}
+Exec={exe} %F
+TryExec={exe}
+Icon=package-x-generic
+Terminal=false
+Categories=Utility;Archiving;Compression;
+MimeType={mimes}
+Keywords=zip;7z;rar;tar;archive;compress;oxizip;
+StartupNotify=true
+StartupWMClass=oxizip
+NoDisplay=false
+"#,
+        desc_en = t(Lang::En, "shell.app_desc"),
+        desc_zh = t(Lang::ZhCn, "shell.app_desc"),
+        exe = shell_escape_desktop_exec(gui),
+        mimes = mime_type_list(mimes),
+    )
+}
+
+fn extract_desktop(exe: &Path, mimes: &[&str]) -> String {
+    let exe_s = shell_escape_desktop_exec(exe);
     format!(
         r#"[Desktop Entry]
 Type=Application
@@ -73,11 +179,12 @@ Comment=Extract archives with Oxizip
 Exec={exe} extract --smart %f
 Icon=package-x-generic
 Terminal=false
+NoDisplay=true
 Categories=Utility;Archiving;Compression;
-MimeType=application/zip;application/x-zip-compressed;application/x-7z-compressed;application/vnd.rar;application/x-rar-compressed;application/x-tar;application/gzip;application/x-xz;application/zstd;application/x-bzip2;application/x-iso9660-image;application/x-lzh-compressed;
+MimeType={mimes}
 Actions=ExtractHere;ExtractSmart;ExtractToFolder;Test;Checksum;
 
-    [Desktop Action ExtractHere]
+[Desktop Action ExtractHere]
 Name={here_en}
 Name[zh_CN]={here_zh}
 Exec={exe} extract --here %f
@@ -115,11 +222,12 @@ Exec={exe} checksum %f
         sum_en = t(Lang::En, "shell.checksum"),
         sum_zh = t(Lang::ZhCn, "shell.checksum"),
         exe = exe_s,
+        mimes = mime_type_list(mimes),
     )
 }
 
 fn compress_desktop(exe: &Path) -> String {
-    let exe_s = exe.display();
+    let exe_s = shell_escape_desktop_exec(exe);
     format!(
         r#"[Desktop Entry]
 Type=Application
@@ -130,6 +238,7 @@ Comment=Compress with Oxizip
 Exec={exe} create --beside -f zip %F
 Icon=package-x-generic
 Terminal=false
+NoDisplay=true
 Categories=Utility;Archiving;Compression;
 MimeType=application/octet-stream;inode/directory;
 Actions=CompressZip;Compress7z;
@@ -166,13 +275,27 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\"'\"'"))
 }
 
-fn kde_servicemenu(exe: &Path) -> String {
-    let exe_s = exe.display();
+/// Escape for Desktop Entry `Exec=` (paths with spaces).
+fn shell_escape_desktop_exec(path: &Path) -> String {
+    let s = path.display().to_string();
+    if s.chars().any(|c| c.is_whitespace() || matches!(c, '"' | '\\')) {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    } else {
+        s
+    }
+}
+
+fn kde_servicemenu(exe: &Path, mimes: &[&str]) -> String {
+    let exe_s = shell_escape_desktop_exec(exe);
+    let mut mime = mime_type_list(mimes);
+    if !mime.contains("inode/directory") {
+        mime.push_str("inode/directory;application/octet-stream;");
+    }
     format!(
         r#"[Desktop Entry]
 Type=Service
 ServiceTypes=KonqPopupMenu/Plugin
-MimeType=application/zip;application/x-7z-compressed;application/vnd.rar;application/x-tar;inode/directory;application/octet-stream;
+MimeType={mimes}
 Actions=ExtractHere;ExtractSmart;CompressZip;Compress7z;
 X-KDE-Priority=TopLevel
 
@@ -196,8 +319,37 @@ Name=Oxizip Compress 7z
 Name[zh_CN]=Oxizip 压缩为 7z
 Exec={exe} create --beside -f 7z %F
 "#,
+        mimes = mime,
         exe = exe_s,
     )
+}
+
+fn build_mime_package(exts: &[&str]) -> Option<String> {
+    let needed: Vec<_> = custom_mime_defs()
+        .iter()
+        .filter(|(mime, _, _)| {
+            exts.iter().any(|ext| mimes_for_ext(ext).contains(mime))
+        })
+        .collect();
+    if needed.is_empty() {
+        return None;
+    }
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+"#,
+    );
+    for (mime, comment, globs) in needed {
+        xml.push_str(&format!(
+            "  <mime-type type=\"{mime}\">\n    <comment>{comment}</comment>\n"
+        ));
+        for glob in *globs {
+            xml.push_str(&format!("    <glob pattern=\"{glob}\"/>\n"));
+        }
+        xml.push_str("  </mime-type>\n");
+    }
+    xml.push_str("</mime-info>\n");
+    Some(xml)
 }
 
 fn refresh_desktop_db(apps: &Path) {
@@ -206,63 +358,165 @@ fn refresh_desktop_db(apps: &Path) {
         .status();
 }
 
-pub fn install(lang: Lang) -> Result<String, String> {
-    let exe = current_oxizip()?;
+fn refresh_mime_db(home: &Path) {
+    let mime_dir = home.join(".local/share/mime");
+    let _ = Command::new("update-mime-database").arg(&mime_dir).status();
+}
+
+fn xdg_mime_default(desktop_id: &str, mime: &str) {
+    let _ = Command::new("xdg-mime")
+        .args(["default", desktop_id, mime])
+        .status();
+}
+
+/// Remove Oxizip defaults we previously claimed from `mimeapps.list`.
+fn clear_oxizip_defaults(home: &Path) {
+    let path = config_dir(home).join("mimeapps.list");
+    let Ok(file) = fs::File::open(&path) else {
+        return;
+    };
+    let reader = std::io::BufReader::new(file);
+    let mut out = Vec::new();
+    let mut changed = false;
+    for line in reader.lines().map_while(Result::ok) {
+        let trimmed = line.trim();
+        if trimmed.contains(OPEN_DESKTOP_ID) {
+            // Drop lines that only point at our desktop id.
+            if let Some((_, rhs)) = trimmed.split_once('=') {
+                let keep = rhs
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty() && *s != OPEN_DESKTOP_ID)
+                    .collect::<Vec<_>>();
+                if keep.is_empty() {
+                    changed = true;
+                    continue;
+                }
+                if keep.join(";") != rhs.trim_matches(';') {
+                    let key = trimmed.split('=').next().unwrap_or("");
+                    out.push(format!("{key}={};", keep.join(";")));
+                    changed = true;
+                    continue;
+                }
+            }
+        }
+        out.push(line);
+    }
+    if changed {
+        if let Ok(mut f) = fs::File::create(&path) {
+            for line in out {
+                let _ = writeln!(f, "{line}");
+            }
+        }
+    }
+}
+
+pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> {
+    let exts = resolve_install_exts(requested_exts)?;
+    let mimes = collect_mimes(&exts);
+    if mimes.is_empty() {
+        return Err("no MIME types for selected extensions".into());
+    }
+
+    let cli = current_oxizip()?;
+    let gui = current_oxizip_gui().unwrap_or_else(|_| cli.clone());
     let home = home_dir()?;
     let apps = applications_dir(&home);
+
+    // Clean previous default claims before rewriting the desktop + mimeapps entries.
+    clear_oxizip_defaults(&home);
+
+    write_file(
+        &apps.join(OPEN_DESKTOP_ID),
+        &open_desktop(&gui, &mimes),
+    )?;
     write_file(
         &apps.join("oxizip-extract.desktop"),
-        &extract_desktop(&exe),
+        &extract_desktop(&cli, &mimes),
     )?;
     write_file(
         &apps.join("oxizip-compress.desktop"),
-        &compress_desktop(&exe),
+        &compress_desktop(&cli),
     )?;
+
+    let mime_pkg = mime_packages_dir(&home).join(MIME_PACKAGE_NAME);
+    if let Some(xml) = build_mime_package(&exts) {
+        write_file(&mime_pkg, &xml)?;
+        refresh_mime_db(&home);
+    } else {
+        let _ = fs::remove_file(&mime_pkg);
+        refresh_mime_db(&home);
+    }
 
     let scripts = nautilus_scripts_dir(&home);
     write_file(
         &scripts.join("Oxizip Extract Here"),
-        &nautilus_script(&exe, "extract --here"),
+        &nautilus_script(&cli, "extract --here"),
     )?;
     write_file(
         &scripts.join("Oxizip Extract Smart"),
-        &nautilus_script(&exe, "extract --smart"),
+        &nautilus_script(&cli, "extract --smart"),
     )?;
     write_file(
         &scripts.join("Oxizip Compress ZIP"),
-        &nautilus_script(&exe, "create --beside -f zip"),
+        &nautilus_script(&cli, "create --beside -f zip"),
     )?;
 
     write_file(
         &kde_servicemenus_dir(&home).join("oxizip.desktop"),
-        &kde_servicemenu(&exe),
+        &kde_servicemenu(&cli, &mimes),
     )?;
 
     refresh_desktop_db(&apps);
+    for mime in &mimes {
+        xdg_mime_default(OPEN_DESKTOP_ID, mime);
+    }
+
     Ok(format!(
-        "{} ({})",
+        "{} (exts={} ; gui={} ; cli={})",
         t(lang, "shell.install_ok"),
-        exe.display()
+        exts.join(","),
+        gui.display(),
+        cli.display()
     ))
 }
 
 pub fn uninstall(lang: Lang) -> Result<String, String> {
     let home = home_dir()?;
+    clear_oxizip_defaults(&home);
     for path in marker_files(&home) {
         let _ = fs::remove_file(path);
     }
+    refresh_mime_db(&home);
     refresh_desktop_db(&applications_dir(&home));
     Ok(t(lang, "shell.uninstall_ok").to_string())
 }
 
 pub fn status(lang: Lang) -> Result<String, String> {
     let home = home_dir()?;
-    let installed = applications_dir(&home)
-        .join("oxizip-extract.desktop")
-        .is_file();
+    let installed = applications_dir(&home).join(OPEN_DESKTOP_ID).is_file();
     if installed {
         Ok(t(lang, "shell.status_installed").to_string())
     } else {
         Ok(t(lang, "shell.status_missing").to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zip_mimes_include_standard_types() {
+        let m = mimes_for_ext("zip");
+        assert!(m.contains(&"application/zip"));
+    }
+
+    #[test]
+    fn collect_selected_exts_only() {
+        let mimes = collect_mimes(&["7z", "zpaq"]);
+        assert!(mimes.contains(&"application/x-7z-compressed"));
+        assert!(mimes.contains(&"application/x-zpaq"));
+        assert!(!mimes.iter().any(|m| *m == "application/zip"));
     }
 }

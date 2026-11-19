@@ -93,34 +93,6 @@ impl IconSet {
             .unwrap_or_else(|| self.fallback.clone())
     }
 
-    pub fn for_ext(&self, ext: &str) -> iced_image::Handle {
-        let key = match ext.trim_start_matches('.').to_ascii_lowercase().as_str() {
-            "zip" | "jar" => "zip",
-            "zipx" => "zipx",
-            "7z" => "7z",
-            "rar" => "rar",
-            "tar" => "tar",
-            "tgz" => "tgz",
-            "gz" => "gz",
-            "xz" | "zst" | "txz" => "xz",
-            "bz2" => "bz2",
-            "tbz" => "tbz",
-            "tbz2" => "tbz2",
-            "lzh" => "lzh",
-            "lha" => "lha",
-            "iso" => "iso",
-            "zpaq" => "zpaq",
-            "cab" => "cab",
-            "alz" => "alz",
-            "egg" => "egg",
-            _ => "oxizip",
-        };
-        self.by_key
-            .get(key)
-            .cloned()
-            .unwrap_or_else(|| self.fallback.clone())
-    }
-
     pub fn for_path_name(&self, name: &str) -> iced_image::Handle {
         let lower = name.to_ascii_lowercase();
         let key = if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
