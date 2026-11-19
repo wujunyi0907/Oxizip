@@ -440,6 +440,40 @@ fn create_shortcut_lnk(
 }
 
 #[cfg(windows)]
+fn desktop_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    // Public desktop (all users) — preferred for elevated machine installs.
+    if let Some(pd) = std::env::var_os("PUBLIC").map(PathBuf::from) {
+        dirs.push(pd.join("Desktop"));
+    }
+    // Current-user desktop as well (covers non-elevated / repair installs).
+    if let Some(userprofile) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
+        dirs.push(userprofile.join("Desktop"));
+    }
+    dirs
+}
+
+#[cfg(windows)]
+fn create_desktop_shortcut(dir: &Path) -> InstallResult<()> {
+    let target = dir.join("oxizip.exe");
+    let icon_loc = format!("{},0", app_icon_path(dir).display());
+    for desktop in desktop_dirs() {
+        if !desktop.is_dir() {
+            continue;
+        }
+        let link = desktop.join("Oxizip.lnk");
+        let _ = create_shortcut_lnk(&link, &target, dir, &icon_loc, "Oxizip");
+    }
+    // Desktop shortcut is best-effort; do not fail the whole install.
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn create_desktop_shortcut(_dir: &Path) -> InstallResult<()> {
+    Ok(())
+}
+
+#[cfg(windows)]
 fn create_start_menu_shortcut(dir: &Path) -> InstallResult<()> {
     let target = dir.join("oxizip.exe");
     let uninstaller = dir.join("Uninstall.exe");
@@ -470,6 +504,7 @@ fn create_start_menu_shortcut(dir: &Path) -> InstallResult<()> {
             wrote = true;
         }
     }
+    create_desktop_shortcut(dir)?;
     notify_shell_assoc_changed();
     if !wrote {
         return Err(InstallError::Msg(
@@ -618,6 +653,9 @@ pub fn perform_uninstall(dir: Option<PathBuf>, progress: &mut ProgressCb<'_>) ->
         for programs in start_menu_roots() {
             let menu = programs.join(APP_NAME);
             let _ = fs::remove_dir_all(menu);
+        }
+        for desktop in desktop_dirs() {
+            let _ = fs::remove_file(desktop.join("Oxizip.lnk"));
         }
         notify_shell_assoc_changed();
     }
