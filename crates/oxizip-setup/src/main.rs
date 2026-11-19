@@ -25,27 +25,23 @@ enum JobEvent {
 
 fn main() -> iced::Result {
     match parse_cli() {
-        CliMode::ElevatedInstall(opts) => {
-            match perform_install(&opts, &mut |_, _| {}) {
-                Ok(()) => {
-                    let _ = launch_app(&opts.dir);
-                    std::process::exit(0);
-                }
-                Err(e) => {
-                    eprintln!("install failed: {e}");
-                    std::process::exit(1);
-                }
+        CliMode::ElevatedInstall(opts) => match perform_install(&opts, &mut |_, _| {}) {
+            Ok(()) => {
+                let _ = launch_app(&opts.dir);
+                std::process::exit(0);
             }
-        }
-        CliMode::ElevatedUninstall { dir } => {
-            match perform_uninstall(dir, &mut |_, _| {}) {
-                Ok(()) => std::process::exit(0),
-                Err(e) => {
-                    eprintln!("uninstall failed: {e}");
-                    std::process::exit(1);
-                }
+            Err(e) => {
+                eprintln!("install failed: {e}");
+                std::process::exit(1);
             }
-        }
+        },
+        CliMode::ElevatedUninstall { dir } => match perform_uninstall(dir, &mut |_, _| {}) {
+            Ok(()) => std::process::exit(0),
+            Err(e) => {
+                eprintln!("uninstall failed: {e}");
+                std::process::exit(1);
+            }
+        },
         CliMode::UninstallUi {
             dir,
             auto_start,
@@ -217,25 +213,37 @@ fn apply_native_window_rounding(raw_id: u64) {
 #[cfg(not(windows))]
 fn apply_native_window_rounding(_raw_id: u64) {}
 
-fn rounded_primary(theme: &iced::Theme, status: iced::widget::button::Status) -> iced::widget::button::Style {
+fn rounded_primary(
+    theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
     let mut style = iced::widget::button::primary(theme, status);
     style.border.radius = CONTROL_RADIUS.into();
     style
 }
 
-fn rounded_danger(theme: &iced::Theme, status: iced::widget::button::Status) -> iced::widget::button::Style {
+fn rounded_danger(
+    theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
     let mut style = iced::widget::button::danger(theme, status);
     style.border.radius = CONTROL_RADIUS.into();
     style
 }
 
-fn rounded_secondary(theme: &iced::Theme, status: iced::widget::button::Status) -> iced::widget::button::Style {
+fn rounded_secondary(
+    theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
     let mut style = iced::widget::button::secondary(theme, status);
     style.border.radius = CONTROL_RADIUS.into();
     style
 }
 
-fn rounded_text_btn(theme: &iced::Theme, status: iced::widget::button::Status) -> iced::widget::button::Style {
+fn rounded_text_btn(
+    theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
     let mut style = iced::widget::button::text(theme, status);
     style.border.radius = 6.0.into();
     style
@@ -251,29 +259,30 @@ fn caption_bar<'a, Message: Clone + 'a>(
     on_close: Message,
 ) -> Element<'a, Message> {
     let drag_zone = mouse_area(
-        row![
-            text(title).size(12),
-            Space::with_width(Length::Fill),
-        ]
-        .align_y(Alignment::Center)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(iced::Padding {
-            top: 0.0,
-            right: 8.0,
-            bottom: 0.0,
-            left: 10.0,
-        }),
+        row![text(title).size(12), Space::with_width(Length::Fill),]
+            .align_y(Alignment::Center)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(iced::Padding {
+                top: 0.0,
+                right: 8.0,
+                bottom: 0.0,
+                left: 10.0,
+            }),
     )
     .on_press(on_drag);
 
     let caption_btn = |label: &'static str, msg: Message| {
-        button(container(text(label).size(12)).center_x(Length::Fill).center_y(Length::Fill))
-            .width(40)
-            .height(28)
-            .padding(0)
-            .style(rounded_text_btn)
-            .on_press(msg)
+        button(
+            container(text(label).size(12))
+                .center_x(Length::Fill)
+                .center_y(Length::Fill),
+        )
+        .width(40)
+        .height(28)
+        .padding(0)
+        .style(rounded_text_btn)
+        .on_press(msg)
     };
 
     container(
@@ -325,7 +334,6 @@ fn frame_border(theme: &iced::Theme) -> iced::widget::container::Style {
         ..Default::default()
     }
 }
-
 
 fn ui_font() -> iced::Font {
     #[cfg(windows)]
@@ -492,10 +500,7 @@ impl SetupApp {
                 apply_native_window_rounding(raw);
                 Task::none()
             }
-            Message::TitleDrag => self
-                .window_id
-                .map(window::drag)
-                .unwrap_or_else(Task::none),
+            Message::TitleDrag => self.window_id.map(window::drag).unwrap_or_else(Task::none),
             Message::Minimize => self
                 .window_id
                 .map(|id| window::minimize(id, true))
@@ -504,9 +509,7 @@ impl SetupApp {
                 if self.busy {
                     return Task::none();
                 }
-                self.window_id
-                    .map(window::close)
-                    .unwrap_or_else(Task::none)
+                self.window_id.map(window::close).unwrap_or_else(Task::none)
             }
             Message::LangSelected(lang) => {
                 self.lang = lang;
@@ -718,11 +721,15 @@ impl SetupApp {
         .width(Length::Fill)
         .height(Length::Fill);
 
-        container(column![caption, content].width(Length::Fill).height(Length::Fill))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(frame_border)
-            .into()
+        container(
+            column![caption, content]
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(frame_border)
+        .into()
     }
 }
 
@@ -863,10 +870,7 @@ impl UninstallApp {
                 apply_native_window_rounding(raw);
                 Task::none()
             }
-            UMessage::TitleDrag => self
-                .window_id
-                .map(window::drag)
-                .unwrap_or_else(Task::none),
+            UMessage::TitleDrag => self.window_id.map(window::drag).unwrap_or_else(Task::none),
             UMessage::Minimize => self
                 .window_id
                 .map(|id| window::minimize(id, true))
@@ -875,9 +879,7 @@ impl UninstallApp {
                 if self.busy {
                     return Task::none();
                 }
-                self.window_id
-                    .map(window::close)
-                    .unwrap_or_else(Task::none)
+                self.window_id.map(window::close).unwrap_or_else(Task::none)
             }
             UMessage::LangSelected(lang) => {
                 self.lang = lang;
@@ -1038,10 +1040,14 @@ impl UninstallApp {
         .height(Length::Fill)
         .align_x(Alignment::Center);
 
-        container(column![caption, content].width(Length::Fill).height(Length::Fill))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(frame_border)
-            .into()
+        container(
+            column![caption, content]
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(frame_border)
+        .into()
     }
 }

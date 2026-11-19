@@ -18,14 +18,11 @@ fn main() -> ExitCode {
 
 fn run() -> io::Result<()> {
     let exe = env::current_exe()?;
-    let dest = env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            exe.parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| PathBuf::from("."))
-        });
+    let dest = env::args().nth(1).map(PathBuf::from).unwrap_or_else(|| {
+        exe.parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."))
+    });
     fs::create_dir_all(&dest)?;
 
     let file = File::open(&exe)?;

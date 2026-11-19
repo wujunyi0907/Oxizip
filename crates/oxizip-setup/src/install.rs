@@ -321,7 +321,10 @@ fn write_uninstall_registry(dir: &Path) -> InstallResult<()> {
         .set_value("UninstallString", &uninstall_cmd)
         .map_err(|e| InstallError::Msg(e.to_string()))?;
     uninstall
-        .set_value("QuietUninstallString", &format!("{uninstall_cmd} --uninstall --quiet"))
+        .set_value(
+            "QuietUninstallString",
+            &format!("{uninstall_cmd} --uninstall --quiet"),
+        )
         .map_err(|e| InstallError::Msg(e.to_string()))?;
     uninstall
         .set_value("DisplayIcon", &dir.join("oxizip.exe").display().to_string())
@@ -365,7 +368,9 @@ fn create_start_menu_shortcut(dir: &Path) -> InstallResult<()> {
     let Some(pd) = program_data else {
         return Ok(());
     };
-    let menu = pd.join("Microsoft\\Windows\\Start Menu\\Programs").join(APP_NAME);
+    let menu = pd
+        .join("Microsoft\\Windows\\Start Menu\\Programs")
+        .join(APP_NAME);
     fs::create_dir_all(&menu)?;
     // Prefer a .lnk via PowerShell for reliability without extra crates.
     let target = dir.join("oxizip.exe");
@@ -396,10 +401,7 @@ fn create_start_menu_shortcut(_dir: &Path) -> InstallResult<()> {
     Ok(())
 }
 
-pub fn perform_install(
-    opts: &InstallOptions,
-    progress: &mut ProgressCb<'_>,
-) -> InstallResult<()> {
+pub fn perform_install(opts: &InstallOptions, progress: &mut ProgressCb<'_>) -> InstallResult<()> {
     report(progress, 0.02, "prepare");
     let staging = tempfile::tempdir().map_err(InstallError::Io)?;
 
@@ -475,10 +477,7 @@ pub fn resolve_install_dir(dir: Option<PathBuf>) -> PathBuf {
     })
 }
 
-pub fn perform_uninstall(
-    dir: Option<PathBuf>,
-    progress: &mut ProgressCb<'_>,
-) -> InstallResult<()> {
+pub fn perform_uninstall(dir: Option<PathBuf>, progress: &mut ProgressCb<'_>) -> InstallResult<()> {
     let dir = resolve_install_dir(dir);
     report(progress, 0.05, "prepare");
 
