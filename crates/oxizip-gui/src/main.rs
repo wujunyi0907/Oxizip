@@ -13,10 +13,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iced::widget::{
-    button, column, container, image, pick_list, progress_bar, row, scrollable, text, text_input,
-    Column, Space,
+    button, checkbox, column, container, image, pick_list, progress_bar, row, scrollable, text,
+    text_input, Column, Space,
 };
-use iced::{Element, Length, Size, Subscription, Task};
+use iced::{Alignment, Element, Length, Size, Subscription, Task};
+use std::collections::BTreeMap;
 use icons::IconSet;
 use licenses::{catalog, ComponentKind};
 use oxizip_engine::{CreateOptions, EntryMeta, FormatId, MethodId};
@@ -213,7 +214,7 @@ struct OxizipApp {
     progress_detail: String,
     open_temp: Option<Arc<TempDir>>,
     icons: IconSet,
-    setup_associate: bool,
+    setup_exts: BTreeMap<&'static str, bool>,
     pending_open: Option<PathBuf>,
 }
 
@@ -237,7 +238,7 @@ impl Default for OxizipApp {
             progress_detail: String::new(),
             open_temp: None,
             icons: IconSet::load(),
-            setup_associate: true,
+            setup_exts: setup::default_assoc_selection(),
             pending_open: None,
         }
     }
@@ -270,7 +271,9 @@ enum Message {
     HideLicenses,
     LicenseFilterSelected(LicenseFilter),
     ShowSetup,
-    SetupAssociateToggled(bool),
+    SetupExtToggled(&'static str, bool),
+    SetupSelectAll,
+    SetupClearAll,
     SetupConfirm,
     SetupSkip,
 }
@@ -307,17 +310,23 @@ impl OxizipApp {
 
     fn finish_setup(&mut self, associate: bool) -> Task<Message> {
         if associate {
+            let selected = setup::selected_exts(&self.setup_exts);
+            if selected.is_empty() {
+                self.last_error = Some(t(self.lang, "gui.setup.none").to_string());
+                return Task::none();
+            }
             let lang_arg = match self.lang {
                 Lang::ZhCn => "zh-cn",
                 Lang::En => "en",
             };
-            match setup::install_associations(lang_arg) {
+            match setup::install_associations(lang_arg, &selected) {
                 Ok(msg) => {
                     self.status = format!("{} — {msg}", t(self.lang, "gui.setup.ok"));
                     self.last_error = None;
                 }
                 Err(e) => {
                     self.last_error = Some(format!("{}: {e}", t(self.lang, "gui.setup.failed")));
+                    return Task::none();
                 }
             }
         }
@@ -507,14 +516,29 @@ impl OxizipApp {
             }
             Message::ShowSetup => {
                 self.screen = Screen::Setup;
-                self.setup_associate = true;
+                self.setup_exts = setup::default_assoc_selection();
+                self.last_error = None;
                 Task::none()
             }
-            Message::SetupAssociateToggled(v) => {
-                self.setup_associate = v;
+            Message::SetupExtToggled(ext, on) => {
+                if let Some(slot) = self.setup_exts.get_mut(ext) {
+                    *slot = on;
+                }
                 Task::none()
             }
-            Message::SetupConfirm => self.finish_setup(self.setup_associate),
+            Message::SetupSelectAll => {
+                for on in self.setup_exts.values_mut() {
+                    *on = true;
+                }
+                Task::none()
+            }
+            Message::SetupClearAll => {
+                for on in self.setup_exts.values_mut() {
+                    *on = false;
+                }
+                Task::none()
+            }
+            Message::SetupConfirm => self.finish_setup(true),
             Message::SetupSkip => self.finish_setup(false),
             Message::LicenseFilterSelected(filter) => {
                 self.license_filter = filter;
@@ -810,33 +834,112 @@ impl OxizipApp {
     }
 
     fn view_setup(&self) -> Element<'_, Message> {
-        let associate_label = if self.setup_associate {
-            format!("[x] {}", t(self.lang, "gui.setup.associate"))
-        } else {
-            format!("[ ] {}", t(self.lang, "gui.setup.associate"))
-        };
-        let body = column![
-            image(self.icons.oxizip()).width(64).height(64),
-            text(t(self.lang, "gui.setup.title")).size(24),
-            text(t(self.lang, "gui.setup.intro")).size(15),
-            button(text(associate_label))
-                .on_press(Message::SetupAssociateToggled(!self.setup_associate)),
-            row![
-                button(t(self.lang, "gui.setup.continue")).on_press(Message::SetupConfirm),
-                Space::with_width(12),
-                button(t(self.lang, "gui.setup.skip")).on_press(Message::SetupSkip),
-            ]
-            .spacing(8),
+        let mut groups = Column::new().spacing(12);
+        for (group, exts) in setup::assoc_catalog() {
+            let mut chips = Column::new().spacing(4);
+            // Wrap extensions in rows of ~4.
+            let mut row_exts = row![].spacing(12).align_y(Alignment::Center);
+            let mut count_in_row = 0usize;
+            for ext in *exts {
+                let checked = self.setup_exts.get(ext).copied().unwrap_or(false);
+                let cell = row![
+                    image(self.icons.for_ext(ext)).width(16).height(16),
+                    checkbox(format!(".{ext}"), checked)
+                        .on_toggle(move |on| Message::SetupExtToggled(ext, on)),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .width(Length::Fixed(110.0));
+                row_exts = row_exts.push(cell);
+                count_in_row += 1;
+                if count_in_row >= 4 {
+                    chips = chips.push(row_exts);
+                    row_exts = row![].spacing(12).align_y(Alignment::Center);
+                    count_in_row = 0;
+                }
+            }
+            if count_in_row > 0 {
+                chips = chips.push(row_exts);
+            }
+            groups = groups.push(
+                column![
+                    text(t(self.lang, group.i18n_key())).size(14),
+                    chips,
+                ]
+                .spacing(6),
+            );
+        }
+
+        let list = container(
+            scrollable(
+                column![
+                    text(t(self.lang, "gui.setup.list")).size(13),
+                    groups,
+                ]
+                .spacing(10)
+                .padding(12),
+            )
+            .height(Length::Fill),
+        )
+        .width(Length::Fixed(520.0))
+        .height(Length::Fill)
+        .style(|theme: &iced::Theme| {
+            let palette = theme.extended_palette();
+            iced::widget::container::Style {
+                background: Some(iced::Background::Color(palette.background.weak.color)),
+                border: iced::Border {
+                    color: palette.background.strong.color,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            }
+        });
+
+        let err = self
+            .last_error
+            .as_ref()
+            .map(|e| text(e.as_str()).size(13))
+            .unwrap_or_else(|| text(" ").size(13));
+
+        let actions = row![
+            button(text(t(self.lang, "gui.setup.select_all")))
+                .on_press(Message::SetupSelectAll),
+            button(text(t(self.lang, "gui.setup.clear_all"))).on_press(Message::SetupClearAll),
+            Space::with_width(Length::Fill),
+            button(text(t(self.lang, "gui.setup.skip"))).on_press(Message::SetupSkip),
+            button(text(t(self.lang, "gui.setup.apply")).size(16))
+                .padding([10, 18])
+                .on_press(Message::SetupConfirm)
+                .style(iced::widget::button::primary),
         ]
-        .spacing(16)
-        .padding(32)
-        .align_x(iced::Alignment::Center);
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .width(Length::Fixed(520.0));
+
+        let body = column![
+            row![
+                image(self.icons.oxizip()).width(40).height(40),
+                column![
+                    text(t(self.lang, "gui.setup.title")).size(22),
+                    text(t(self.lang, "gui.setup.intro")).size(13),
+                ]
+                .spacing(4),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .width(Length::Fixed(520.0)),
+            list,
+            err,
+            actions,
+        ]
+        .spacing(12)
+        .padding(24)
+        .align_x(Alignment::Center);
 
         container(body)
             .width(Length::Fill)
             .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
             .into()
     }
 

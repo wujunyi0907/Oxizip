@@ -1,5 +1,6 @@
 //! First-run / post-install setup helpers (file associations via CLI).
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -52,14 +53,27 @@ fn cli_beside_gui() -> Option<PathBuf> {
 }
 
 /// Run `oxizip-cli shell install` using the CLI next to this GUI binary.
-pub fn install_associations(lang_arg: &str) -> Result<String, String> {
+/// `exts` empty means all supported formats.
+pub fn install_associations(lang_arg: &str, exts: &[&str]) -> Result<String, String> {
     let cli = cli_beside_gui().ok_or_else(|| {
         String::from(
             "oxizip-cli not found beside oxizip; reinstall or run: oxizip-cli shell install",
         )
     })?;
-    let output = Command::new(&cli)
-        .args(["--lang", lang_arg, "shell", "install"])
+    let mut args = vec!["--lang".into(), lang_arg.into(), "shell".into(), "install".into()];
+    if !exts.is_empty() {
+        args.push("--ext".into());
+        args.push(exts.join(","));
+    }
+    let mut cmd = Command::new(&cli);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd
+        .args(&args)
         .output()
         .map_err(|e| format!("spawn {}: {e}", cli.display()))?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -92,4 +106,57 @@ pub fn parse_launch_args() -> (bool, Option<PathBuf>) {
         }
     }
     (force_setup, open_path)
+}
+
+/// Association groups shown on the first-run / settings dialog (clean-room layout).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AssocGroup {
+    Archive,
+    Unix,
+    Other,
+    Disk,
+}
+
+impl AssocGroup {
+    pub fn i18n_key(self) -> &'static str {
+        match self {
+            Self::Archive => "gui.setup.group.archive",
+            Self::Unix => "gui.setup.group.unix",
+            Self::Other => "gui.setup.group.other",
+            Self::Disk => "gui.setup.group.disk",
+        }
+    }
+}
+
+/// Supported extensions for the association UI (aligned with CLI shell list).
+pub fn assoc_catalog() -> &'static [(AssocGroup, &'static [&'static str])] {
+    &[
+        (
+            AssocGroup::Archive,
+            &["zip", "zipx", "7z", "rar", "zpaq", "alz", "egg", "cab"],
+        ),
+        (
+            AssocGroup::Unix,
+            &["tar", "tgz", "gz", "xz", "zst", "bz2", "lzh", "lha"],
+        ),
+        (AssocGroup::Other, &["001"]),
+        (AssocGroup::Disk, &["iso", "wim", "esd", "swm"]),
+    ]
+}
+
+pub fn default_assoc_selection() -> BTreeMap<&'static str, bool> {
+    let mut map = BTreeMap::new();
+    for (_, exts) in assoc_catalog() {
+        for ext in *exts {
+            map.insert(*ext, true);
+        }
+    }
+    map
+}
+
+pub fn selected_exts(selection: &BTreeMap<&'static str, bool>) -> Vec<&'static str> {
+    selection
+        .iter()
+        .filter_map(|(ext, on)| (*on).then_some(*ext))
+        .collect()
 }

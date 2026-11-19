@@ -220,6 +220,7 @@ fn write_all_verbs(
     gui: &Path,
     icons_dir: &Path,
     lang: Lang,
+    exts: &[&str],
 ) -> Result<(), String> {
     let archive_verbs = [
         ("ExtractHere", "shell.extract_here", "extract --here \"%1\""),
@@ -233,7 +234,7 @@ fn write_all_verbs(
         ("Checksum", "shell.checksum", "checksum \"%1\""),
         ("Repair", "shell.repair", "repair \"%1\""),
     ];
-    for ext in archive_extensions() {
+    for ext in exts {
         let icon = icon_path_for_ext(icons_dir, ext);
         write_open_association(classes, ext, gui, &icon, lang)?;
         for (verb, key, args) in archive_verbs {
@@ -335,17 +336,52 @@ fn cleanup_exe_association(classes: &RegKey) {
     let _ = delete_open_association(classes, "exe");
 }
 
-pub fn install(lang: Lang) -> Result<String, String> {
+fn resolve_install_exts(requested: &[String]) -> Result<Vec<&'static str>, String> {
+    let all = archive_extensions();
+    if requested.is_empty() {
+        return Ok(all.to_vec());
+    }
+    let mut out = Vec::new();
+    for raw in requested {
+        let e = raw.trim().trim_start_matches('.').to_ascii_lowercase();
+        if e.is_empty() {
+            continue;
+        }
+        match all.iter().copied().find(|a| *a == e) {
+            Some(known) => {
+                if !out.contains(&known) {
+                    out.push(known);
+                }
+            }
+            None => {
+                return Err(format!(
+                    "unsupported extension '.{e}'. supported: {}",
+                    all.join(", ")
+                ));
+            }
+        }
+    }
+    if out.is_empty() {
+        return Err("no extensions selected".into());
+    }
+    Ok(out)
+}
+
+pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> {
+    let exts = resolve_install_exts(requested_exts)?;
     let exe = current_oxizip()?;
     let gui = current_oxizip_gui().unwrap_or_else(|_| exe.clone());
     let icons_dir = ensure_icons_dir(&exe)?;
     let classes = classes_root()?;
     cleanup_exe_association(&classes);
-    write_all_verbs(&classes, &exe, &gui, &icons_dir, lang)?;
+    // Clean slate so unchecked formats from a previous Apply are removed.
+    delete_all_verbs(&classes)?;
+    write_all_verbs(&classes, &exe, &gui, &icons_dir, lang, &exts)?;
     notify_assoc_changed();
     Ok(format!(
-        "{} (cli={} ; gui={} ; icons={})",
+        "{} (exts={} ; cli={} ; gui={} ; icons={})",
         t(lang, "shell.install_ok"),
+        exts.join(","),
         exe.display(),
         gui.display(),
         icons_dir.display()

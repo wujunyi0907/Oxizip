@@ -164,20 +164,34 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
 
         (Lang::ZhCn, "shell.open_with_oxizip") => "用 Oxizip 打开",
         (Lang::En, "shell.open_with_oxizip") => "Open with Oxizip",
-        (Lang::ZhCn, "gui.setup.title") => "完成安装设置",
-        (Lang::En, "gui.setup.title") => "Finish setup",
+        (Lang::ZhCn, "gui.setup.title") => "将文件扩展名关联至 Oxizip",
+        (Lang::En, "gui.setup.title") => "Associate file extensions with Oxizip",
         (Lang::ZhCn, "gui.setup.intro") => {
-            "是否将常见压缩格式关联到 Oxizip，并安装右键菜单？（可稍后在设置中再次操作）"
+            "选择要由 Oxizip 打开的格式；同时会安装资源管理器右键菜单。可稍后再次打开本页调整。"
         }
         (Lang::En, "gui.setup.intro") => {
-            "Associate common archive formats with Oxizip and install context menus? You can change this later."
+            "Choose formats Oxizip should open. Explorer context menus are installed too. You can revisit this later."
         }
-        (Lang::ZhCn, "gui.setup.associate") => "关联文件格式并安装右键菜单",
-        (Lang::En, "gui.setup.associate") => "Associate formats and install context menus",
-        (Lang::ZhCn, "gui.setup.continue") => "开始使用",
-        (Lang::En, "gui.setup.continue") => "Get started",
+        (Lang::ZhCn, "gui.setup.list") => "扩展名关联",
+        (Lang::En, "gui.setup.list") => "Extension association",
+        (Lang::ZhCn, "gui.setup.group.archive") => "压缩包文件",
+        (Lang::En, "gui.setup.group.archive") => "Archive files",
+        (Lang::ZhCn, "gui.setup.group.unix") => "UNIX",
+        (Lang::En, "gui.setup.group.unix") => "UNIX",
+        (Lang::ZhCn, "gui.setup.group.other") => "其它",
+        (Lang::En, "gui.setup.group.other") => "Others",
+        (Lang::ZhCn, "gui.setup.group.disk") => "磁盘映像",
+        (Lang::En, "gui.setup.group.disk") => "Disk images",
+        (Lang::ZhCn, "gui.setup.select_all") => "全选",
+        (Lang::En, "gui.setup.select_all") => "Select All",
+        (Lang::ZhCn, "gui.setup.clear_all") => "全不选",
+        (Lang::En, "gui.setup.clear_all") => "Clear All",
+        (Lang::ZhCn, "gui.setup.apply") => "立即应用",
+        (Lang::En, "gui.setup.apply") => "Apply Now",
         (Lang::ZhCn, "gui.setup.skip") => "暂时跳过",
         (Lang::En, "gui.setup.skip") => "Skip for now",
+        (Lang::ZhCn, "gui.setup.none") => "请至少选择一种格式，或点击暂时跳过",
+        (Lang::En, "gui.setup.none") => "Select at least one format, or skip for now",
         (Lang::ZhCn, "gui.setup.ok") => "已完成文件关联",
         (Lang::En, "gui.setup.ok") => "File associations installed",
         (Lang::ZhCn, "gui.setup.failed") => "文件关联失败",

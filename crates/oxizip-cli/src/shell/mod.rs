@@ -38,21 +38,21 @@ pub fn current_oxizip_gui() -> Result<PathBuf, String> {
 
 pub fn run(action: ShellAction, lang: Lang) -> ExitCode {
     match action {
-        ShellAction::Install => install(lang),
+        ShellAction::Install { exts } => install(lang, &exts),
         ShellAction::Uninstall => uninstall(lang),
         ShellAction::Status => status(lang),
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum ShellAction {
-    Install,
+    Install { exts: Vec<String> },
     Uninstall,
     Status,
 }
 
-fn install(lang: Lang) -> ExitCode {
-    match platform_install(lang) {
+fn install(lang: Lang, exts: &[String]) -> ExitCode {
+    match platform_install(lang, exts) {
         Ok(msg) => {
             println!("{msg}");
             ExitCode::SUCCESS
@@ -91,8 +91,8 @@ fn status(lang: Lang) -> ExitCode {
 }
 
 #[cfg(windows)]
-fn platform_install(lang: Lang) -> Result<String, String> {
-    windows::install(lang)
+fn platform_install(lang: Lang, exts: &[String]) -> Result<String, String> {
+    windows::install(lang, exts)
 }
 #[cfg(windows)]
 fn platform_uninstall(lang: Lang) -> Result<String, String> {
@@ -104,7 +104,9 @@ fn platform_status(lang: Lang) -> Result<String, String> {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn platform_install(lang: Lang) -> Result<String, String> {
+fn platform_install(lang: Lang, _exts: &[String]) -> Result<String, String> {
+    // Linux desktop files cover MIME types as a set; per-ext filter is Windows-oriented.
+    let _ = _exts;
     linux::install(lang)
 }
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -117,7 +119,7 @@ fn platform_status(lang: Lang) -> Result<String, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn platform_install(_lang: Lang) -> Result<String, String> {
+fn platform_install(_lang: Lang, _exts: &[String]) -> Result<String, String> {
     Err(
         "macOS shell integration is not implemented yet; use CLI extract/create modes directly"
             .into(),

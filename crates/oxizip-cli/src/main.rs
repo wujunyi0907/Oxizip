@@ -185,7 +185,11 @@ enum Commands {
 #[derive(Subcommand, Debug)]
 enum ShellCmd {
     /// Register context-menu / desktop actions for the current user
-    Install,
+    Install {
+        /// Optional comma-separated extensions (e.g. zip,7z,rar). Default: all supported.
+        #[arg(long, value_delimiter = ',')]
+        ext: Vec<String>,
+    },
     /// Remove Oxizip shell integration
     Uninstall,
     /// Show whether shell integration is present
@@ -240,7 +244,9 @@ fn main() -> ExitCode {
 
     if let Commands::Shell { action } = &cli.command {
         let action = match action {
-            ShellCmd::Install => shell::ShellAction::Install,
+            ShellCmd::Install { ext } => shell::ShellAction::Install {
+                exts: ext.clone(),
+            },
             ShellCmd::Uninstall => shell::ShellAction::Uninstall,
             ShellCmd::Status => shell::ShellAction::Status,
         };
