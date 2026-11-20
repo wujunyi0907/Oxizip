@@ -65,7 +65,7 @@ oxizip-cli / oxizip-gui
 
 | 能力 | Windows | Linux | 注意 |
 |---|---|---|---|
-| 文件关联 / 默认打开 | `oxizip-cli shell install`：ProgID + `UserChoice` / `UserChoiceLatest` + Capabilities | 同命令：用户级 `cn.wujunyi.oxizip.desktop` + `xdg-mime default` + 必要时 `~/.local/share/mime/packages`；卸载清理 `mimeapps.list` 中本应用条目 | GUI 关联页勾选的 `--ext` **两边都要生效**；勿只在 Win 写注册表而 Linux 忽略扩展过滤 |
+| 文件关联 / 默认打开 | `oxizip-cli shell install`：ProgID + `.{ext}` + OpenWithProgids + Capabilities + **经典** `UserChoice`（对齐 Bandizip；**不写** `UserChoiceLatest`）；提权时同步 HKLM Classes | 同命令：用户级 `cn.wujunyi.oxizip.desktop` + `xdg-mime default` + 必要时 `~/.local/share/mime/packages`；卸载清理 `mimeapps.list` 中本应用条目 | GUI 关联页勾选的 `--ext` **两边都要生效**；勿只在 Win 写注册表而 Linux 忽略扩展过滤 |
 | 右键 / 文件管理器菜单 | Explorer 动词 | FreeDesktop Actions + Nautilus scripts + KDE service menus | 动作语义对齐（解压/压缩等）；路径含空格须正确引用 |
 | 安装 / 卸载 | `oxizip-setup` + `package-windows.ps1` | deb/rpm/AppImage（`package-linux.sh`） | 禁止嵌入第三方安装器资源；Linux 包内 `oxizip.desktop` 与用户级关联可并存 |
 | 外部工具 | UnRAR / wimlib 旁路查找 | PATH / 系统 `unrar`、`wimlib-imagex` | 缺失时返回可本地化错误，勿假定 exe 一定在旁 |

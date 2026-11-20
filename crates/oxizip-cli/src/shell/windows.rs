@@ -1,4 +1,12 @@
 //! HKCU Explorer context-menu verbs + file-type icons + open associations (no COM DLL).
+//!
+//! Association model aligned with Bandizip.exe (clean-room, from strings + registry):
+//! - `Software\Classes\<ProgID>` + `.{ext}` default + DefaultIcon + OpenWithProgids
+//! - `RegisteredApplications` + `Capabilities` / `FileAssociations`
+//! - classic `FileExts\%s\UserChoice` (`ProgId` + `Hash`) only — **no** `UserChoiceLatest`
+//! - `SHChangeNotify(SHCNE_ASSOCCHANGED)`
+//!
+//! Elevated installs also mirror ProgID / `.{ext}` under HKLM (Bandizip setup path).
 
 use std::path::Path;
 
@@ -8,7 +16,9 @@ use winreg::RegKey;
 
 use super::icons::{ensure_icons_dir, icon_path_for_ext, icon_registry_value};
 use super::user_choice;
-use super::{archive_extensions, current_oxizip, current_oxizip_gui, resolve_install_exts};
+use super::{
+    assoc_cleanup_extensions, current_oxizip, current_oxizip_gui, resolve_install_exts,
+};
 
 const VERB_PREFIX: &str = "Oxizip";
 /// ProgID / 关联 ID（反向域名风格，对齐 identifier `cn.wujunyi.oxizip`）
@@ -27,6 +37,55 @@ fn classes_root() -> Result<RegKey, String> {
         .map_err(|e| format!("open HKCU\\Software\\Classes: {e}"))
 }
 
+fn hklm_classes_root() -> Option<RegKey> {
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    hklm.open_subkey_with_flags("Software\\Classes", KEY_READ | KEY_WRITE)
+        .ok()
+}
+
+fn is_process_elevated() -> bool {
+    use std::os::windows::raw::HANDLE;
+    use std::ptr;
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenProcessToken(process: HANDLE, access: u32, token: *mut HANDLE) -> i32;
+        fn GetTokenInformation(
+            token: HANDLE,
+            class: u32,
+            info: *mut u8,
+            len: u32,
+            ret_len: *mut u32,
+        ) -> i32;
+        fn GetCurrentProcess() -> HANDLE;
+        fn CloseHandle(handle: HANDLE) -> i32;
+    }
+    const TOKEN_QUERY: u32 = 0x0008;
+    const TOKEN_ELEVATION: u32 = 20;
+    #[repr(C)]
+    struct TokenElevation {
+        token_is_elevated: u32,
+    }
+    unsafe {
+        let mut token: HANDLE = ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return false;
+        }
+        let mut elev = TokenElevation {
+            token_is_elevated: 0,
+        };
+        let mut ret = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TOKEN_ELEVATION,
+            (&mut elev as *mut TokenElevation).cast(),
+            std::mem::size_of::<TokenElevation>() as u32,
+            &mut ret,
+        );
+        CloseHandle(token);
+        ok != 0 && elev.token_is_elevated != 0
+    }
+}
+
 fn association_key(ext: &str) -> String {
     format!("SystemFileAssociations\\.{ext}")
 }
@@ -39,12 +98,21 @@ fn quote_path(path: &Path) -> String {
     format!("\"{}\"", path.display())
 }
 
-/// Write DefaultIcon in all places Explorer may consult for a file type.
+fn is_our_progid(progid: &str) -> bool {
+    progid
+        .to_ascii_lowercase()
+        .starts_with(&PROGID_PREFIX.to_ascii_lowercase())
+}
+
+fn file_exts_parent(ext: &str) -> String {
+    format!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.{ext}")
+}
+
+/// Write DefaultIcon in places Explorer consults (Bandizip: ProgID + `.{ext}` + SFA).
 fn write_format_icons(classes: &RegKey, ext: &str, icon: &Path) -> Result<(), String> {
     let value = icon_registry_value(icon);
-
-    // 1) ProgID (used when .{ext} default = our ProgID)
     let progid = progid_for_ext(ext);
+
     let (prog_icon, _) = classes
         .create_subkey(format!("{progid}\\DefaultIcon"))
         .map_err(|e| format!("create {progid}\\DefaultIcon: {e}"))?;
@@ -52,7 +120,6 @@ fn write_format_icons(classes: &RegKey, ext: &str, icon: &Path) -> Result<(), St
         .set_value("", &value)
         .map_err(|e| format!("set {progid}\\DefaultIcon: {e}"))?;
 
-    // 2) Directly under .{ext}\DefaultIcon
     let (ext_icon, _) = classes
         .create_subkey(format!(".{ext}\\DefaultIcon"))
         .map_err(|e| format!("create .{ext}\\DefaultIcon: {e}"))?;
@@ -60,7 +127,6 @@ fn write_format_icons(classes: &RegKey, ext: &str, icon: &Path) -> Result<(), St
         .set_value("", &value)
         .map_err(|e| format!("set .{ext}\\DefaultIcon: {e}"))?;
 
-    // 3) SystemFileAssociations (Explorer overlays / some views)
     let (sfa_icon, _) = classes
         .create_subkey(format!("{}\\DefaultIcon", association_key(ext)))
         .map_err(|e| format!("create SFA DefaultIcon for .{ext}: {e}"))?;
@@ -71,13 +137,101 @@ fn write_format_icons(classes: &RegKey, ext: &str, icon: &Path) -> Result<(), St
     Ok(())
 }
 
-fn clear_user_choice(ext: &str) {
-    // Prefer hashed rewrite via `user_choice::set_user_default`; this is a best-effort wipe.
+fn read_classic_user_progid(ext: &str) -> Option<String> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let path = format!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.{ext}");
-    if let Ok(key) = hkcu.open_subkey_with_flags(&path, KEY_READ | KEY_WRITE) {
-        let _ = key.delete_subkey_all("UserChoice");
-        let _ = key.delete_subkey_all("UserChoiceLatest");
+    let parent = file_exts_parent(ext);
+    let k = hkcu.open_subkey(format!("{parent}\\UserChoice")).ok()?;
+    let p: String = k.get_value("ProgId").ok()?;
+    let p = p.trim().to_string();
+    if p.is_empty() {
+        None
+    } else {
+        Some(p)
+    }
+}
+
+fn read_latest_user_progid(ext: &str) -> Option<String> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let parent = file_exts_parent(ext);
+    let k = hkcu
+        .open_subkey(format!("{parent}\\UserChoiceLatest\\ProgId"))
+        .ok()?;
+    let p: String = k.get_value("ProgId").ok()?;
+    let p = p.trim().to_string();
+    if p.is_empty() {
+        None
+    } else {
+        Some(p)
+    }
+}
+
+/// Clear only keys that still point at Oxizip (do not wipe Bandizip / system defaults).
+fn clear_user_choice_if_ours(ext: &str) {
+    let parent = file_exts_parent(ext);
+    if read_classic_user_progid(ext).is_some_and(|p| is_our_progid(&p)) {
+        user_choice::delete_classic_user_choice_key(&parent);
+    }
+    if read_latest_user_progid(ext).is_some_and(|p| is_our_progid(&p)) {
+        // Legacy Oxizip builds wrote Latest; Bandizip never does — clean ours only.
+        user_choice::delete_latest_user_choice_key(&parent);
+    }
+}
+
+fn clear_file_exts_open_with(ext: &str) {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let progid = progid_for_ext(ext);
+    let parent = file_exts_parent(ext);
+    if let Ok(ow) =
+        hkcu.open_subkey_with_flags(format!("{parent}\\OpenWithProgids"), KEY_READ | KEY_WRITE)
+    {
+        let _ = ow.delete_value(&progid);
+    }
+    if let Ok(list) =
+        hkcu.open_subkey_with_flags(format!("{parent}\\OpenWithList"), KEY_READ | KEY_WRITE)
+    {
+        let mut drop_names = Vec::new();
+        for (name, value) in list.enum_values().filter_map(|v| v.ok()) {
+            let s = value.to_string().to_ascii_lowercase();
+            if s.contains("oxizip") {
+                drop_names.push(name);
+            }
+        }
+        for name in drop_names {
+            let _ = list.delete_value(&name);
+        }
+    }
+}
+
+/// Drop HKCU `Software\\Classes\\.{ext}` once Oxizip no longer claims it.
+fn release_hkcu_ext_override(classes: &RegKey, ext: &str) {
+    let progid = progid_for_ext(ext);
+    let ext_path = format!(".{ext}");
+    let Ok(ext_key) = classes.open_subkey_with_flags(&ext_path, KEY_READ | KEY_WRITE) else {
+        return;
+    };
+
+    let ours_or_empty = match ext_key.get_value::<String, _>("") {
+        Ok(current) => current.is_empty() || current.eq_ignore_ascii_case(&progid),
+        Err(_) => true,
+    };
+
+    let _ = ext_key.delete_subkey_all("DefaultIcon");
+    if let Ok(open_with) = ext_key.open_subkey_with_flags("OpenWithProgids", KEY_READ | KEY_WRITE) {
+        let _ = open_with.delete_value(&progid);
+    }
+
+    if ours_or_empty {
+        drop(ext_key);
+        let _ = classes.delete_subkey_all(&ext_path);
+        return;
+    }
+
+    if let Ok(open_with) = ext_key.open_subkey_with_flags("OpenWithProgids", KEY_READ | KEY_WRITE) {
+        let remaining = open_with.enum_values().filter_map(|v| v.ok()).count();
+        drop(open_with);
+        if remaining == 0 {
+            let _ = ext_key.delete_subkey_all("OpenWithProgids");
+        }
     }
 }
 
@@ -97,7 +251,6 @@ fn register_capabilities(lang: Lang, exts: &[&str]) -> Result<(), String> {
     let (fa, _) = caps
         .create_subkey("FileAssociations")
         .map_err(|e| format!("create FileAssociations: {e}"))?;
-    // Clear previous claims then rewrite selected exts only.
     for name in fa.enum_values().filter_map(|v| v.ok().map(|(n, _)| n)) {
         let _ = fa.delete_value(&name);
     }
@@ -148,13 +301,13 @@ fn write_open_association(
     gui: &Path,
     icon: &Path,
     lang: Lang,
+    with_user_choice: bool,
 ) -> Result<(), String> {
     let progid = progid_for_ext(ext);
     let (prog, _) = classes
         .create_subkey(&progid)
         .map_err(|e| format!("create progid {progid}: {e}"))?;
-    // Bandizip-style friendly type: "7z 压缩文件" / "Compressed File (7z)".
-    // Explorer Properties appends " (.7z)" → "7z 压缩文件 (.7z)".
+    // Bandizip-style type label: "7z 压缩文件" — Explorer may append " (.7z)".
     let type_label = assoc_type_label(lang, ext);
     prog.set_value("", &type_label)
         .map_err(|e| format!("set progid label: {e}"))?;
@@ -175,7 +328,7 @@ fn write_open_association(
     cmd.set_value("", &format!("{} \"%1\"", quote_path(gui)))
         .map_err(|e| format!("set progid command: {e}"))?;
 
-    // Make Oxizip the current-user default handler for this extension.
+    // Claim `.{ext}` default ProgID (Bandizip writes this under HKLM when elevated).
     let (ext_key, _) = classes
         .create_subkey(format!(".{ext}"))
         .map_err(|e| format!("create .{ext}: {e}"))?;
@@ -189,16 +342,16 @@ fn write_open_association(
         .set_value(&progid, &"")
         .map_err(|e| format!("set OpenWithProgids: {e}"))?;
 
-    // Also list under FileExts OpenWithProgids (Explorer “Open with”).
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    if let Ok((fe, _)) = hkcu.create_subkey(format!(
-        "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.{ext}\\OpenWithProgids"
-    )) {
-        let _ = fe.set_value(&progid, &"");
+    if with_user_choice {
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        if let Ok((fe, _)) = hkcu.create_subkey(format!(
+            "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.{ext}\\OpenWithProgids"
+        )) {
+            let _ = fe.set_value(&progid, &"");
+        }
+        // Classic UserChoice only — Bandizip does not write UserChoiceLatest.
+        user_choice::set_user_default(ext, &progid)?;
     }
-
-    // Hashed UserChoice / UserChoiceLatest so the per-user default sticks on Win10/11.
-    user_choice::set_user_default(ext, &progid)?;
     Ok(())
 }
 
@@ -209,16 +362,13 @@ fn delete_open_association(classes: &RegKey, ext: &str) -> Result<(), String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(format!("delete progid {progid}: {e}")),
     }
-    if let Ok(ext_key) = classes.open_subkey_with_flags(format!(".{ext}"), KEY_READ | KEY_WRITE) {
-        let _ = ext_key.delete_value("");
-        let _ = ext_key.delete_subkey_all("DefaultIcon");
-        if let Ok(open_with) =
-            ext_key.open_subkey_with_flags("OpenWithProgids", KEY_READ | KEY_WRITE)
-        {
-            let _ = open_with.delete_value(&progid);
-        }
+    if let Some(hklm) = hklm_classes_root() {
+        let _ = hklm.delete_subkey_all(&progid);
+        release_hkcu_ext_override(&hklm, ext);
     }
-    clear_user_choice(ext);
+    release_hkcu_ext_override(classes, ext);
+    clear_file_exts_open_with(ext);
+    clear_user_choice_if_ours(ext);
     Ok(())
 }
 
@@ -310,7 +460,7 @@ fn write_all_verbs(
     ];
     for ext in exts {
         let icon = icon_path_for_ext(icons_dir, ext);
-        write_open_association(classes, ext, gui, &icon, lang)?;
+        write_open_association(classes, ext, gui, &icon, lang, true)?;
         for (verb, key, args) in archive_verbs {
             write_verb(classes, ext, verb, t(lang, key), exe, args, &icon)?;
         }
@@ -369,7 +519,7 @@ fn delete_default_icon(classes: &RegKey, ext: &str) -> Result<(), String> {
 }
 
 fn delete_all_verbs(classes: &RegKey) -> Result<(), String> {
-    for ext in archive_extensions() {
+    for ext in assoc_cleanup_extensions() {
         for verb in [
             "ExtractHere",
             "ExtractSmart",
@@ -394,7 +544,6 @@ fn delete_all_verbs(classes: &RegKey) -> Result<(), String> {
     Ok(())
 }
 
-/// Remove any leftover `.exe` association from older Oxizip builds (do not touch executables).
 fn cleanup_exe_association(classes: &RegKey) {
     for verb in [
         "ExtractHere",
@@ -417,10 +566,20 @@ pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> 
     let icons_dir = ensure_icons_dir(&exe)?;
     let classes = classes_root()?;
     cleanup_exe_association(&classes);
-    // Clean slate so unchecked formats from a previous Apply are removed.
     delete_all_verbs(&classes)?;
     register_capabilities(lang, &exts)?;
     write_all_verbs(&classes, &exe, &gui, &icons_dir, lang, &exts)?;
+
+    // Bandizip setup (elevated) also registers under HKLM\Software\Classes.
+    if is_process_elevated() {
+        if let Some(hklm) = hklm_classes_root() {
+            for ext in &exts {
+                let icon = icon_path_for_ext(&icons_dir, ext);
+                let _ = write_open_association(&hklm, ext, &gui, &icon, lang, false);
+            }
+        }
+    }
+
     notify_assoc_changed();
     Ok(format!(
         "{} (exts={} ; cli={} ; gui={} ; icons={})",
@@ -437,9 +596,6 @@ pub fn uninstall(lang: Lang) -> Result<String, String> {
     cleanup_exe_association(&classes);
     delete_all_verbs(&classes)?;
     unregister_capabilities();
-    for ext in archive_extensions() {
-        clear_user_choice(ext);
-    }
     notify_assoc_changed();
     Ok(t(lang, "shell.uninstall_ok").to_string())
 }

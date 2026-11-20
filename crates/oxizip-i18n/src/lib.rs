@@ -200,10 +200,10 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
         (Lang::ZhCn, "gui.setup.title") => "将文件扩展名关联至 Oxizip",
         (Lang::En, "gui.setup.title") => "Associate file extensions with Oxizip",
         (Lang::ZhCn, "gui.setup.intro") => {
-            "将 Oxizip 设为下列扩展名的默认打开程序；同时会安装资源管理器右键菜单。可稍后再次打开本页调整。"
+            "将 Oxizip 设为下列扩展名的打开程序，并安装资源管理器右键菜单（行为对齐常见压缩软件：注册 ProgID + 经典 UserChoice）。可稍后再次打开本页调整。"
         }
         (Lang::En, "gui.setup.intro") => {
-            "Set Oxizip as the default app for the extensions below. Explorer context menus are installed too. You can revisit this later."
+            "Register Oxizip for the formats below and install Explorer context menus (ProgID + classic UserChoice, Bandizip-aligned). You can revisit this later."
         }
         (Lang::ZhCn, "gui.setup.group.archive") => "压缩包文件",
         (Lang::En, "gui.setup.group.archive") => "Archive files",

@@ -1,6 +1,6 @@
 //! Cross-platform shell / file-manager integration.
 //!
-//! Windows: HKCU ProgID / UserChoice(+Latest) + Explorer verbs.
+//! Windows: ProgID / Capabilities / classic UserChoice (Bandizip-aligned; no UserChoiceLatest).
 //! Linux: FreeDesktop default open (`.desktop` + `xdg-mime`) + Nautilus / KDE menus.
 //! Both honor the GUI association page `--ext` selection.
 
@@ -135,7 +135,7 @@ fn platform_status(_lang: Lang) -> Result<String, String> {
     Ok("macOS: shell menus not registered (unsupported in this build)".into())
 }
 
-/// Archive extensions registered for context actions / default open / icons.
+/// Archive extensions that may be registered for context actions / default open / icons.
 /// Note: `.exe` is intentionally excluded — never hijack executable icons or Open.
 pub fn archive_extensions() -> &'static [&'static str] {
     &[
@@ -144,11 +144,35 @@ pub fn archive_extensions() -> &'static [&'static str] {
     ]
 }
 
-/// Resolve `--ext` / GUI selection against [`archive_extensions`]. Empty → all.
+/// Disk images: optional in the assoc UI, **off by default** (leave Windows Explorer / mount).
+pub fn disk_image_extensions() -> &'static [&'static str] {
+    &["iso", "wim", "esd", "swm"]
+}
+
+fn is_disk_image_ext(ext: &str) -> bool {
+    disk_image_extensions().iter().any(|e| *e == ext)
+}
+
+/// Default `--ext` / empty selection: all [`archive_extensions`] except disk images.
+pub fn default_install_extensions() -> Vec<&'static str> {
+    archive_extensions()
+        .iter()
+        .copied()
+        .filter(|e| !is_disk_image_ext(e))
+        .collect()
+}
+
+/// Wipe path for uninstall / re-apply (includes optional disk images).
+pub fn assoc_cleanup_extensions() -> Vec<&'static str> {
+    archive_extensions().to_vec()
+}
+
+/// Resolve `--ext` / GUI selection against [`archive_extensions`].
+/// Empty → [`default_install_extensions`] (disk images omitted).
 pub(crate) fn resolve_install_exts(requested: &[String]) -> Result<Vec<&'static str>, String> {
     let all = archive_extensions();
     if requested.is_empty() {
-        return Ok(all.to_vec());
+        return Ok(default_install_extensions());
     }
     let mut out = Vec::new();
     for raw in requested {
@@ -181,9 +205,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_empty_means_all() {
-        let all = resolve_install_exts(&[]).unwrap();
-        assert_eq!(all.len(), archive_extensions().len());
+    fn resolve_empty_skips_disk_images() {
+        let got = resolve_install_exts(&[]).unwrap();
+        assert_eq!(got.len(), default_install_extensions().len());
+        assert!(!got.iter().any(|e| disk_image_extensions().contains(e)));
+        assert!(resolve_install_exts(&[String::from("iso")]).unwrap().contains(&"iso"));
     }
 
     #[test]

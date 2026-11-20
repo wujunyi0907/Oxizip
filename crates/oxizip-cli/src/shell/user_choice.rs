@@ -1,12 +1,14 @@
-//! Per-user default handler via `FileExts\...\UserChoice` / `UserChoiceLatest`.
+//! Per-user default handler via classic `FileExts\...\UserChoice` (Bandizip-aligned).
 //!
-//! - **HashVersion 0** (classic): write `UserChoice` with the public Firefox /
-//!   SetUserFTA hash.
-//! - **HashVersion ≥ 1** (Win11 UserChoiceLatest): write `UserChoiceLatest` with
-//!   the machine-ID-aware hash (MIT codec under `native/user_choice_latest/`).
+//! Bandizip.exe (strings / registry behavior) writes only:
+//! `Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\%s\UserChoice`
+//! with `ProgId` + `Hash` (Firefox / SetUserFTA algorithm). It has **no**
+//! `UserChoiceLatest` strings and does not touch that key.
 //!
-//! Never copy the classic hash into `UserChoiceLatest` — Windows rejects it and
-//! the association appears to “fail to apply”.
+//! Oxizip matches that path: rewrite classic `UserChoice` only; do not create or
+//! delete `UserChoiceLatest` (leave Win11 Settings-managed Latest alone).
+//!
+//! `set_latest_user_choice` remains available for experiments but is unused by install.
 
 use std::mem::MaybeUninit;
 use std::os::windows::ffi::OsStrExt;
@@ -262,7 +264,7 @@ fn normalize_filetime(ft: u64) -> Result<u64, String> {
     }
 }
 
-fn delete_user_choice_key(parent_rel: &str) {
+fn delete_named_user_choice_tree(parent_rel: &str, sub_name_nul: &str) {
     #[link(name = "advapi32")]
     extern "system" {
         fn RegOpenKeyExW(
@@ -282,16 +284,31 @@ fn delete_user_choice_key(parent_rel: &str) {
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
+    let sub: Vec<u16> = sub_name_nul.encode_utf16().collect();
     unsafe {
         let mut h = 0isize;
         if RegOpenKeyExW(HKEY_CURRENT_USER, wide.as_ptr(), 0, KEY_READ, &mut h) == 0 {
-            for name in ["UserChoice\0", "UserChoiceLatest\0"] {
-                let sub: Vec<u16> = name.encode_utf16().collect();
-                let _ = RegDeleteTreeW(h, sub.as_ptr());
-            }
+            let _ = RegDeleteTreeW(h, sub.as_ptr());
             RegCloseKey(h);
         }
     }
+}
+
+/// Delete classic `UserChoice` only (Bandizip-style). Does not touch `UserChoiceLatest`.
+pub fn delete_classic_user_choice_key(parent_rel: &str) {
+    delete_named_user_choice_tree(parent_rel, "UserChoice\0");
+}
+
+/// Delete `UserChoiceLatest` only (legacy Oxizip cleanup when ProgId was ours).
+pub fn delete_latest_user_choice_key(parent_rel: &str) {
+    delete_named_user_choice_tree(parent_rel, "UserChoiceLatest\0");
+}
+
+/// Delete both trees (legacy full wipe). Prefer the classic/latest-specific helpers.
+#[allow(dead_code)]
+pub fn delete_user_choice_key(parent_rel: &str) {
+    delete_classic_user_choice_key(parent_rel);
+    delete_latest_user_choice_key(parent_rel);
 }
 
 fn read_machine_id() -> Result<String, String> {
@@ -306,6 +323,7 @@ fn read_machine_id() -> Result<String, String> {
 }
 
 /// `AppDefaults\\HashVersion` under the current user's SystemProtectedUserData.
+#[allow(dead_code)]
 fn associations_hash_version(sid: &str) -> u32 {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let path = format!(
@@ -380,6 +398,7 @@ fn set_classic_user_choice(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn set_latest_user_choice(
     parent: &str,
     ext_dot: &str,
@@ -411,7 +430,9 @@ fn set_latest_user_choice(
     Ok(())
 }
 
-/// Set Oxizip ProgID as the current-user default for `ext` (with or without dot).
+/// Set ProgID via classic `UserChoice` only — same surface as Bandizip.
+///
+/// Does **not** create/update/delete `UserChoiceLatest` (Win11 Settings owns that).
 pub fn set_user_default(ext: &str, progid: &str) -> Result<(), String> {
     let ext_dot = if ext.starts_with('.') {
         ext.to_string()
@@ -420,16 +441,9 @@ pub fn set_user_default(ext: &str, progid: &str) -> Result<(), String> {
     };
     let parent = file_exts_path(&ext_dot);
     let sid = current_user_sid()?;
-    let hash_version = associations_hash_version(&sid);
 
-    delete_user_choice_key(&parent);
-
-    if hash_version >= 1 {
-        set_latest_user_choice(&parent, &ext_dot, &sid, progid)?;
-    } else {
-        set_classic_user_choice(&parent, &ext_dot, &sid, progid)?;
-    }
-
+    delete_classic_user_choice_key(&parent);
+    set_classic_user_choice(&parent, &ext_dot, &sid, progid)?;
     Ok(())
 }
 

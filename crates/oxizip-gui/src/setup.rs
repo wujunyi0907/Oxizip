@@ -149,15 +149,17 @@ pub fn assoc_catalog() -> &'static [(AssocGroup, &'static [&'static str])] {
             &["tar", "tgz", "gz", "xz", "zst", "bz2", "lzh", "lha"],
         ),
         (AssocGroup::Other, &["001"]),
+        // Present but unchecked by default — keep Windows mount / default handlers.
         (AssocGroup::Disk, &["iso", "wim", "esd", "swm"]),
     ]
 }
 
 pub fn default_assoc_selection() -> BTreeMap<&'static str, bool> {
     let mut map = BTreeMap::new();
-    for (_, exts) in assoc_catalog() {
+    for (group, exts) in assoc_catalog() {
+        let on = *group != AssocGroup::Disk;
         for ext in *exts {
-            map.insert(*ext, true);
+            map.insert(*ext, on);
         }
     }
     map
