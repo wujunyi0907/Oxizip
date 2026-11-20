@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Package CI：`checkout@v7`、`upload-artifact@v7`、`download-artifact@v8`（Node 24）
+
 ## [0.1.5] - 2026-11-20
 
 ### Added
