@@ -1,6 +1,6 @@
 //! RAR support via official UnRAR CLI only (no RAR bitstream code in-tree).
 //!
-//! - Windows: official UnRAR binary (env / beside exe / third_party / PATH)
+//! - Windows: official UnRAR binary (env / beside exe / `lib/unrar/` / PATH)
 //! - Other OS: system-installed `unrar` on PATH (or `OXIZIP_UNRAR`)
 
 use std::path::{Path, PathBuf};
@@ -29,24 +29,17 @@ pub fn find_unrar(explicit: Option<&Path>) -> Option<PathBuf> {
     #[cfg(windows)]
     {
         let names = ["UnRAR.exe", "unrar.exe"];
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                for name in names {
-                    let candidate = dir.join(name);
-                    if candidate.is_file() {
-                        return Some(candidate);
-                    }
-                }
-            }
+        if let Some(p) = search_beside_exe(&names) {
+            return Some(p);
         }
         for root in candidate_repo_roots() {
             for name in names {
-                let candidate = root.join("third_party").join("unrar").join(name);
+                let candidate = root.join("lib").join("unrar").join(name);
                 if candidate.is_file() {
                     return Some(candidate);
                 }
-                // Legacy layout if user drops CLI next to docs.
-                let candidate = root.join("third_party").join(name);
+                // Legacy local drop paths (not shipped).
+                let candidate = root.join("third_party").join("unrar").join(name);
                 if candidate.is_file() {
                     return Some(candidate);
                 }
@@ -70,6 +63,27 @@ pub fn find_unrar(explicit: Option<&Path>) -> Option<PathBuf> {
         }
         None
     }
+}
+
+#[cfg(windows)]
+fn search_beside_exe(names: &[&str]) -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    for name in names {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        let candidate = dir.join("lib").join("unrar").join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        let candidate = dir.join("lib").join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 #[cfg(windows)]

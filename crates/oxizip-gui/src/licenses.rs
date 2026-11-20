@@ -63,12 +63,12 @@ pub fn catalog() -> &'static [ComponentInfo] {
         },
         ComponentInfo {
             kind: ComponentKind::Embedded,
-            name: "ZPAQ (third_party/zpaq)",
+            name: "ZPAQ (lib/zpaq)",
             license: "Unlicense",
             purpose_zh: ".zpaq 读写（嵌入编译）",
             purpose_en: ".zpaq read/write (embedded)",
-            note_zh: "见 third_party/zpaq/COPYING",
-            note_en: "See third_party/zpaq/COPYING",
+            note_zh: "见 lib/zpaq/COPYING",
+            note_en: "See lib/zpaq/COPYING",
         },
         ComponentInfo {
             kind: ComponentKind::Embedded,

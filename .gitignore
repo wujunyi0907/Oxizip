@@ -24,7 +24,7 @@ crates/oxizip-gui/assets/icons/__pycache__/
 # --- 本地参考材料（整目录禁止提交）---
 /reference/
 
-# --- third_party：只提交说明与 ZPAQ 嵌入源码；不提交 UnRAR/ZPAQ 二进制 ---
+# --- third_party：本地临时放置仍忽略；正式内容在 lib/ ---
 /third_party/unrar/
 /third_party/UnrarDLL/
 /third_party/wimlib/
@@ -32,3 +32,4 @@ crates/oxizip-gui/assets/icons/__pycache__/
 /third_party/**/*.dll
 /third_party/**/*.lib
 /third_party/**/*.pdb
+# lib/unrar · lib/wimlib · lib/zpaq（正式树；提交与否由发版决定）

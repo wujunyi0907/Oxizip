@@ -1,4 +1,4 @@
-//! In-process official zpaq (embedded `third_party/zpaq`, no external exe).
+//! In-process official zpaq (embedded `lib/zpaq`, no external exe).
 
 use std::ffi::CString;
 use std::fs;

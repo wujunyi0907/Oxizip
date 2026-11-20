@@ -127,21 +127,23 @@ Oxizip does **not** modify or link these tools’ sources/libraries; it only spa
 
 | Platform | Lookup order |
 |---|---|
-| Windows | `OXIZIP_UNRAR` → `UnRAR.exe` next to the app → `third_party/unrar/` → `PATH` |
+| Windows | `OXIZIP_UNRAR` → next to the app → **`lib/unrar/UnRAR.exe`** → `PATH` |
 | Other | `OXIZIP_UNRAR` → system `unrar` |
 
-Missing tool → localizable error. If you redistribute it: use the official unmodified 64-bit CLI and keep its license text.
+Missing tool → localizable error. The Windows installer ships the official unmodified 64-bit CLI and its license from repo [`lib/unrar/`](lib/unrar/).
 
 ### wimlib (WIM extract only)
 
 | Platform | Lookup order |
 |---|---|
-| Windows | `OXIZIP_WIMLIB` → `wimlib-imagex.exe` next to the app → `third_party/wimlib/` → `PATH` |
+| Windows | `OXIZIP_WIMLIB` → next to the app → **`lib/wimlib/wimlib-imagex.exe`** → `PATH` |
 | Other | `OXIZIP_WIMLIB` → system `wimlib-imagex` / `wimdir`+`wimextract` |
+
+The Windows installer also ships [`lib/wimlib/`](lib/wimlib/) (`wimlib-imagex.exe` + `libwim-15.dll`; spawn only, no link).
 
 ### ZPAQ (embedded in-process)
 
-No external `zpaq.exe`. Sources under `third_party/zpaq/` are built by `oxizip-formats` `build.rs` with `-DOXIZIP_EMBEDDED`; only the embed entry macros may be changed. Keep `third_party/zpaq/COPYING` in releases.
+No external `zpaq.exe`. Sources under `lib/zpaq/` are built by `oxizip-formats` `build.rs` with `-DOXIZIP_EMBEDDED`; only the embed entry macros may be changed. Keep `lib/zpaq/COPYING` in releases.
 
 ## License
 
@@ -151,7 +153,7 @@ Oxizip is released under the **GNU Affero General Public License v3.0 only (AGPL
 
 | Component | Role | License |
 |---|---|---|
-| ZPAQ (`third_party/zpaq`) | `.zpaq` read/write | Unlicense; embedded libdivsufsort-lite is MIT |
+| ZPAQ (`lib/zpaq`) | `.zpaq` read/write | Unlicense; embedded libdivsufsort-lite is MIT |
 | cab / lzxd | Cabinet | MIT / MIT OR Apache-2.0 |
 | unalz / unegg / libazo | ALZ / EGG | MIT |
 | sevenz-turbo | 7z | Apache-2.0 |
@@ -169,11 +171,12 @@ Oxizip is released under the **GNU Affero General Public License v3.0 only (AGPL
 ### Not part of the build
 
 - Local materials under `reference/` (gitignore, not built)
-- Local `*.exe` / SDK under `third_party/unrar/` and `third_party/wimlib/` (optional, gitignore; DLLs are not linked)
+- Local temporary `*.exe` / SDK under `third_party/unrar/` and `third_party/wimlib/` (gitignore; DLLs are not linked)
+- Canonical tree: [`lib/`](lib/) — `unrar/`, `wimlib/` (installer → `<install>\lib\…`), `zpaq/` (build embed only)
 
 ### Pre-release checklist
 
 1. Ship `LICENSE` (AGPL-3.0); if you offer a modified version as a network service, provide corresponding complete source per AGPL
-2. Keep `third_party/zpaq/COPYING`
-3. If bundling UnRAR / wimlib: include their official licenses and meet their obligations
+2. Keep `lib/zpaq/COPYING`
+3. Keep UnRAR / wimlib license texts under `lib/unrar/` and `lib/wimlib/`; wimlib is GPLv3+, sources at [wimlib.net](https://wimlib.net/downloads/)
 4. Do not distribute `ark*.dll` or unauthorized proprietary libraries

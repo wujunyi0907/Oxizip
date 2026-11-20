@@ -1,4 +1,4 @@
-/* C ABI for embedded official zpaq (third_party/zpaq). */
+/* C ABI for embedded official zpaq (lib/zpaq). */
 #ifndef OXIZIP_ZPAQ_H
 #define OXIZIP_ZPAQ_H
 

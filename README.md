@@ -127,21 +127,23 @@ Oxizip **不修改、不链接**下列工具的源码/库；仅在需要时通�
 
 | 平台 | 查找顺序 |
 |---|---|
-| Windows | `OXIZIP_UNRAR` → 程序同目录 `UnRAR.exe` → `third_party/unrar/` → `PATH` |
+| Windows | `OXIZIP_UNRAR` → 程序同目录 → **`lib/unrar/UnRAR.exe`** → `PATH` |
 | 其他 | `OXIZIP_UNRAR` → 系统 `unrar` |
 
-缺失时返回可本地化错误。若随包分发：须用官方未修改 64 位 CLI，并保留其许可文本。
+缺失时返回可本地化错误。Windows 安装包已捆绑仓库 `lib/unrar/` 中的官方未修改 64 位 CLI 及其许可文本。
 
 ### wimlib（WIM 仅解压）
 
 | 平台 | 查找顺序 |
 |---|---|
-| Windows | `OXIZIP_WIMLIB` → 同目录 `wimlib-imagex.exe` → `third_party/wimlib/` → `PATH` |
+| Windows | `OXIZIP_WIMLIB` → 程序同目录 → **`lib/wimlib/wimlib-imagex.exe`** → `PATH` |
 | 其他 | `OXIZIP_WIMLIB` → 系统 `wimlib-imagex` / `wimdir`+`wimextract` |
+
+Windows 安装包同样捆绑 `lib/wimlib/`（含 `libwim-15.dll`；仅 spawn，不链接）。
 
 ### ZPAQ（进程内嵌入）
 
-不调用外部 `zpaq.exe`。源码在 `third_party/zpaq/`，由 `oxizip-formats` 的 `build.rs` 以 `-DOXIZIP_EMBEDDED` 编译；允许的源码改动仅限嵌入入口宏。发布时请保留 `third_party/zpaq/COPYING`。
+不调用外部 `zpaq.exe`。源码在 `lib/zpaq/`，由 `oxizip-formats` 的 `build.rs` 以 `-DOXIZIP_EMBEDDED` 编译；允许的源码改动仅限嵌入入口宏。发布时请保留 `lib/zpaq/COPYING`。
 
 ## 许可
 
@@ -151,7 +153,7 @@ Oxizip 以 **GNU Affero General Public License v3.0 only（AGPL-3.0-only）** �
 
 | 组件 | 用途 | 许可证 |
 |---|---|---|
-| ZPAQ（`third_party/zpaq`） | `.zpaq` 读写 | Unlicense；内嵌 libdivsufsort-lite 为 MIT |
+| ZPAQ（`lib/zpaq`） | `.zpaq` 读写 | Unlicense；内嵌 libdivsufsort-lite 为 MIT |
 | cab / lzxd | Cabinet | MIT / MIT OR Apache-2.0 |
 | unalz / unegg / libazo | ALZ / EGG | MIT |
 | sevenz-turbo | 7z | Apache-2.0 |
@@ -169,11 +171,12 @@ Oxizip 以 **GNU Affero General Public License v3.0 only（AGPL-3.0-only）** �
 ### 不纳入构建
 
 - `reference/` 下本地参考材料（gitignore，不纳入构建）
-- `third_party/unrar/`、`third_party/wimlib/` 下本地 `*.exe` / SDK（可选，gitignore；不链接 DLL）
+- `third_party/unrar/`、`third_party/wimlib/` 下本地临时 `*.exe` / SDK（gitignore；不链接 DLL）
+- 正式内容在 [`lib/`](lib/)：`unrar/`、`wimlib/`（安装到 `<安装目录>\lib\…`）、`zpaq/`（仅构建嵌入）
 
 ### 发布前清单
 
 1. 附带 `LICENSE`（AGPL-3.0）；网络提供修改版服务时按 AGPL 提供对应完整源码
-2. 保留 `third_party/zpaq/COPYING`
-3. 若捆绑 UnRAR / wimlib：附其官方许可并履行相应义务
+2. 保留 `lib/zpaq/COPYING`
+3. 保留 `lib/unrar/`、`lib/wimlib/` 官方许可文本；wimlib 为 GPLv3+，源码见 [wimlib.net](https://wimlib.net/downloads/)
 4. 不分发 `ark*.dll` 或未获授权专有库

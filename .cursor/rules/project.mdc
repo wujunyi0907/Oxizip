@@ -12,7 +12,7 @@ alwaysApply: true
 - `reference/` 与安装器仅供行为参考（gitignore），禁止拷贝进 `crates/` 或 `samples/`。
 - 长时间任务必须支持 Progress + 取消；解压必须防 zip-slip（经 `oxizip-core`）。
 - **变更范围**：只改完成需求所必需的文件；不顺手重构或扩大范围；改前后做相关构建/检查。
-- **提交纪律**：未获明确授权不自动 `git add` / `commit` / `push` / 打标签；禁止提交密钥、个人配置、`target/`、`dist/`、本地 `reference/`、UnRAR/wimlib 二进制等。
+- **提交纪律**：未获明确授权不自动 `git add` / `commit` / `push` / 打标签；禁止提交密钥、个人配置、`target/`、`dist/`、本地 `reference/`、`third_party/unrar|wimlib` 临时二进制等。**允许**提交 `lib/unrar/`、`lib/wimlib/`、`lib/zpaq/`。
 - **提交格式**：Conventional Commits 前缀 + 中文说明（如 `feat: …` / `fix: …`）；一次一个主题。
 - **发版标签**：必须是 `vX.Y.Z`（如 `v1.0.1`，禁止纯数字 `1.0.1`）；打标签前必更新 `Cargo.toml` 版本（无 `v`）与 `CHANGELOG.md`（见 AGENTS「发版 / 打标签」）。
 - GUI/安装器 UI：遵循 `AGENTS.md`「UI 风格、配色与控件规范」（以 `oxizip-setup` 为基准）；验证命令写入提交/PR 说明，有条件附截图或录屏。

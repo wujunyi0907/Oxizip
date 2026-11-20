@@ -12,7 +12,7 @@ fn main() {
         .parent()
         .and_then(|p| p.parent())
         .expect("crates/oxizip-formats -> workspace root");
-    let zpaq_dir = workspace_root.join("third_party").join("zpaq");
+    let zpaq_dir = workspace_root.join("lib").join("zpaq");
 
     println!(
         "cargo:rerun-if-changed={}",

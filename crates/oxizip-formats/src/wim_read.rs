@@ -1,6 +1,6 @@
 //! Microsoft WIM reader via wimlib-imagex CLI (no in-tree WIM bitstream).
 //!
-//! - Windows: `OXIZIP_WIMLIB` / beside exe / `third_party/wimlib/` / PATH
+//! - Windows: `OXIZIP_WIMLIB` / beside exe / `lib/wimlib/` / PATH
 //! - Other OS: system `wimlib-imagex` / `wimdir`+`wimextract` on PATH
 
 use std::path::{Path, PathBuf};
@@ -38,17 +38,26 @@ pub fn find_wimlib(explicit: Option<&Path>) -> Option<PathBuf> {
                 if candidate.is_file() {
                     return Some(candidate);
                 }
+                let candidate = dir.join("lib").join("wimlib").join(name);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+                let candidate = dir.join("lib").join(name);
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
             }
         }
     }
 
     for root in candidate_repo_roots() {
         for name in names {
-            let candidate = root.join("third_party").join("wimlib").join(name);
+            let candidate = root.join("lib").join("wimlib").join(name);
             if candidate.is_file() {
                 return Some(candidate);
             }
-            let candidate = root.join("third_party").join(name);
+            // Legacy local drop paths (not shipped).
+            let candidate = root.join("third_party").join("wimlib").join(name);
             if candidate.is_file() {
                 return Some(candidate);
             }

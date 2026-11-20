@@ -14,7 +14,7 @@ Oxizip 是用 Rust **干净室**实现的压缩/解压工具（不复制第三�
 | 预览 | 不做应用内预览；用系统默认程序打开 |
 | RAR | **仅解压**；Windows 用官方 UnRAR CLI；其他平台用系统 `unrar`；禁止自研/修改 RAR |
 | WIM | **仅解压**；官方 `wimlib-imagex` CLI；不链接 `libwim` |
-| ZPAQ | 进程内嵌入官方 `third_party/zpaq`（`OXIZIP_EMBEDDED`），不依赖外部 exe |
+| ZPAQ | 进程内嵌入官方 `lib/zpaq`（`OXIZIP_EMBEDDED`），不依赖外部 exe |
 | 架构 | **仅 64 位** |
 | 应用 ID | `cn.wujunyi.oxizip`（反向域名：`wujunyi.cn` + 软件名；显示名仍为 Oxizip） |
 | 安装器 | Windows：自研 `oxizip-setup`（iced），见 `scripts/package-windows.ps1`；Linux：deb/rpm（`/usr`）与 AppImage，见 `scripts/package-linux.sh`；CI 打包见 `.github/workflows/package.yml`；禁止嵌入第三方安装器资源 |
@@ -31,7 +31,8 @@ crates/
   oxizip-gui/       # iced GUI
   oxizip-i18n/      # 自有文案
   oxizip-sfx-stub/  # 自解压 stub
-third_party/        # ZPAQ 源码；可选 UnRAR/wimlib 二进制（gitignore）
+third_party/        # 其他说明/本地临时放置（gitignore 二进制）
+lib/                # unrar/ · wimlib/（Windows 分发）· zpaq/（嵌入源码）
 samples/            # 自造测试样本
 ```
 
@@ -52,9 +53,9 @@ oxizip-cli / oxizip-gui
 2. **路径安全**：一切解压落地路径必须经 `oxizip-core` 的防穿越校验（zip-slip）；拒绝 `..`、绝对路径、盘符/UNC 逃逸。
 3. **进度与取消**：长时间作业接受 `Progress` + 取消令牌；GUI/CLI 不得阻塞到无法取消；取消后尽快停写盘。
 4. **格式逻辑只住在 formats/engine**：CLI/GUI 不得直接解析压缩格式。
-5. **RAR**：只通过 UnRAR CLI 黑盒；无 create/update RAR；缺失时返回可本地化错误。查找：`OXIZIP_UNRAR` → 同目录 → `third_party/unrar/` → PATH（非 Windows 用系统 `unrar`）。
-5b. **ZPAQ**：嵌入官方源码，不 spawn `zpaq.exe`；允许的源码改动仅限嵌入入口宏。由 `oxizip-formats` `build.rs` 编译 `libzpaq.cpp` / `zpaq.cpp`（`-DOXIZIP_EMBEDDED`）与 `native/zpaq/oxizip_zpaq_capture.cpp`。
-5c. **WIM**：只通过 wimlib CLI；查找：`OXIZIP_WIMLIB` → 同目录 → `third_party/wimlib/` → PATH。
+5. **RAR**：只通过 UnRAR CLI 黑盒；无 create/update RAR；缺失时返回可本地化错误。查找：`OXIZIP_UNRAR` → 同目录 → **`lib/unrar/`** → PATH（非 Windows 用系统 `unrar`）。Windows 安装包随附 `lib/unrar/UnRAR.exe`（官方未修改）。
+5b. **ZPAQ**：嵌入官方源码（`lib/zpaq`），不 spawn `zpaq.exe`；允许的源码改动仅限嵌入入口宏。由 `oxizip-formats` `build.rs` 编译 `libzpaq.cpp` / `zpaq.cpp`（`-DOXIZIP_EMBEDDED`）与 `native/zpaq/oxizip_zpaq_capture.cpp`。
+5c. **WIM**：只通过 wimlib CLI；查找：`OXIZIP_WIMLIB` → 同目录 → **`lib/wimlib/`** → PATH。Windows 安装包随附 `lib/wimlib/wimlib-imagex.exe` + `libwim-15.dll`（官方未修改；不链接 `libwim`）。
 6. **打开文件**：解到受控临时目录后调用系统关联打开，不做内嵌预览控件。
 7. **中文沟通**：面向用户的说明、提交说明按仓库约定；代码标识符用英文。
 8. **跨平台可用性（Windows + Linux）**：见下一节；不得把功能做成「仅 Windows 可用」却在 Linux 构建中静默空实现（明确不支持的平台如 macOS 须返回可本地化错误）。
@@ -68,7 +69,7 @@ oxizip-cli / oxizip-gui
 | 文件关联 / 默认打开 | `oxizip-cli shell install`：ProgID + `.{ext}` + OpenWithProgids + Capabilities + **经典** `UserChoice`（对齐 Bandizip；**不写** `UserChoiceLatest`）；提权时同步 HKLM Classes | 同命令：用户级 `cn.wujunyi.oxizip.desktop` + `xdg-mime default` + 必要时 `~/.local/share/mime/packages`；卸载清理 `mimeapps.list` 中本应用条目 | GUI 关联页勾选的 `--ext` **两边都要生效**；勿只在 Win 写注册表而 Linux 忽略扩展过滤 |
 | 右键 / 文件管理器菜单 | Explorer 动词 | FreeDesktop Actions + Nautilus scripts + KDE service menus | 动作语义对齐（解压/压缩等）；路径含空格须正确引用 |
 | 安装 / 卸载 | `oxizip-setup` + `package-windows.ps1` | deb/rpm/AppImage（`package-linux.sh`） | 禁止嵌入第三方安装器资源；Linux 包内 `oxizip.desktop` 与用户级关联可并存 |
-| 外部工具 | UnRAR / wimlib 旁路查找 | PATH / 系统 `unrar`、`wimlib-imagex` | 缺失时返回可本地化错误，勿假定 exe 一定在旁 |
+| 外部工具 | Windows 安装包附带 `lib/`；亦可旁路查找 | PATH / 系统 `unrar`、`wimlib-imagex` | 缺失时返回可本地化错误；Linux 不捆绑 |
 | GUI | iced 775×480；字体 YaHei | iced 同尺寸；系统默认字体 | 勿把 Win 专用 API 写进跨平台 UI 路径且不加 `cfg` |
 | CLI | `oxizip-cli` | 同名二进制（无 `.exe`） | GUI 旁路查找 CLI 时注意平台文件名 |
 
@@ -91,7 +92,7 @@ oxizip-cli / oxizip-gui
 ## 提交纪律
 
 - **未获用户明确授权时**，不自动执行 `git add` / `git commit` / `git push` / 打标签。
-- **禁止提交**：密钥与令牌、个人本地配置、`target/`、`dist/`、本地 `reference/`、`third_party/unrar/` / `third_party/wimlib/` 下的二进制 / SDK，以及其他生成物或缓存目录。
+- **禁止提交**：密钥与令牌、个人本地配置、`target/`、`dist/`、本地 `reference/`、`third_party/unrar|wimlib` 临时二进制 / SDK，以及其他生成物或缓存目录。**允许提交** `lib/unrar/`、`lib/wimlib/`（官方 Windows 分发物 + 许可）与 `lib/zpaq/`（嵌入源码）。
 - 提交说明与 PR 格式见下文「提交说明」「合并请求」；发版见「发版 / 打标签」。
 
 ## 不要做

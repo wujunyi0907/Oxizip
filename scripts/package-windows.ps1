@@ -44,6 +44,27 @@ Get-ChildItem "crates\oxizip-gui\assets\icons\*.ico" |
     Where-Object { $excludeIcons -notcontains $_.Name } |
     ForEach-Object { Copy-Item $_.FullName (Join-Path $payloadStage "assets\icons") }
 
+# Official UnRAR / wimlib CLIs under repo `lib/<name>/` → `<app>\lib\<name>\`.
+# `lib/zpaq` is source only (embedded at build time); do not ship it in the installer.
+$libSrc = Join-Path $PWD "lib"
+$unrarSrc = Join-Path $libSrc "unrar"
+$wimlibSrc = Join-Path $libSrc "wimlib"
+foreach ($req in @(
+        (Join-Path $unrarSrc "UnRAR.exe"),
+        (Join-Path $wimlibSrc "wimlib-imagex.exe"),
+        (Join-Path $wimlibSrc "libwim-15.dll")
+    )) {
+    if (-not (Test-Path $req)) {
+        throw "missing $req — keep official redistributables under lib/unrar and lib/wimlib"
+    }
+}
+$libDst = Join-Path $payloadStage "lib"
+New-Item -ItemType Directory -Force -Path (Join-Path $libDst "unrar") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $libDst "wimlib") | Out-Null
+Copy-Item (Join-Path $unrarSrc "*") (Join-Path $libDst "unrar") -Force
+Copy-Item (Join-Path $wimlibSrc "*") (Join-Path $libDst "wimlib") -Force
+Write-Host "    bundled lib/unrar + lib/wimlib"
+
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 if (Test-Path $payloadZip) { Remove-Item $payloadZip -Force }
 [System.IO.Compression.ZipFile]::CreateFromDirectory($payloadStage, $payloadZip)

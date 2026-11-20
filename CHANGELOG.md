@@ -6,6 +6,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Windows 安装包捆绑官方 `lib/unrar/` 与 `lib/wimlib/`（含 `libwim-15.dll` 及许可文本）
+
+### Changed
+
+- UnRAR / wimlib / ZPAQ 统一放在仓库 `lib/<name>/`；查找顺序增加 `<app>\lib\unrar|wimlib\`
+
 ## [0.1.4] - 2026-11-20
 
 ### Added
