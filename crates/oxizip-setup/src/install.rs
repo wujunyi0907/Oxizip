@@ -445,27 +445,43 @@ fn create_shortcut_lnk(
 #[cfg(windows)]
 fn desktop_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    // Public desktop (all users) — preferred for elevated machine installs.
     if let Some(pd) = std::env::var_os("PUBLIC").map(PathBuf::from) {
         dirs.push(pd.join("Desktop"));
     }
-    // Current-user desktop as well (covers non-elevated / repair installs).
     if let Some(userprofile) = std::env::var_os("USERPROFILE").map(PathBuf::from) {
         dirs.push(userprofile.join("Desktop"));
     }
     dirs
 }
 
+/// One desktop only: Public when elevated, else the current user.
+/// Writing both makes Explorer show two Oxizip icons.
+#[cfg(windows)]
+fn preferred_desktop_dir() -> Option<PathBuf> {
+    if is_elevated() {
+        if let Some(pd) = std::env::var_os("PUBLIC").map(PathBuf::from) {
+            let desk = pd.join("Desktop");
+            if desk.is_dir() {
+                return Some(desk);
+            }
+        }
+    }
+    std::env::var_os("USERPROFILE").map(|p| PathBuf::from(p).join("Desktop"))
+}
+
 #[cfg(windows)]
 fn create_desktop_shortcut(dir: &Path) -> InstallResult<()> {
     let target = dir.join("oxizip.exe");
     let icon_loc = format!("{},0", app_icon_path(dir).display());
+    // Drop leftovers from older builds that wrote Public + user desktop.
     for desktop in desktop_dirs() {
-        if !desktop.is_dir() {
-            continue;
+        let _ = fs::remove_file(desktop.join("Oxizip.lnk"));
+    }
+    if let Some(desktop) = preferred_desktop_dir() {
+        if desktop.is_dir() {
+            let link = desktop.join("Oxizip.lnk");
+            let _ = create_shortcut_lnk(&link, &target, dir, &icon_loc, "Oxizip");
         }
-        let link = desktop.join("Oxizip.lnk");
-        let _ = create_shortcut_lnk(&link, &target, dir, &icon_loc, "Oxizip");
     }
     // Desktop shortcut is best-effort; do not fail the whole install.
     Ok(())
