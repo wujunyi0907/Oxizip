@@ -144,7 +144,7 @@ oxizip-cli / oxizip-gui
 
 ### UI 风格、配色与控件规范
 
-安装 / 卸载界面（`oxizip-setup`）为**紧凑对话框**的视觉基准；主 GUI 的首次关联页等应向其对齐，避免另起一套皮肤。参考实现：`crates/oxizip-setup/src/main.rs`。图标资源：`crates/oxizip-gui/assets/icons/`（品牌标 `oxizip.ico`，各格式独立 `.ico`）。**禁止**从 `reference/` 或第三方安装器拷贝皮肤 / 图标。
+安装 / 卸载界面（`oxizip-setup`）为**紧凑对话框**的视觉基准；主 GUI 的首次关联页等应向其对齐，避免另起一套皮肤。参考实现：`crates/oxizip-setup/src/main.rs`。图标资源：`crates/oxizip-gui/assets/icons/*.ico`（多尺寸嵌入；源 SVG 在 `svg/`，放大角标在 `svg-badge/`）。安装器 PE/窗体图标用 `oxizip-setup.ico`（品牌图标 + UAC 盾，盾牌左缘对齐中线）；`oxizip-uac.ico`（系统 UAC 盾 + 品牌角标）留给后续提权壳菜单等；安装后的 GUI/关联仍用 `oxizip.ico`。**禁止**从 `reference/` 或第三方安装器拷贝皮肤 / 图标。
 
 #### 整体风格
 

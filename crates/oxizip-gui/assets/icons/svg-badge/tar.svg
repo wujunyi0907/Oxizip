@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 64 64">
+<defs><linearGradient id="box" x2="0" y2="1"><stop stop-color="#1c5b8b"/><stop offset="1" stop-color="#10355e"/></linearGradient></defs>
+<rect x="2" y="2" width="60" height="60" rx="15" fill="#091930"/>
+<path d="M16 10h11l3.5 3.5h16l1.5 18H16z" fill="url(#box)" stroke="#41a0cd" stroke-width="1.2"/>
+<path d="M18 16h28v12H18z" fill="#0f2843"/><path d="M28 16h6v12h-6z" fill="#24dccf"/>
+<path d="M29.5 17.5h3v1.6h-3zm0 3.5h3v1.6h-3zm0 3.5h3v1.6h-3z" fill="#acfff1"/>
+<rect x="6" y="38" width="52" height="20" rx="4" fill="#f0f8fc"/>
+<text x="32" y="52.5" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="12" font-weight="700" fill="#13243b">TAR</text>
+</svg>

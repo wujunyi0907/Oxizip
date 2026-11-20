@@ -348,9 +348,10 @@ fn ui_font() -> iced::Font {
 }
 
 fn window_icon() -> Option<iced::window::Icon> {
+    // Installer window / taskbar: brand + UAC shield (PE icon matches).
     let bytes = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../oxizip-gui/assets/icons/oxizip.ico"
+        "/../oxizip-gui/assets/icons/oxizip-setup.ico"
     ));
     iced::window::icon::from_file_data(bytes, Some(image::ImageFormat::Ico)).ok()
 }

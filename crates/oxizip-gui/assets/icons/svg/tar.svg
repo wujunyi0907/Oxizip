@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 64 64">
+<defs><linearGradient id="box" x2="0" y2="1"><stop stop-color="#1c5b8b"/><stop offset="1" stop-color="#10355e"/></linearGradient></defs>
+<rect x="2" y="2" width="60" height="60" rx="15" fill="#091930"/>
+<path d="M13 19h13l4 4h19l2 24H13z" fill="url(#box)" stroke="#41a0cd" stroke-width="1.3"/>
+<path d="M15 26h33v18H15z" fill="#0f2843"/><path d="M27 26h7v18h-7z" fill="#24dccf"/>
+<path d="M29 28h3v2h-3zm0 5h3v2h-3zm0 5h3v2h-3z" fill="#acfff1"/><rect x="36" y="39" width="24" height="15" rx="4" fill="#f4ae4d"/><text x="48" y="49.5" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="7" font-weight="700" fill="#13243b">TAR</text>
+</svg>

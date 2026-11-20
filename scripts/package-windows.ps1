@@ -38,7 +38,11 @@ Copy-Item "target\release\oxizip-cli.exe" $payloadStage
 Copy-Item "LICENSE" $payloadStage
 Copy-Item "README.md" $payloadStage
 New-Item -ItemType Directory -Force -Path (Join-Path $payloadStage "assets\icons") | Out-Null
-Copy-Item "crates\oxizip-gui\assets\icons\*.ico" (Join-Path $payloadStage "assets\icons")
+# Installed product icons only — exclude setup-only / shell-uac composites.
+$excludeIcons = @("oxizip-uac.ico", "oxizip-setup.ico")
+Get-ChildItem "crates\oxizip-gui\assets\icons\*.ico" |
+    Where-Object { $excludeIcons -notcontains $_.Name } |
+    ForEach-Object { Copy-Item $_.FullName (Join-Path $payloadStage "assets\icons") }
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 if (Test-Path $payloadZip) { Remove-Item $payloadZip -Force }

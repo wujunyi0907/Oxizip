@@ -5,8 +5,15 @@ use std::path::PathBuf;
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let workspace = manifest.join("../..");
-    let icon = workspace.join("crates/oxizip-gui/assets/icons/oxizip.ico");
+    // Installer PE icon (brand + UAC shield). Installed app keeps oxizip.ico.
+    let icon = workspace.join("crates/oxizip-gui/assets/icons/oxizip-setup.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        workspace
+            .join("crates/oxizip-gui/assets/icons/oxizip.ico")
+            .display()
+    );
 
     let payload = workspace.join("target/setup-payload/payload.zip");
     println!("cargo:rerun-if-changed={}", payload.display());

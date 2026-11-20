@@ -16,6 +16,10 @@ Desktop.ini
 .env
 .env.*
 *.pdb
+**/.venv/
+crates/oxizip-gui/assets/icons/.venv/
+crates/oxizip-gui/assets/icons/__pycache__/
+**/__pycache__/
 
 # --- 本地参考材料（整目录禁止提交）---
 /reference/

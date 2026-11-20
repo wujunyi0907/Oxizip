@@ -1,4 +1,6 @@
 //! Resolve / stage format `.ico` files for shell DefaultIcon and verb Icon values.
+//!
+//! Layout: `assets/icons/<stem>.ico` (multi-size ICO at icons root).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -68,13 +70,9 @@ pub fn ensure_icons_dir(exe: &Path) -> Result<PathBuf, String> {
         if let Some(ref src_dir) = src {
             let from = src_dir.join(name);
             if from.is_file() {
-                // Refresh even if present (installer / GUI assets may update).
                 let _ = fs::copy(&from, &target);
-                continue;
             }
         }
-        // Keep existing target if source missing.
-        let _ = target;
     }
 
     if !dest.join("oxizip.ico").is_file() {
@@ -100,10 +98,16 @@ pub fn icon_path_for_ext(icons_dir: &Path, ext: &str) -> PathBuf {
     normalize_shell_path(&path)
 }
 
-/// Format for registry DefaultIcon / Icon values: `"C:\path\file.ico",0`
+/// Format for registry DefaultIcon / Icon values.
+/// Match Bandizip: bare `.ico` path (no `,0`). Quotes only when the path has spaces.
 pub fn icon_registry_value(icon: &Path) -> String {
     let path = normalize_shell_path(icon);
-    format!("\"{}\",0", path.display())
+    let s = path.display().to_string();
+    if s.contains(' ') {
+        format!("\"{s}\"")
+    } else {
+        s
+    }
 }
 
 fn normalize_shell_path(path: &Path) -> PathBuf {
@@ -112,7 +116,6 @@ fn normalize_shell_path(path: &Path) -> PathBuf {
         Err(_) => path.to_path_buf(),
     };
     let s = raw.to_string_lossy();
-    // Strip Windows extended-length prefix which breaks shell icon lookup.
     let trimmed = s
         .strip_prefix(r"\\?\UNC\")
         .map(|rest| format!(r"\\{rest}"))

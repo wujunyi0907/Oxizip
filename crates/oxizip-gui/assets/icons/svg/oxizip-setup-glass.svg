@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="milkFront" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f2f8ff" stop-opacity="0.42"/>
+      <stop offset="40%" stop-color="#dcecff" stop-opacity="0.38"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.72"/>
+    </linearGradient>
+    <linearGradient id="milkSide" x1="0" y1="0" x2="1" y2="0.6">
+      <stop offset="0%" stop-color="#eaf4ff" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#f8fcff" stop-opacity="0.58"/>
+    </linearGradient>
+    <linearGradient id="milkFloor" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#e8eef4" stop-opacity="0.82"/>
+    </linearGradient>
+    <linearGradient id="lip" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="55%" stop-color="#f0f9ff" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#c5e0f8" stop-opacity="0.55"/>
+    </linearGradient>
+    <linearGradient id="rimV" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.2"/>
+      <stop offset="45%" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#d0e8fa" stop-opacity="0.35"/>
+    </linearGradient>
+    <filter id="soft" x="-15%" y="-15%" width="130%" height="130%">
+      <feGaussianBlur stdDeviation="0.8"/>
+    </filter>
+    <filter id="softer" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="1.6"/>
+    </filter>
+  </defs>
+  <!-- molded body fills (substance, not wireframe) -->
+  <polygon points="30,188 155,188 212,222 55,222" fill="url(#milkFloor)" filter="url(#soft)"/>
+  <polygon points="161,142 218,114 218,222 161,236" fill="url(#milkSide)" filter="url(#soft)"/>
+  <polygon points="24,142 161,142 161,236 24,236" fill="url(#milkFront)" filter="url(#soft)"/>
+  <!-- wide top lip / bevel (Bandizip: solid white band across opening) -->
+  <rect x="28" y="138" width="130" height="18" rx="6" fill="url(#lip)" filter="url(#softer)"/>
+  <rect x="34" y="142" width="118" height="8" rx="3" fill="#ffffff" opacity="0.95"/>
+  <!-- front-right vertical rim as thick filled capsule (~x161) -->
+  <rect x="154" y="142" width="16" height="96" rx="5" fill="url(#rimV)" filter="url(#soft)"/>
+  <rect x="157" y="146" width="8" height="88" rx="3" fill="#ffffff" opacity="0.92"/>
+  <!-- top-right perspective lip -->
+  <path d="M161,146 L216,118 L220,126 L165,154 Z" fill="#ffffff" opacity="0.88" filter="url(#soft)"/>
+  <!-- left / bottom soft rims -->
+  <rect x="22" y="146" width="10" height="88" rx="4" fill="#eef6ff" opacity="0.75" filter="url(#soft)"/>
+  <rect x="28" y="228" width="130" height="10" rx="4" fill="#c8d8e8" opacity="0.7" filter="url(#soft)"/>
+  <path d="M161,232 L216,220 L218,228 L163,240 Z" fill="#c8d8e8" opacity="0.65" filter="url(#soft)"/>
+  <!-- download arrow (Bandizip ~ rgb 0,56,159) -->
+  <g fill="#00389f">
+    <rect x="76" y="168" width="16" height="38" rx="2.5"/>
+    <polygon points="84,224 60,190 108,190"/>
+  </g>
+</svg>
