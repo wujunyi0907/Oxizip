@@ -6,17 +6,30 @@
 
 ## [Unreleased]
 
-### Changed
-
-- 分发产物文件名统一为 `Oxizip` 前缀；RPM 仍按 NEVRA 保留 `Release`（如 `Oxizip-<ver>-1.<arch>.rpm`）
-- GitHub Release 仅在 Setup / deb / rpm / AppImage / tar.gz 全部齐全时创建
-- Package 工作流仅在打 `v*` 标签或手动触发时运行（避免与 `main` 推送重复打包）
-- 完善「变更范围」「提交纪律」、Conventional Commit（前缀 + 中文）与 PR 说明规范（见 [AGENTS.md](AGENTS.md)）
+## [0.1.3] - 2026-11-20
 
 ### Added
 
-- 英文说明 [README.en.md](README.en.md)
-- [CHANGELOG.md](CHANGELOG.md)；发版标签格式明确为 `vX.Y.Z`
+- 安装时默认创建桌面快捷方式
+- GUI 完整菜单栏（下拉对齐与 SVG 箭头）
+- 首次安装文件关联界面支持按扩展名勾选注册
+- 安装/卸载进度条
+
+### Changed
+
+- Windows 文件关联对齐经典 `UserChoice`（不写 `UserChoiceLatest`）；提权时同步 HKLM Classes
+- 磁盘映像（iso / wim / esd / swm）保留在关联页，默认不勾选
+- 开始菜单与卸载项改用 `oxizip.ico` 并刷新图标缓存
+- 安装器启动时先请求 UAC，再进入安装界面
+- 分发产物文件名统一为 `Oxizip` 前缀；RPM 仍按 NEVRA 保留 `Release`
+- GitHub Release 仅在全部产物齐全时创建；Package 仅 `v*` 标签或手动触发
+- 完善变更范围、提交纪律与跨平台规范（见 [AGENTS.md](AGENTS.md)）
+
+### Fixed
+
+- 拒绝 UAC 后不再进入安装界面
+- 安装时避免公用桌面与用户桌面重复创建快捷方式
+- Win11 / Linux 文件关联若干问题
 
 ## [0.1.2] - 2026-11-18
 
@@ -48,7 +61,8 @@
 - 二进制命名：GUI = `oxizip`，CLI = `oxizip-cli`
 - 应用 ID：`cn.wujunyi.oxizip`
 
-[Unreleased]: https://github.com/wujunyi0907/Oxizip/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/wujunyi0907/Oxizip/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.3
 [0.1.2]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.2
 [0.1.1]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.1
 [0.1.0]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.0
