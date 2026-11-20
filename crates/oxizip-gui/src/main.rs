@@ -961,7 +961,7 @@ impl OxizipApp {
             cancel,
             progress,
             move |cancel, progress| {
-                worker::create_archive(out, format, inputs, opts, cancel, progress, lang)
+            worker::create_archive(out, format, inputs, opts, cancel, progress, lang)
             },
         )
     }
@@ -2078,7 +2078,7 @@ impl OxizipApp {
     fn view_main(&self) -> Element<'_, Message> {
         let body = if self.archive.is_none() {
             self.view_home()
-        } else {
+            } else {
             self.view_archive()
         };
         self.shell_page(body)
@@ -2231,7 +2231,7 @@ impl OxizipApp {
                 progress_bar(0.0..=1.0, self.progress_fraction).height(8),
                 text(self.progress_detail.clone()).size(11),
             ]
-            .spacing(4)
+        .spacing(4)
             .into()
         } else {
             Space::with_height(0).into()
@@ -2489,16 +2489,16 @@ impl OxizipApp {
 
     fn detail_row(&self, index: usize, entry: &EntryMeta, busy: bool) -> Element<'_, Message> {
         let selected = self.selected.contains(&index);
-        let name = if entry.is_dir {
-            format!("[DIR] {}", entry.name)
-        } else {
-            entry.name.clone()
-        };
+            let name = if entry.is_dir {
+                format!("[DIR] {}", entry.name)
+            } else {
+                entry.name.clone()
+            };
         let icon = if entry.is_dir {
-            self.icons.oxizip()
-        } else {
-            self.icons.for_path_name(&entry.name)
-        };
+                self.icons.oxizip()
+            } else {
+                self.icons.for_path_name(&entry.name)
+            };
         let mut line = row![
             checkbox("", selected).on_toggle(move |_| Message::ToggleSelect(index)),
             image(icon).width(16).height(16),
@@ -2531,19 +2531,19 @@ impl OxizipApp {
                     .width(Length::Fixed(118.0)),
             );
         }
-        let open_btn = {
+            let open_btn = {
             let b = button(text(t(self.lang, "gui.open_entry")).size(12)).style(rounded_text_btn);
-            if busy || entry.is_dir {
-                b
-            } else {
+                if busy || entry.is_dir {
+                    b
+                } else {
                 b.on_press(Message::OpenEntry(index))
-            }
-        };
-        let del_btn = {
+                }
+            };
+            let del_btn = {
             let b = button(text(t(self.lang, "gui.delete_entry")).size(12)).style(rounded_text_btn);
-            if busy {
-                b
-            } else {
+                if busy {
+                    b
+                } else {
                 b.on_press(Message::DeleteEntry(index))
             }
         };
@@ -2663,13 +2663,13 @@ impl OxizipApp {
         };
         let body = column![
             text(t(self.lang, "gui.settings.title")).size(16),
-            row![
+                row![
                 text(t(self.lang, "gui.lang"))
                     .size(12)
                     .width(Length::Fixed(140.0)),
                 pick_list(langs, Some(current_lang), Message::LangSelected).width(160),
-            ]
-            .spacing(8)
+                ]
+                .spacing(8)
             .align_y(Alignment::Center),
             row![
                 text(t(self.lang, "gui.settings.default_format"))
@@ -2733,7 +2733,7 @@ impl OxizipApp {
             Overlay::None => return Space::with_height(0).into(),
             Overlay::About => self.overlay_card(
                 t(self.lang, "gui.about.title"),
-                column![
+            column![
                     text(format!("Oxizip {}", env!("CARGO_PKG_VERSION"))).size(14),
                     text(t(self.lang, "gui.about.body")).size(12),
                     button(text(t(self.lang, "gui.dialog.close")).size(12))
@@ -2808,7 +2808,7 @@ impl OxizipApp {
                     row![
                         text(if self.recover_wordlist.is_empty() {
                             "—".to_string()
-                        } else {
+        } else {
                             self.recover_wordlist.clone()
                         })
                         .size(11)
@@ -2996,7 +2996,7 @@ impl OxizipApp {
     ) -> Element<'a, Message> {
         container(
             column![text(title).size(16), body.into()]
-                .spacing(8)
+        .spacing(8)
                 .padding(12)
                 .width(Length::Fixed(360.0)),
         )
