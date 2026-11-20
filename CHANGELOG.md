@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-20
+
 ### Added
 
 - Windows 安装包捆绑官方 `lib/unrar/` 与 `lib/wimlib/`（含 `libwim-15.dll` 及许可文本）
@@ -13,6 +15,12 @@
 ### Changed
 
 - UnRAR / wimlib / ZPAQ 统一放在仓库 `lib/<name>/`；查找顺序增加 `<app>\lib\unrar|wimlib\`
+- 主 GUI 与安装器统一为无边框圆角窗口（自绘外框 + 自定义标题栏；Win11 DWM 圆角）
+- Package CI：`checkout` / artifact actions 升到 v5（消除 Node 20 弃用警告）
+
+### Fixed
+
+- Package Release：从 CHANGELOG 提取版本节时不再在标题行误退出（修复 v0.1.4 发版失败）
 
 ## [0.1.4] - 2026-11-20
 
@@ -86,7 +94,8 @@
 - 二进制命名：GUI = `oxizip`，CLI = `oxizip-cli`
 - 应用 ID：`cn.wujunyi.oxizip`
 
-[Unreleased]: https://github.com/wujunyi0907/Oxizip/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/wujunyi0907/Oxizip/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.5
 [0.1.4]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.4
 [0.1.3]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.3
 [0.1.2]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.2
