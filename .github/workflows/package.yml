@@ -163,6 +163,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout (for CHANGELOG.md)
+        uses: actions/checkout@v4
+
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
@@ -213,6 +216,31 @@ jobs:
             echo "tarball=$(find release-assets -type f -name "Oxizip-${VER}-linux-*.tar.gz" | head -n1)"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Build release notes from CHANGELOG.md
+        id: notes
+        env:
+          VER: ${{ needs.windows.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Extract "## [X.Y.Z] - date" … until next "## [" (Keep a Changelog).
+          awk -v ver="$VER" '
+            $0 ~ "^## \\[" ver "\\]" {on=1}
+            on && NR>1 && $0 ~ /^## \[/ {exit}
+            on {print}
+          ' CHANGELOG.md > release-notes.md
+          if ! grep -q . release-notes.md; then
+            echo "CHANGELOG.md has no section for ${VER}" >&2
+            exit 1
+          fi
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "完整说明见仓库 [CHANGELOG.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/CHANGELOG.md)。"
+          } >> release-notes.md
+          echo "----- release notes -----"
+          cat release-notes.md
+
       - name: Create / update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -221,7 +249,9 @@ jobs:
           draft: false
           prerelease: false
           make_latest: true
-          generate_release_notes: true
+          # Prefer Keep a Changelog body over GitHub auto notes.
+          generate_release_notes: false
+          body_path: release-notes.md
           fail_on_unmatched_files: true
           # Explicit paths only — never publish a partial set.
           files: |
