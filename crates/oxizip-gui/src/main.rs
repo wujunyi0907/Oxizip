@@ -18,8 +18,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use iced::gradient::Linear;
 use iced::widget::{
-    button, checkbox, column, container, image, pick_list, progress_bar, row, scrollable, stack,
-    text, text_input, Column, Space,
+    button, checkbox, column, container, image, mouse_area, pick_list, progress_bar, row,
+    scrollable, stack, text, text_input, Column, Space,
 };
 use iced::{
     window, Alignment, Background, Border, Color, Element, Gradient, Length, Point, Radians, Size,
@@ -123,6 +123,7 @@ impl std::fmt::Display for LicenseFilter {
 
 /// Single size for all GUI screens (association, main, licenses, …).
 const APP_WINDOW_SIZE: Size = Size::new(775.0, 480.0);
+const WINDOW_RADIUS: f32 = 12.0;
 const CONTROL_RADIUS: f32 = 8.0;
 
 fn center_on_monitor(size: Size, monitor: Size) -> Point {
@@ -135,6 +136,9 @@ fn center_on_monitor(size: Size, monitor: Size) -> Point {
 fn main() -> iced::Result {
     let mut window = iced::window::Settings {
         size: APP_WINDOW_SIZE,
+        resizable: false,
+        decorations: false,
+        transparent: true,
         // `Centered` is unreliable on Windows; compute from monitor size.
         position: window::Position::SpecificWith(center_on_monitor),
         ..Default::default()
@@ -146,6 +150,107 @@ fn main() -> iced::Result {
         .default_font(ui_font())
         .window(window)
         .run_with(OxizipApp::new)
+}
+
+#[cfg(windows)]
+fn apply_native_window_rounding(raw_id: u64) {
+    // Win11 DWM rounded corners for the HWND backing this iced window.
+    #[link(name = "dwmapi")]
+    extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: *mut core::ffi::c_void,
+            attr: u32,
+            value: *const core::ffi::c_void,
+            size: u32,
+        ) -> i32;
+    }
+    const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+    const DWMWCP_ROUND: i32 = 2;
+    unsafe {
+        let pref = DWMWCP_ROUND;
+        let _ = DwmSetWindowAttribute(
+            raw_id as *mut core::ffi::c_void,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            (&pref as *const i32).cast(),
+            std::mem::size_of_val(&pref) as u32,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn apply_native_window_rounding(_raw_id: u64) {}
+
+fn frame_border(theme: &Theme) -> iced::widget::container::Style {
+    let palette = theme.extended_palette();
+    iced::widget::container::Style {
+        background: Some(Background::Color(palette.background.base.color)),
+        border: Border {
+            color: palette.background.strong.color,
+            width: 1.0,
+            radius: WINDOW_RADIUS.into(),
+        },
+        ..Default::default()
+    }
+}
+
+fn caption_bar<'a>(title: String, on_drag: Message, on_minimize: Message, on_close: Message) -> Element<'a, Message> {
+    let drag_zone = mouse_area(
+        row![text(title).size(12), Space::with_width(Length::Fill),]
+            .align_y(Alignment::Center)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(iced::Padding {
+                top: 0.0,
+                right: 8.0,
+                bottom: 0.0,
+                left: 10.0,
+            }),
+    )
+    .on_press(on_drag);
+
+    let caption_btn = |label: &'static str, msg: Message| {
+        button(
+            container(text(label).size(12))
+                .center_x(Length::Fill)
+                .center_y(Length::Fill),
+        )
+        .width(40)
+        .height(28)
+        .padding(0)
+        .style(rounded_text_btn)
+        .on_press(msg)
+    };
+
+    container(
+        row![
+            drag_zone,
+            caption_btn("—", on_minimize),
+            caption_btn("×", on_close),
+        ]
+        .spacing(2)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .height(32),
+    )
+    .width(Length::Fill)
+    .style(|theme: &Theme| {
+        let palette = theme.extended_palette();
+        iced::widget::container::Style {
+            background: Some(Background::Color(palette.background.weak.color)),
+            border: Border {
+                color: palette.background.strong.color,
+                width: 0.0,
+                radius: iced::border::Radius {
+                    top_left: WINDOW_RADIUS,
+                    top_right: WINDOW_RADIUS,
+                    bottom_right: 0.0,
+                    bottom_left: 0.0,
+                },
+            },
+            ..Default::default()
+        }
+    })
+    .into()
 }
 
 /// Prefer a system CJK-capable font so zh-CN UI is not tofu boxes.
@@ -274,6 +379,7 @@ struct OxizipApp {
     tree_prefix: Option<String>,
     clipboard_temp: Option<Arc<TempDir>>,
     pending_repair: Option<PathBuf>,
+    window_id: Option<window::Id>,
 }
 
 impl Default for OxizipApp {
@@ -311,6 +417,7 @@ impl Default for OxizipApp {
             tree_prefix: None,
             clipboard_temp: None,
             pending_repair: None,
+            window_id: None,
         }
     }
 }
@@ -374,6 +481,11 @@ enum Message {
     SetupToggleSelectAll,
     SetupConfirm,
     SetupSkip,
+    WindowId(Option<window::Id>),
+    RawWindowId(u64),
+    TitleDrag,
+    Minimize,
+    Close,
 }
 
 impl OxizipApp {
@@ -409,7 +521,8 @@ impl OxizipApp {
         } else {
             Task::none()
         };
-        (app, Task::batch([open_task, top_task]))
+        let boot = window::get_oldest().map(Message::WindowId);
+        (app, Task::batch([boot, open_task, top_task]))
     }
 
     fn take_pending_open_task(&mut self) -> Task<Message> {
@@ -511,6 +624,26 @@ impl OxizipApp {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::WindowId(id) => {
+                self.window_id = id;
+                match id {
+                    Some(id) => window::get_raw_id::<Message>(id).map(Message::RawWindowId),
+                    None => Task::none(),
+                }
+            }
+            Message::RawWindowId(raw) => {
+                apply_native_window_rounding(raw);
+                Task::none()
+            }
+            Message::TitleDrag => self.window_id.map(window::drag).unwrap_or_else(Task::none),
+            Message::Minimize => self
+                .window_id
+                .map(|id| window::minimize(id, true))
+                .unwrap_or_else(Task::none),
+            Message::Close => self
+                .window_id
+                .map(window::close)
+                .unwrap_or_else(Task::none),
             Message::OpenClicked => {
                 if self.is_busy() {
                     return Task::none();
@@ -1877,14 +2010,33 @@ impl OxizipApp {
             Screen::Licenses => self.view_licenses(),
             Screen::Settings => self.shell_page(self.view_settings()),
         };
-        if self.overlay == Overlay::None {
+        let inner = if self.overlay == Overlay::None {
             page
         } else {
             stack![page, self.view_overlay()]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
-        }
+        };
+        self.framed_window(inner)
+    }
+
+    fn framed_window<'a>(&'a self, body: Element<'a, Message>) -> Element<'a, Message> {
+        let caption = caption_bar(
+            self.title(),
+            Message::TitleDrag,
+            Message::Minimize,
+            Message::Close,
+        );
+        container(
+            column![caption, body]
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(frame_border)
+        .into()
     }
 
     fn setup_all_selected(&self) -> bool {
@@ -1960,18 +2112,18 @@ impl OxizipApp {
                 .padding([6, 12])
                 .height(32)
                 .on_press(Message::SetupToggleSelectAll)
-                .style(iced::widget::button::secondary),
+                .style(rounded_secondary),
             Space::with_width(Length::Fill),
             button(text(t(self.lang, "gui.setup.skip")).size(12))
                 .padding([6, 10])
                 .height(32)
                 .on_press(Message::SetupSkip)
-                .style(iced::widget::button::text),
+                .style(rounded_text_btn),
             button(text(t(self.lang, "gui.setup.apply")).size(13))
                 .padding([6, 16])
                 .height(32)
                 .on_press(Message::SetupConfirm)
-                .style(iced::widget::button::primary),
+                .style(rounded_primary),
         ]
         .spacing(8)
         .align_y(Alignment::Center)
