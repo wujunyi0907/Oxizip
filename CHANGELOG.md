@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-20
+
+### Added
+
+- 多尺寸格式图标（对齐 Bandizip 的 7 档 ICO：含 8 位/32 位 BMP-DIB 与 AND 掩码）
+- 安装器专用 `oxizip-setup.ico`（品牌 + UAC 盾）与独立 `oxizip-uac.ico`
+
+### Changed
+
+- 壳关联 DefaultIcon 改为裸 `.ico` 路径；安装产物不再打包 setup/UAC 专用图标
+
+### Fixed
+
+- 8 位色 ICO 圆角透明（AND 掩码写入修复）
+- 16px 格式角标文字可读性
+- GitHub Release 正文改为从 `CHANGELOG.md` 提取，避免自动生成说明为空
+
 ## [0.1.3] - 2026-11-20
 
 ### Added
@@ -61,7 +78,8 @@
 - 二进制命名：GUI = `oxizip`，CLI = `oxizip-cli`
 - 应用 ID：`cn.wujunyi.oxizip`
 
-[Unreleased]: https://github.com/wujunyi0907/Oxizip/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/wujunyi0907/Oxizip/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.4
 [0.1.3]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.3
 [0.1.2]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.2
 [0.1.1]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.1
