@@ -26,7 +26,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Read workspace version
         id: version
@@ -70,7 +70,7 @@ jobs:
           Get-Item $out | Format-List Name, Length, LastWriteTime
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: oxizip-windows-setup-${{ steps.version.outputs.version }}
           path: dist/Oxizip-Setup-*-x64.exe
@@ -84,7 +84,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Read workspace version
         id: version
@@ -144,7 +144,7 @@ jobs:
           test -n "$(find dist -maxdepth 1 -name "Oxizip-${VER}-*.AppImage" -print -quit)"
 
       - name: Upload Linux artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: oxizip-linux-packages-${{ steps.version.outputs.version }}
           path: |
@@ -164,16 +164,16 @@ jobs:
       contents: write
     steps:
       - name: Checkout (for CHANGELOG.md)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download Windows artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: oxizip-windows-setup-${{ needs.windows.outputs.version }}
           path: release-assets
 
       - name: Download Linux artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: oxizip-linux-packages-${{ needs.linux.outputs.version }}
           path: release-assets
@@ -222,11 +222,17 @@ jobs:
           VER: ${{ needs.windows.outputs.version }}
         run: |
           set -euo pipefail
-          # Extract "## [X.Y.Z] - date" … until next "## [" (Keep a Changelog).
-          awk -v ver="$VER" '
-            $0 ~ "^## \\[" ver "\\]" {on=1}
-            on && NR>1 && $0 ~ /^## \[/ {exit}
-            on {print}
+          # Escape regex metacharacters in X.Y.Z (dots are special in awk).
+          ver_re=$(printf '%s' "$VER" | sed 's/\./\\./g')
+          # Keep a Changelog: "## [X.Y.Z] - date" … until the *next* "## [" heading.
+          # Do not exit on the same line that opens the section (old script did → empty notes).
+          awk -v ver_re="$ver_re" '
+            /^## \[/ {
+              if ($0 ~ "^## \\[" ver_re "\\]") { on=1; print; next }
+              if (on) exit
+              next
+            }
+            on { print }
           ' CHANGELOG.md > release-notes.md
           if ! grep -q . release-notes.md; then
             echo "CHANGELOG.md has no section for ${VER}" >&2

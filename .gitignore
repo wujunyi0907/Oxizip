@@ -24,6 +24,9 @@ crates/oxizip-gui/assets/icons/__pycache__/
 # --- 本地参考材料（整目录禁止提交）---
 /reference/
 
+# --- 导出的 CI 日志 ---
+/logs_*/
+
 # --- third_party：本地临时放置仍忽略；正式内容在 lib/ ---
 /third_party/unrar/
 /third_party/UnrarDLL/
