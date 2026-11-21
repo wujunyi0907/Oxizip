@@ -9,6 +9,7 @@ members = [
     "crates/oxizip-gui",
     "crates/oxizip-setup",
     "crates/oxizip-sfx-stub",
+    "crates/oxizip-shellext",
 ]
 default-members = [
     "crates/oxizip-cli",

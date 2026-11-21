@@ -198,13 +198,25 @@ pub struct ListOptions {
     pub password: Option<String>,
 }
 
+/// How to handle an output path that already exists on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConflictPolicy {
+    /// Replace the existing file.
+    #[default]
+    Overwrite,
+    /// Leave the existing file; skip writing this entry.
+    Skip,
+    /// Write as `name (1).ext`, `name (2).ext`, …
+    AutoRename,
+}
+
 #[derive(Debug, Clone)]
 pub struct ExtractOptions {
     pub dest_dir: PathBuf,
     pub password: Option<String>,
     /// When set, only extract matching entry names (exact).
     pub entries: Option<Vec<String>>,
-    pub overwrite: bool,
+    pub conflict: ConflictPolicy,
 }
 
 impl ExtractOptions {
@@ -213,7 +225,7 @@ impl ExtractOptions {
             dest_dir: dest_dir.into(),
             password: None,
             entries: None,
-            overwrite: true,
+            conflict: ConflictPolicy::Overwrite,
         }
     }
 }

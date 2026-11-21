@@ -546,6 +546,138 @@ fn notify_shell_assoc_changed() {
     }
 }
 
+/// Register Win11 Sparse Package for the modern Explorer context menu.
+/// Best-effort: classic flat verbs remain available if this fails.
+/// `register-sparse.ps1` appends step logs to `sparse-register.log`.
+///
+/// Important: do **not** wait forever — a hung `regsvr32` / `Add-AppxPackage` used to
+/// leave the installer stuck on "processing" with only the first log line written.
+#[cfg(windows)]
+fn register_sparse_package(install_dir: &Path) -> InstallResult<()> {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+
+    let dll = install_dir.join("oxizip-shellext.dll");
+    if !dll.is_file() {
+        return Ok(());
+    }
+    let script = install_dir.join("scripts").join("register-sparse.ps1");
+    let msix = install_dir.join("sparse").join("oxizip-shellext.msix");
+    let manifest = install_dir.join("sparse").join("AppxManifest.xml");
+    if !script.is_file() && !msix.is_file() && !manifest.is_file() {
+        return Ok(());
+    }
+
+    // Script timeout 60s + margin for process teardown.
+    const SPARSE_WAIT: Duration = Duration::from_secs(75);
+
+    let mut ps = Command::new("powershell.exe");
+    // Do not capture stdout/stderr pipes — a blocked reader can deadlock the child.
+    // The script writes its own sparse-register.log.
+    let child = if script.is_file() {
+        hide_console(&mut ps)
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                &script.display().to_string(),
+                "-InstallDir",
+                &install_dir.display().to_string(),
+                "-TimeoutSec",
+                "60",
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(InstallError::Io)?
+    } else {
+        let cmd = if msix.is_file() {
+            let cer = install_dir.join("sparse").join("Oxizip.cer");
+            format!(
+                "$ErrorActionPreference='Stop'; \
+                 New-Item 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock' -Force | Out-Null; \
+                 Set-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock' AllowAllTrustedApps 1 -Type DWord -Force; \
+                 if(Test-Path '{cer}'){{ Import-Certificate -FilePath '{cer}' -CertStoreLocation Cert:\\LocalMachine\\TrustedPeople | Out-Null }}; \
+                 $p=Get-AppxPackage -Name 'cn.wujunyi.oxizip.shellext' -EA SilentlyContinue; \
+                 if($p){{Remove-AppxPackage -Package $p.PackageFullName -EA SilentlyContinue}}; \
+                 Add-AppxPackage -Path '{msix}' -ExternalLocation '{dir}'",
+                cer = cer.display(),
+                msix = msix.display(),
+                dir = install_dir.display()
+            )
+        } else {
+            format!(
+                "$ErrorActionPreference='Stop'; \
+                 New-Item 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock' -Force | Out-Null; \
+                 Set-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock' AllowAllTrustedApps 1 -Type DWord -Force; \
+                 Set-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock' AllowDevelopmentWithoutDevLicense 1 -Type DWord -Force; \
+                 $p=Get-AppxPackage -Name 'cn.wujunyi.oxizip.shellext' -EA SilentlyContinue; \
+                 if($p){{Remove-AppxPackage -Package $p.PackageFullName -EA SilentlyContinue}}; \
+                 Add-AppxPackage -Path '{manifest}' -Register -ExternalLocation '{dir}'",
+                manifest = manifest.display(),
+                dir = install_dir.display()
+            )
+        };
+        hide_console(&mut ps)
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &cmd])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(InstallError::Io)?
+    };
+
+    let mut child = child;
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if started.elapsed() >= SPARSE_WAIT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let log = install_dir.join("sparse-register.log");
+                    let note = format!(
+                        "\n[{}] ERROR: installer killed register-sparse.ps1 after {}s timeout\n",
+                        chrono_like_now(),
+                        SPARSE_WAIT.as_secs()
+                    );
+                    let _ = append_log(&log, &note);
+                    // Classic verbs still work; do not fail the install.
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            Err(e) => return Err(InstallError::Io(e)),
+        }
+    };
+
+    if status.success() {
+        notify_shell_assoc_changed();
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn chrono_like_now() -> String {
+    // Local wall clock for log append (avoid extra chrono dep).
+    use std::time::SystemTime;
+    match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(d) => format!("unix+{}s", d.as_secs()),
+        Err(_) => "unknown-time".into(),
+    }
+}
+
+#[cfg(windows)]
+fn append_log(path: &Path, text: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = f.write_all(text.as_bytes());
+    }
+}
+
 #[cfg(not(windows))]
 fn create_start_menu_shortcut(_dir: &Path) -> InstallResult<()> {
     Ok(())
@@ -603,6 +735,15 @@ pub fn perform_install(opts: &InstallOptions, progress: &mut ProgressCb<'_>) -> 
             }
         }
     }
+
+    // Win11 modern context menu (Sparse) — always attempt when elevated installer runs,
+    // even if the user skipped file associations (classic verbs still need shell install).
+    #[cfg(windows)]
+    {
+        report(progress, 0.985, "sparse");
+        let _ = register_sparse_package(&opts.dir);
+    }
+
     report(progress, 1.0, "done");
     Ok(())
 }

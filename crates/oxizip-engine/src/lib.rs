@@ -16,7 +16,7 @@ pub use oxizip_core::{
     ProgressUpdate,
 };
 pub use oxizip_formats::{
-    CreateOptions, EntryMeta, ExtractOptions, FormatId, ListOptions, MethodId,
+    ConflictPolicy, CreateOptions, EntryMeta, ExtractOptions, FormatId, ListOptions, MethodId,
     RecoverPasswordOptions as PasswordRecoverOptions, ZipCryptoKind,
 };
 
@@ -111,9 +111,30 @@ pub fn create(
         return Err(CoreError::UnsupportedFormat);
     }
     let mut writer = open_writer(path, format)?;
-    for input in inputs {
+    let total = inputs.len() as u64;
+    for (i, input) in inputs.iter().enumerate() {
+        cancel.check()?;
+        let name = input.as_ref().display().to_string();
+        progress.report(ProgressUpdate {
+            stage: JobStage::Create,
+            bytes_done: 0,
+            bytes_total: None,
+            entries_done: i as u64,
+            entries_total: Some(total.max(1)),
+            current_entry: Some(name),
+            message: None,
+        });
         writer.add_path(input.as_ref(), opts, progress, cancel)?;
     }
+    progress.report(ProgressUpdate {
+        stage: JobStage::Create,
+        bytes_done: 0,
+        bytes_total: None,
+        entries_done: total,
+        entries_total: Some(total.max(1)),
+        current_entry: None,
+        message: None,
+    });
     writer.finish(progress, cancel)?;
     maybe_split_archive(path, opts.volume_size)?;
     Ok(())

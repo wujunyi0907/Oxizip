@@ -147,9 +147,9 @@ fn copy_tree(
             }
         }
         let out = safe_dest_path(dest_root, &rel)?;
-        if out.exists() && !opts.overwrite {
+        let Some(out) = crate::util::resolve_conflict_path(out, opts.conflict) else {
             continue;
-        }
+        };
         if let Some(parent) = out.parent() {
             fs::create_dir_all(parent)?;
         }

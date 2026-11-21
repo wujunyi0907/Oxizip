@@ -115,9 +115,11 @@ impl ArchiveReader for LzhReader {
                 continue;
             }
 
-            if out_path.exists() && !opts.overwrite {
+            let Some(out_path) =
+                crate::util::resolve_conflict_path(out_path, opts.conflict)
+            else {
                 continue;
-            }
+            };
             if let Some(parent) = out_path.parent() {
                 fs::create_dir_all(parent)?;
             }

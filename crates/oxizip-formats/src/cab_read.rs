@@ -121,9 +121,11 @@ impl ArchiveReader for CabReader {
             if let Some(parent) = out_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            if out_path.exists() && !opts.overwrite {
+            let Some(out_path) =
+                crate::util::resolve_conflict_path(out_path, opts.conflict)
+            else {
                 continue;
-            }
+            };
 
             let win_name = name.replace('/', "\\");
             let mut reader = match cabinet.read_file(name) {

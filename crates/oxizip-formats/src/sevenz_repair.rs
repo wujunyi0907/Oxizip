@@ -90,7 +90,7 @@ pub fn repair_sevenz(
         let mut one = ExtractOptions::to_dir(&extract_dir);
         one.password = pw.clone();
         one.entries = Some(vec![entry.name.clone()]);
-        one.overwrite = true;
+        one.conflict = crate::types::ConflictPolicy::Overwrite;
         if reader.extract(&one, progress, cancel).is_ok() {
             recovered += 1;
         }

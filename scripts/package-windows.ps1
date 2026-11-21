@@ -21,22 +21,50 @@ function Get-WorkspaceVersion {
 $Version = Get-WorkspaceVersion
 Write-Host "Workspace version: $Version"
 
+$CargoTarget = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path $PWD "target" }
+$ReleaseDir = Join-Path $CargoTarget "release"
+Write-Host "Cargo target: $CargoTarget"
+
 New-Item -ItemType Directory -Force -Path dist | Out-Null
-$payloadRoot = Join-Path $PWD "target\setup-payload"
+$payloadRoot = Join-Path $CargoTarget "setup-payload"
 $payloadStage = Join-Path $payloadRoot "stage"
 $payloadZip = Join-Path $payloadRoot "payload.zip"
 
 Write-Host "==> Building release binaries..."
-cargo build --release -p oxizip-cli -p oxizip-gui
+cargo build --release -p oxizip-cli -p oxizip-gui -p oxizip-shellext
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "==> Staging setup payload..."
 if (Test-Path $payloadRoot) { Remove-Item $payloadRoot -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $payloadStage | Out-Null
-Copy-Item "target\release\oxizip.exe" $payloadStage
-Copy-Item "target\release\oxizip-cli.exe" $payloadStage
+Copy-Item (Join-Path $ReleaseDir "oxizip.exe") $payloadStage
+Copy-Item (Join-Path $ReleaseDir "oxizip-cli.exe") $payloadStage
+$shellextDll = Join-Path $ReleaseDir "oxizip_shellext.dll"
+if (-not (Test-Path $shellextDll)) {
+    throw "missing $shellextDll — build oxizip-shellext"
+}
+Copy-Item $shellextDll (Join-Path $payloadStage "oxizip-shellext.dll")
 Copy-Item "LICENSE" $payloadStage
 Copy-Item "README.md" $payloadStage
+
+# Win11 Sparse Package: signed MSIX + public .cer + loose manifest fallback.
+$sparseStage = Join-Path $payloadStage "sparse"
+Write-Host "    building signed sparse MSIX..."
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PWD "scripts\build-sparse-msix.ps1") `
+    -OutDir $sparseStage -Version $Version
+if ($LASTEXITCODE -ne 0) { throw "build-sparse-msix.ps1 failed" }
+foreach ($req in @(
+        (Join-Path $sparseStage "oxizip-shellext.msix"),
+        (Join-Path $sparseStage "Oxizip.cer"),
+        (Join-Path $sparseStage "AppxManifest.xml")
+    )) {
+    if (-not (Test-Path $req)) { throw "missing sparse artifact $req" }
+}
+$scriptsStage = Join-Path $payloadStage "scripts"
+New-Item -ItemType Directory -Force -Path $scriptsStage | Out-Null
+Copy-Item "scripts\register-sparse.ps1" $scriptsStage
+Copy-Item "scripts\unregister-sparse.ps1" $scriptsStage
+Write-Host "    bundled oxizip-shellext.dll + signed sparse MSIX"
 New-Item -ItemType Directory -Force -Path (Join-Path $payloadStage "assets\icons") | Out-Null
 # Installed product icons only — exclude setup-only / shell-uac composites.
 $excludeIcons = @("oxizip-uac.ico", "oxizip-setup.ico")
@@ -74,7 +102,7 @@ Write-Host "==> Building Oxizip-Setup (embeds payload)..."
 cargo build --release -p oxizip-setup
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$built = Join-Path $PWD "target\release\Oxizip-Setup.exe"
+$built = Join-Path $ReleaseDir "Oxizip-Setup.exe"
 $outName = "Oxizip-Setup-$Version-x64.exe"
 $out = Join-Path $PWD "dist\$outName"
 # Drop stale unversioned / other-version installers so CI uploads stay clean.

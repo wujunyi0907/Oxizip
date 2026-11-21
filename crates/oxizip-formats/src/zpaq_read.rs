@@ -100,7 +100,7 @@ impl ArchiveReader for ZpaqReader {
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         run_zpaq(&arg_refs)?;
 
-        copy_stage_to_dest(stage.path(), &dest_root, opts.overwrite, progress, cancel)?;
+        copy_stage_to_dest(stage.path(), &dest_root, opts.conflict, progress, cancel)?;
         Ok(())
     }
 }
@@ -108,7 +108,7 @@ impl ArchiveReader for ZpaqReader {
 fn copy_stage_to_dest(
     stage: &Path,
     dest_root: &Path,
-    overwrite: bool,
+    conflict: crate::types::ConflictPolicy,
     progress: &dyn Progress,
     cancel: &CancellationToken,
 ) -> CoreResult<()> {
@@ -116,7 +116,7 @@ fn copy_stage_to_dest(
         dir: &Path,
         stage_root: &Path,
         dest_root: &Path,
-        overwrite: bool,
+        conflict: crate::types::ConflictPolicy,
         progress: &dyn Progress,
         cancel: &CancellationToken,
         count: &mut u64,
@@ -134,15 +134,15 @@ fn copy_stage_to_dest(
             }
             if path.is_dir() {
                 walk(
-                    &path, stage_root, dest_root, overwrite, progress, cancel, count,
+                    &path, stage_root, dest_root, conflict, progress, cancel, count,
                 )?;
                 continue;
             }
             let name = sanitize_zpaq_name(&rel_str)?;
             let out = safe_dest_path(dest_root, &name)?;
-            if out.exists() && !overwrite {
+            let Some(out) = crate::util::resolve_conflict_path(out, conflict) else {
                 continue;
-            }
+            };
             if let Some(parent) = out.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -163,7 +163,7 @@ fn copy_stage_to_dest(
 
     let mut count = 0u64;
     walk(
-        stage, stage, dest_root, overwrite, progress, cancel, &mut count,
+        stage, stage, dest_root, conflict, progress, cancel, &mut count,
     )
 }
 

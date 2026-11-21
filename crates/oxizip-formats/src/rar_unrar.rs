@@ -226,9 +226,16 @@ impl ArchiveReader for RarUnrarReader {
                 dest.push('/');
             }
         }
+        let overwrite_flag = match opts.conflict {
+            crate::types::ConflictPolicy::Overwrite | crate::types::ConflictPolicy::AutoRename => {
+                // UnRAR has no auto-rename; Overwrite. Native formats handle AutoRename.
+                "-o+"
+            }
+            crate::types::ConflictPolicy::Skip => "-o-",
+        };
         let mut cmd = Command::new(&self.unrar);
         cmd.arg("x")
-            .arg("-o+")
+            .arg(overwrite_flag)
             .arg("-y")
             .arg(password_arg(opts.password.as_deref()))
             .arg(&self.path)

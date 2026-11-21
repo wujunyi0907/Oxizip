@@ -175,8 +175,9 @@ NoDisplay=false
     )
 }
 
-fn extract_desktop(exe: &Path, mimes: &[&str]) -> String {
-    let exe_s = shell_escape_desktop_exec(exe);
+fn extract_desktop(cli: &Path, gui: &Path, mimes: &[&str]) -> String {
+    let cli_s = shell_escape_desktop_exec(cli);
+    let gui_s = shell_escape_desktop_exec(gui);
     format!(
         r#"[Desktop Entry]
 Type=Application
@@ -184,7 +185,7 @@ Version=1.0
 Name={name_en}
 Name[zh_CN]={name_zh}
 Comment=Extract archives with Oxizip
-Exec={exe} extract --smart %f
+Exec={gui} --job extract --smart %f
 Icon=package-x-generic
 Terminal=false
 NoDisplay=true
@@ -195,27 +196,27 @@ Actions=ExtractHere;ExtractSmart;ExtractToFolder;Test;Checksum;
 [Desktop Action ExtractHere]
 Name={here_en}
 Name[zh_CN]={here_zh}
-Exec={exe} extract --here %f
+Exec={gui} --job extract --here %f
 
 [Desktop Action ExtractSmart]
 Name={smart_en}
 Name[zh_CN]={smart_zh}
-Exec={exe} extract --smart %f
+Exec={gui} --job extract --smart %f
 
 [Desktop Action ExtractToFolder]
 Name={folder_en}
 Name[zh_CN]={folder_zh}
-Exec={exe} extract --archive-name-dir %f
+Exec={gui} --job extract --archive-name-dir %f
 
 [Desktop Action Test]
 Name={test_en}
 Name[zh_CN]={test_zh}
-Exec={exe} test %f
+Exec={cli} test %f
 
 [Desktop Action Checksum]
 Name={sum_en}
 Name[zh_CN]={sum_zh}
-Exec={exe} checksum %f
+Exec={cli} checksum %f
 "#,
         name_en = t(Lang::En, "shell.desktop_extract"),
         name_zh = t(Lang::ZhCn, "shell.desktop_extract"),
@@ -229,13 +230,14 @@ Exec={exe} checksum %f
         test_zh = t(Lang::ZhCn, "shell.test"),
         sum_en = t(Lang::En, "shell.checksum"),
         sum_zh = t(Lang::ZhCn, "shell.checksum"),
-        exe = exe_s,
+        cli = cli_s,
+        gui = gui_s,
         mimes = mime_type_list(mimes),
     )
 }
 
-fn compress_desktop(exe: &Path) -> String {
-    let exe_s = shell_escape_desktop_exec(exe);
+fn compress_desktop(gui: &Path) -> String {
+    let exe_s = shell_escape_desktop_exec(gui);
     format!(
         r#"[Desktop Entry]
 Type=Application
@@ -243,7 +245,7 @@ Version=1.0
 Name={name_en}
 Name[zh_CN]={name_zh}
 Comment=Compress with Oxizip
-Exec={exe} create --beside -f zip %F
+Exec={exe} --job create --beside -f zip %F
 Icon=package-x-generic
 Terminal=false
 NoDisplay=true
@@ -254,12 +256,12 @@ Actions=CompressZip;Compress7z;
 [Desktop Action CompressZip]
 Name={zip_en}
 Name[zh_CN]={zip_zh}
-Exec={exe} create --beside -f zip %F
+Exec={exe} --job create --beside -f zip %F
 
 [Desktop Action Compress7z]
 Name={z7_en}
 Name[zh_CN]={z7_zh}
-Exec={exe} create --beside -f 7z %F
+Exec={exe} --job create --beside -f 7z %F
 "#,
         name_en = t(Lang::En, "shell.desktop_compress"),
         name_zh = t(Lang::ZhCn, "shell.desktop_compress"),
@@ -295,8 +297,9 @@ fn shell_escape_desktop_exec(path: &Path) -> String {
     }
 }
 
-fn kde_servicemenu(exe: &Path, mimes: &[&str]) -> String {
-    let exe_s = shell_escape_desktop_exec(exe);
+fn kde_servicemenu(cli: &Path, gui: &Path, mimes: &[&str]) -> String {
+    let cli_s = shell_escape_desktop_exec(cli);
+    let gui_s = shell_escape_desktop_exec(gui);
     let mut mime = mime_type_list(mimes);
     if !mime.contains("inode/directory") {
         mime.push_str("inode/directory;application/octet-stream;");
@@ -312,25 +315,26 @@ X-KDE-Priority=TopLevel
 [Desktop Action ExtractHere]
 Name=Oxizip Extract Here
 Name[zh_CN]=Oxizip 解压到此处
-Exec={exe} extract --here %f
+Exec={gui} --job extract --here %f
 
 [Desktop Action ExtractSmart]
 Name=Oxizip Extract Smart
 Name[zh_CN]=Oxizip 智能解压
-Exec={exe} extract --smart %f
+Exec={gui} --job extract --smart %f
 
 [Desktop Action CompressZip]
 Name=Oxizip Compress ZIP
 Name[zh_CN]=Oxizip 压缩为 ZIP
-Exec={exe} create --beside -f zip %F
+Exec={gui} --job create --beside -f zip %F
 
 [Desktop Action Compress7z]
 Name=Oxizip Compress 7z
 Name[zh_CN]=Oxizip 压缩为 7z
-Exec={exe} create --beside -f 7z %F
+Exec={gui} --job create --beside -f 7z %F
 "#,
         mimes = mime,
-        exe = exe_s,
+        cli = cli_s,
+        gui = gui_s,
     )
 }
 
@@ -435,11 +439,11 @@ pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> 
     write_file(&apps.join(OPEN_DESKTOP_ID), &open_desktop(&gui, &mimes))?;
     write_file(
         &apps.join("oxizip-extract.desktop"),
-        &extract_desktop(&cli, &mimes),
+        &extract_desktop(&cli, &gui, &mimes),
     )?;
     write_file(
         &apps.join("oxizip-compress.desktop"),
-        &compress_desktop(&cli),
+        &compress_desktop(&gui),
     )?;
 
     let mime_pkg = mime_packages_dir(&home).join(MIME_PACKAGE_NAME);
@@ -454,20 +458,20 @@ pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> 
     let scripts = nautilus_scripts_dir(&home);
     write_file(
         &scripts.join("Oxizip Extract Here"),
-        &nautilus_script(&cli, "extract --here"),
+        &nautilus_script(&gui, "--job extract --here"),
     )?;
     write_file(
         &scripts.join("Oxizip Extract Smart"),
-        &nautilus_script(&cli, "extract --smart"),
+        &nautilus_script(&gui, "--job extract --smart"),
     )?;
     write_file(
         &scripts.join("Oxizip Compress ZIP"),
-        &nautilus_script(&cli, "create --beside -f zip"),
+        &nautilus_script(&gui, "--job create --beside -f zip"),
     )?;
 
     write_file(
         &kde_servicemenus_dir(&home).join("oxizip.desktop"),
-        &kde_servicemenu(&cli, &mimes),
+        &kde_servicemenu(&cli, &gui, &mimes),
     )?;
 
     refresh_desktop_db(&apps);

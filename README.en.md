@@ -11,7 +11,7 @@ A **clean-room** multi-format archive tool written in Rust: one shared engine, p
 - **Desktop**: `iced`; entries open with the system default app (no in-app preview); icons live under `crates/oxizip-gui/assets/icons`
 - **Path safety**: zip-slip protection on extract
 - **Progress & cancel**: long jobs report progress and can be cancelled
-- **Shell integration**: `oxizip-cli shell install` (Windows context menus / Linux desktop actions)
+- **Shell integration**: `oxizip-cli shell install` (Windows cascade verbs + optional `oxizip-shellext` / Sparse; Linux desktop actions)
 - **Architecture**: **64-bit only**
 
 ### Create (compress)

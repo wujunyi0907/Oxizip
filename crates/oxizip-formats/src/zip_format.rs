@@ -134,9 +134,11 @@ impl ArchiveReader for ZipReader {
                 fs::create_dir_all(parent)?;
             }
 
-            if out_path.exists() && !opts.overwrite {
+            let Some(out_path) =
+                crate::util::resolve_conflict_path(out_path, opts.conflict)
+            else {
                 continue;
-            }
+            };
 
             let mut outfile = File::create(&out_path)?;
             copy(&mut file, &mut outfile).map_err(map_zip_io_err)?;
@@ -217,6 +219,7 @@ pub struct ZipWriterBackend {
     base_method: CompressionMethod,
     format: FormatId,
     path: PathBuf,
+    files_done: u64,
 }
 
 impl ZipWriterBackend {
@@ -245,6 +248,7 @@ impl ZipWriterBackend {
             base_method: method,
             format,
             path,
+            files_done: 0,
         })
     }
 
@@ -358,11 +362,13 @@ impl ZipWriterBackend {
         cancel: &CancellationToken,
     ) -> CoreResult<()> {
         cancel.check()?;
+        self.files_done = self.files_done.saturating_add(1);
+        let file_len = fs::metadata(path).map(|m| m.len()).ok();
         progress.report(ProgressUpdate {
             stage: JobStage::Create,
             bytes_done: 0,
-            bytes_total: None,
-            entries_done: 0,
+            bytes_total: file_len,
+            entries_done: self.files_done,
             entries_total: None,
             current_entry: Some(name.to_string()),
             message: None,
@@ -370,6 +376,17 @@ impl ZipWriterBackend {
         self.start_file_with_opts(name, opts)?;
         let mut input = File::open(path)?;
         copy(&mut input, &mut self.writer)?;
+        if let Some(total) = file_len {
+            progress.report(ProgressUpdate {
+                stage: JobStage::Create,
+                bytes_done: total,
+                bytes_total: Some(total),
+                entries_done: self.files_done,
+                entries_total: None,
+                current_entry: Some(name.to_string()),
+                message: None,
+            });
+        }
         Ok(())
     }
 }

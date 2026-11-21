@@ -4,6 +4,41 @@ use std::path::{Path, PathBuf};
 use oxizip_core::{CancellationToken, CoreError, CoreResult};
 use walkdir::WalkDir;
 
+use crate::types::ConflictPolicy;
+
+/// If `path` is free, return it. Otherwise apply `policy` (skip → `None`).
+pub fn resolve_conflict_path(path: PathBuf, policy: ConflictPolicy) -> Option<PathBuf> {
+    if !path.exists() {
+        return Some(path);
+    }
+    match policy {
+        ConflictPolicy::Overwrite => Some(path),
+        ConflictPolicy::Skip => None,
+        ConflictPolicy::AutoRename => Some(unique_extract_path(&path)),
+    }
+}
+
+/// `file.txt` → `file (1).txt` (first free index).
+pub fn unique_extract_path(path: &Path) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".into());
+    let ext = path.extension().map(|s| s.to_string_lossy().into_owned());
+    for n in 1..10_000 {
+        let name = match &ext {
+            Some(e) => format!("{stem} ({n}).{e}"),
+            None => format!("{stem} ({n})"),
+        };
+        let candidate = parent.join(name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    parent.join(format!("{stem}.oxizip_new"))
+}
+
 /// A file to pack: absolute source path + archive-relative name (forward slashes).
 #[derive(Debug, Clone)]
 pub struct PackFile {
@@ -90,4 +125,24 @@ pub fn stage_inputs(
         fs::copy(&file.source, &dest)?;
     }
     Ok((tmp, root))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::ConflictPolicy;
+    use tempfile::tempdir;
+
+    #[test]
+    fn auto_rename_adds_numeric_suffix() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("photo.png");
+        fs::write(&path, b"a").unwrap();
+        let renamed = unique_extract_path(&path);
+        assert_eq!(renamed, dir.path().join("photo (1).png"));
+        fs::write(&renamed, b"b").unwrap();
+        let again = resolve_conflict_path(path.clone(), ConflictPolicy::AutoRename).unwrap();
+        assert_eq!(again, dir.path().join("photo (2).png"));
+        assert!(resolve_conflict_path(path, ConflictPolicy::Skip).is_none());
+    }
 }

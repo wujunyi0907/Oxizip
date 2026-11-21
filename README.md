@@ -11,7 +11,7 @@
 - **桌面端**：`iced`；条目通过系统默认程序打开（无应用内预览）；自有图标见 `crates/oxizip-gui/assets/icons`
 - **路径安全**：解压防目录穿越（zip-slip）
 - **进度与取消**：长时间任务可报告进度并支持取消
-- **壳集成**：`oxizip-cli shell install`（Windows 右键菜单 / Linux 桌面动作）
+- **壳集成**：`oxizip-cli shell install`（Windows 级联右键 + 可选 `oxizip-shellext` / Sparse；Linux 桌面动作）
 - **架构**：仅 **64 位**
 
 ### 创建（压缩）

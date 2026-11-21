@@ -31,8 +31,10 @@ crates/
   oxizip-gui/       # iced GUI
   oxizip-i18n/      # 自有文案
   oxizip-sfx-stub/  # 自解压 stub
+  oxizip-shellext/  # Windows Explorer：IExplorerCommand + IContextMenu3（仅拉起 CLI）
 third_party/        # 其他说明/本地临时放置（gitignore 二进制）
 lib/                # unrar/ · wimlib/（Windows 分发）· zpaq/（嵌入源码）
+packaging/windows/sparse/  # Win11 Sparse AppxManifest（AllowExternalContent）
 samples/            # 自造测试样本
 ```
 
@@ -67,7 +69,7 @@ oxizip-cli / oxizip-gui
 | 能力 | Windows | Linux | 注意 |
 |---|---|---|---|
 | 文件关联 / 默认打开 | `oxizip-cli shell install`：ProgID + `.{ext}` + OpenWithProgids + Capabilities + **经典** `UserChoice`（对齐 Bandizip；**不写** `UserChoiceLatest`）；提权时同步 HKLM Classes | 同命令：用户级 `cn.wujunyi.oxizip.desktop` + `xdg-mime default` + 必要时 `~/.local/share/mime/packages`；卸载清理 `mimeapps.list` 中本应用条目 | GUI 关联页勾选的 `--ext` **两边都要生效**；勿只在 Win 写注册表而 Linux 忽略扩展过滤 |
-| 右键 / 文件管理器菜单 | Explorer 动词 | FreeDesktop Actions + Nautilus scripts + KDE service menus | 动作语义对齐（解压/压缩等）；路径含空格须正确引用 |
+| 右键 / 文件管理器菜单 | 经典：**扁平**静态动词；Win11 现代：Sparse `IExplorerCommand` 级联（`oxizip-shellext`）；不注册经典 `ContextMenuHandlers`；禁止 `bdzshl`/`bzshell`/`ark*` | FreeDesktop Actions + Nautilus scripts + KDE service menus | 动作语义对齐（解压三态/测试/校验/ZIP·7z 压缩）；路径含空格须正确引用；Sparse 需签名或开发者模式 |
 | 安装 / 卸载 | `oxizip-setup` + `package-windows.ps1` | deb/rpm/AppImage（`package-linux.sh`） | 禁止嵌入第三方安装器资源；Linux 包内 `oxizip.desktop` 与用户级关联可并存 |
 | 外部工具 | Windows 安装包附带 `lib/`；亦可旁路查找 | PATH / 系统 `unrar`、`wimlib-imagex` | 缺失时返回可本地化错误；Linux 不捆绑 |
 | GUI | iced 775×480；字体 YaHei | iced 同尺寸；系统默认字体 | 勿把 Win 专用 API 写进跨平台 UI 路径且不加 `cfg` |
@@ -157,7 +159,7 @@ oxizip-cli / oxizip-gui
 | 圆角窗口（强制） | **所有** iced 窗口（安装器、卸载器、主 GUI / 关联页 / 许可页等）一律：**无系统边框** + `transparent` + 自绘圆角外框（`WINDOW_RADIUS`）+ 自定义标题栏（拖拽 / 最小化 / 关闭）；禁止方直角系统边框窗。Win11 另对 HWND 设 DWM 圆角（`DWMWCP_ROUND`） |
 | 圆角 | 窗口外框 / 标题栏顶角 **12px**（`WINDOW_RADIUS`）；按钮、输入区、许可/列表框 **8px**（`CONTROL_RADIUS`）；标题栏文字按钮约 **6px**；新增窗口或弹层外壳须沿用同一套半径，勿另起直角皮肤 |
 | 布局 | 安装器内容水平居中；GUI 关联页标题/正文**左对齐**；留白紧凑（内容 padding 约 10–16，控件间距 4–8） |
-| 推荐尺寸 | 安装 **600×440**；卸载 **486×300**（约黄金比）；**主 GUI 全屏页统一 775×480**（与文件关联页相同，含主界面 / 许可页等，禁止再切回更大主窗） |
+| 推荐尺寸 | 安装 **600×440**；卸载 **486×300**（约黄金比）；**主 GUI 全屏页统一 775×480**（与文件关联页相同，含主界面 / 许可页等，禁止再切回更大主窗）；壳层压缩/解压进度窗 **520×220**（`--job create|extract`，独立启动尺寸，勿与主窗混用） |
 
 #### 配色（结合图标）
 

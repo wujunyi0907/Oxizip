@@ -36,6 +36,8 @@ pub enum JobKind {
 #[derive(Debug, Clone, Default)]
 pub struct ProgressSnapshot {
     pub fraction: f32,
+    /// Per-file / current-entry progress when bytes are known; else mirrors overall.
+    pub file_fraction: f32,
     pub detail: String,
 }
 
@@ -61,6 +63,7 @@ impl ProgressSlot {
             Err(_) => return,
         };
         g.fraction = fraction_of(update);
+        g.file_fraction = file_fraction_of(update).unwrap_or(g.fraction);
         g.detail = update
             .current_entry
             .clone()
@@ -80,6 +83,10 @@ fn fraction_of(update: &ProgressUpdate) -> f32 {
             return (done as f32 / total as f32).clamp(0.0, 1.0);
         }
     }
+    // Unknown total but entries advancing (e.g. zip walk): asymptotic fill.
+    if update.entries_done > 0 {
+        return (1.0 - 1.0 / (1.0 + update.entries_done as f32 * 0.12)).clamp(0.05, 0.95);
+    }
     match update.stage {
         JobStage::Detect => 0.05,
         JobStage::List => 0.2,
@@ -89,6 +96,14 @@ fn fraction_of(update: &ProgressUpdate) -> f32 {
         JobStage::Repair => 0.45,
         JobStage::RecoverPassword => 0.35,
     }
+}
+
+fn file_fraction_of(update: &ProgressUpdate) -> Option<f32> {
+    let total = update.bytes_total?;
+    if total == 0 {
+        return Some(1.0);
+    }
+    Some((update.bytes_done as f32 / total as f32).clamp(0.0, 1.0))
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +116,10 @@ pub enum JobOutcome {
     Extracted {
         dest: PathBuf,
         error: Option<String>,
+    },
+    /// Shell/GUI extract found existing files; wait for Overwrite / AutoRename.
+    NeedsConflictChoice {
+        conflicts: Vec<String>,
     },
     Created {
         path: PathBuf,
@@ -282,16 +301,45 @@ pub fn extract_archive(
     archive: PathBuf,
     dest: PathBuf,
     password: Option<String>,
+    conflict: Option<oxizip_engine::ConflictPolicy>,
     cancel: &CancellationToken,
     slot: &ProgressSlot,
     lang: Lang,
 ) -> JobOutcome {
+    use oxizip_engine::ConflictPolicy;
+    use std::fs;
+
     let progress = FnProgress({
         let slot = slot.clone();
         move |u: ProgressUpdate| slot.set_from_update(&u)
     });
+
+    if conflict.is_none() {
+        let list_opts = ListOptions {
+            password: password.clone(),
+        };
+        match list(&archive, &list_opts, &progress, cancel) {
+            Ok(entries) => {
+                let _ = fs::create_dir_all(&dest);
+                let conflicts = collect_conflicts(&dest, &entries);
+                if !conflicts.is_empty() {
+                    return JobOutcome::NeedsConflictChoice { conflicts };
+                }
+            }
+            Err(oxizip_engine::CoreError::Canceled) => return JobOutcome::Canceled,
+            Err(err) => {
+                return JobOutcome::Extracted {
+                    dest,
+                    error: Some(error_message(lang, &err)),
+                };
+            }
+        }
+    }
+
+    let policy = conflict.unwrap_or(ConflictPolicy::Overwrite);
     let mut opts = ExtractOptions::to_dir(&dest);
     opts.password = password;
+    opts.conflict = policy;
     match extract(&archive, &opts, &progress, cancel) {
         Ok(()) => JobOutcome::Extracted { dest, error: None },
         Err(oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
@@ -299,6 +347,156 @@ pub fn extract_archive(
             dest,
             error: Some(error_message(lang, &err)),
         },
+    }
+}
+
+fn collect_conflicts(dest: &std::path::Path, entries: &[EntryMeta]) -> Vec<String> {
+    use oxizip_core::safe_dest_path;
+    let mut out = Vec::new();
+    let Ok(root) = dest.canonicalize().or_else(|_| {
+        let _ = std::fs::create_dir_all(dest);
+        dest.canonicalize()
+    }) else {
+        return out;
+    };
+    for e in entries {
+        if e.is_dir || e.name.ends_with('/') {
+            continue;
+        }
+        let Ok(path) = safe_dest_path(&root, &e.name) else {
+            continue;
+        };
+        if path.is_file() {
+            out.push(e.name.clone());
+            if out.len() >= 8 {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Shell `--job extract`: resolve Here/Smart/ArchiveName dest, then extract each archive.
+/// `conflict = None` means probe first and return [`JobOutcome::NeedsConflictChoice`] if needed.
+pub fn extract_shell_job(
+    archives: Vec<PathBuf>,
+    mode: crate::job::ExtractMode,
+    password: Option<String>,
+    conflict: Option<oxizip_engine::ConflictPolicy>,
+    cancel: &CancellationToken,
+    slot: &ProgressSlot,
+    lang: Lang,
+) -> JobOutcome {
+    use crate::job::{dest_archive_name, dest_here, dest_smart, ExtractMode};
+    use oxizip_engine::ConflictPolicy;
+    use std::fs;
+
+    let progress = FnProgress({
+        let slot = slot.clone();
+        move |u: ProgressUpdate| slot.set_from_update(&u)
+    });
+
+    // Probe phase (ask user).
+    if conflict.is_none() {
+        let mut all_conflicts = Vec::new();
+        for archive in &archives {
+            if cancel.is_canceled() {
+                return JobOutcome::Canceled;
+            }
+            let list_opts = ListOptions {
+                password: password.clone(),
+            };
+            let entries = match list(archive, &list_opts, &progress, cancel) {
+                Ok(e) => e,
+                Err(oxizip_engine::CoreError::Canceled) => return JobOutcome::Canceled,
+                Err(err) => {
+                    return JobOutcome::Extracted {
+                        dest: dest_here(archive),
+                        error: Some(error_message(lang, &err)),
+                    };
+                }
+            };
+            let dest = match mode {
+                ExtractMode::Here => dest_here(archive),
+                ExtractMode::ArchiveName => dest_archive_name(archive),
+                ExtractMode::Smart => dest_smart(archive, &entries),
+            };
+            let _ = fs::create_dir_all(&dest);
+            for name in collect_conflicts(&dest, &entries) {
+                if !all_conflicts.contains(&name) {
+                    all_conflicts.push(name);
+                }
+                if all_conflicts.len() >= 8 {
+                    break;
+                }
+            }
+            if all_conflicts.len() >= 8 {
+                break;
+            }
+        }
+        if !all_conflicts.is_empty() {
+            return JobOutcome::NeedsConflictChoice {
+                conflicts: all_conflicts,
+            };
+        }
+    }
+
+    let policy = conflict.unwrap_or(ConflictPolicy::Overwrite);
+    let mut last_dest = PathBuf::new();
+    let total = archives.len() as u64;
+    for (i, archive) in archives.into_iter().enumerate() {
+        if cancel.is_canceled() {
+            return JobOutcome::Canceled;
+        }
+        slot.set_from_update(&ProgressUpdate {
+            stage: JobStage::Extract,
+            bytes_done: 0,
+            bytes_total: None,
+            entries_done: i as u64,
+            entries_total: Some(total.max(1)),
+            current_entry: Some(archive.display().to_string()),
+            message: None,
+        });
+        let list_opts = ListOptions {
+            password: password.clone(),
+        };
+        let dest = match mode {
+            ExtractMode::Here => dest_here(&archive),
+            ExtractMode::ArchiveName => dest_archive_name(&archive),
+            ExtractMode::Smart => match list(&archive, &list_opts, &progress, cancel) {
+                Ok(entries) => dest_smart(&archive, &entries),
+                Err(oxizip_engine::CoreError::Canceled) => return JobOutcome::Canceled,
+                Err(err) => {
+                    return JobOutcome::Extracted {
+                        dest: dest_here(&archive),
+                        error: Some(error_message(lang, &err)),
+                    };
+                }
+            },
+        };
+        if let Err(err) = fs::create_dir_all(&dest) {
+            return JobOutcome::Extracted {
+                dest,
+                error: Some(err.to_string()),
+            };
+        }
+        let mut opts = ExtractOptions::to_dir(&dest);
+        opts.password = password.clone();
+        opts.conflict = policy;
+        match extract(&archive, &opts, &progress, cancel) {
+            Ok(()) => last_dest = dest,
+            Err(oxizip_engine::CoreError::Canceled) => return JobOutcome::Canceled,
+            Err(err) => {
+                return JobOutcome::Extracted {
+                    dest,
+                    error: Some(error_message(lang, &err)),
+                };
+            }
+        }
+    }
+    JobOutcome::Extracted {
+        dest: last_dest,
+        error: None,
     }
 }
 

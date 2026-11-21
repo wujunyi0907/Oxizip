@@ -188,9 +188,11 @@ impl ArchiveReader for TarReader {
             if let Some(parent) = out_path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            if out_path.exists() && !opts.overwrite {
+            let Some(out_path) =
+                crate::util::resolve_conflict_path(out_path, opts.conflict)
+            else {
                 continue;
-            }
+            };
             let mut outfile = File::create(&out_path)?;
             copy(&mut entry, &mut outfile)?;
         }
@@ -212,6 +214,9 @@ fn extract_single(
         .unwrap_or_else(|| "data".into());
     // Strip remaining compression suffix from stem if present (e.g. file.tar from file.tar.gz handled by extension sniff as TarGz).
     let out_path = safe_dest_path(&opts.dest_dir, &name)?;
+    let Some(out_path) = crate::util::resolve_conflict_path(out_path, opts.conflict) else {
+        return Ok(());
+    };
     if let Some(parent) = out_path.parent() {
         fs::create_dir_all(parent)?;
     }

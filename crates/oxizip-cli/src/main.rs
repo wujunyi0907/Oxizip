@@ -82,9 +82,6 @@ enum Commands {
     /// Create an archive (default format: zip)
     #[command(visible_alias = "c")]
     Create {
-        /// Output archive path (optional with --beside)
-        #[arg(required_unless_present = "beside")]
-        archive: Option<PathBuf>,
         /// Place output beside the first input as `<name>.<ext>`
         #[arg(long)]
         beside: bool,
@@ -106,7 +103,9 @@ enum Commands {
         /// ZIP crypto: aes256 (default), aes128, aes192
         #[arg(long, default_value = "aes256")]
         zip_crypto: String,
-        inputs: Vec<PathBuf>,
+        /// Without `--beside`: ARCHIVE then INPUTS…; with `--beside`: INPUTS… only
+        #[arg(required = true, num_args = 1..)]
+        paths: Vec<PathBuf>,
     },
     /// Test archive integrity
     #[command(visible_alias = "t")]
@@ -290,7 +289,6 @@ fn main() -> ExitCode {
             &cancel,
         ),
         Commands::Create {
-            archive,
             beside,
             format,
             password,
@@ -298,9 +296,8 @@ fn main() -> ExitCode {
             method,
             volume_size,
             zip_crypto,
-            inputs,
+            paths,
         } => run_create(
-            archive,
             beside,
             format,
             password,
@@ -308,7 +305,7 @@ fn main() -> ExitCode {
             method,
             volume_size,
             zip_crypto,
-            inputs,
+            paths,
             &progress,
             &cancel,
         ),
@@ -494,7 +491,6 @@ fn run_extract(
 }
 
 fn run_create(
-    archive: Option<PathBuf>,
     beside: bool,
     format: String,
     password: Option<String>,
@@ -502,15 +498,10 @@ fn run_create(
     method: Option<String>,
     volume_size: Option<u64>,
     zip_crypto: String,
-    inputs: Vec<PathBuf>,
+    paths: Vec<PathBuf>,
     progress: &NullProgress,
     cancel: &CancellationToken,
 ) -> Result<(), CoreError> {
-    if inputs.is_empty() {
-        return Err(CoreError::Other(
-            "create requires at least one input path".into(),
-        ));
-    }
     let Some(fmt) = FormatId::parse_create_name(&format) else {
         return Err(CoreError::Other(format!(
             "unknown format '{format}'. choose one of: {}",
@@ -524,13 +515,24 @@ fn run_create(
         )));
     };
 
-    let out = if let Some(path) = archive {
-        path
-    } else if beside {
-        dest::default_create_path(&inputs[0], fmt.as_str())
+    // `--beside` must not steal the first path as ARCHIVE (shell: create --beside -f zip %1).
+    let (out, inputs) = if beside {
+        if paths.is_empty() {
+            return Err(CoreError::Other(
+                "create --beside requires at least one input path".into(),
+            ));
+        }
+        (
+            dest::default_create_path(&paths[0], fmt.as_str()),
+            paths,
+        )
+    } else if paths.len() >= 2 {
+        let mut paths = paths;
+        let out = paths.remove(0);
+        (out, paths)
     } else {
         return Err(CoreError::Other(
-            "create requires an archive path, or --beside".into(),
+            "create requires ARCHIVE and at least one input, or --beside with inputs".into(),
         ));
     };
 

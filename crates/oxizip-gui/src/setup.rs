@@ -99,9 +99,14 @@ pub fn install_associations(lang_arg: &str, exts: &[&str]) -> Result<String, Str
 }
 
 pub fn parse_launch_args() -> (bool, Option<PathBuf>) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // Shell job dialog owns the argv; do not treat paths as "open archive".
+    if args.iter().any(|a| a == "--job") {
+        return (false, None);
+    }
     let mut force_setup = false;
     let mut open_path = None;
-    for arg in std::env::args().skip(1) {
+    for arg in args {
         if arg == "--setup" || arg == "-setup" {
             force_setup = true;
             continue;

@@ -40,8 +40,10 @@ pub use sniff::{sniff_bytes, sniff_path};
 pub use tar_family::{is_tar_family, open_tar_family, TarReader};
 pub use traits::{ArchiveReader, ArchiveWriter};
 pub use types::{
-    CreateOptions, EntryMeta, ExtractOptions, FormatId, ListOptions, MethodId, ZipCryptoKind,
+    ConflictPolicy, CreateOptions, EntryMeta, ExtractOptions, FormatId, ListOptions, MethodId,
+    ZipCryptoKind,
 };
+pub use util::{resolve_conflict_path, unique_extract_path};
 pub use volume::{first_volume_path, is_volume_path, join_volumes, maybe_split_archive};
 pub use wim_read::{find_wimlib, WimReader};
 pub use zip_comment::{zip_read_comment, zip_write_comment};

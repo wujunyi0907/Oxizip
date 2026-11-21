@@ -4,6 +4,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod icons;
+mod job;
 mod licenses;
 mod menu;
 mod prefs;
@@ -28,7 +29,9 @@ use iced::{
 use icons::IconSet;
 use licenses::{catalog, ComponentKind};
 use menu::{MenuAction, MenuPopup};
-use oxizip_engine::{CreateOptions, EntryMeta, FormatId, MethodId, PasswordRecoverOptions};
+use oxizip_engine::{
+    ConflictPolicy, CreateOptions, EntryMeta, FormatId, MethodId, PasswordRecoverOptions,
+};
 use oxizip_i18n::{t, Lang};
 use prefs::{ColorAccent, ListViewMode, Prefs, ToolbarSize};
 use std::collections::BTreeMap;
@@ -42,6 +45,8 @@ enum Screen {
     Setup,
     Licenses,
     Settings,
+    /// Compact shell job progress (create/compress).
+    Job,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -121,7 +126,7 @@ impl std::fmt::Display for LicenseFilter {
     }
 }
 
-/// Single size for all GUI screens (association, main, licenses, …).
+/// Single size for main GUI screens (association, main, licenses, …).
 const APP_WINDOW_SIZE: Size = Size::new(775.0, 480.0);
 const WINDOW_RADIUS: f32 = 12.0;
 const CONTROL_RADIUS: f32 = 8.0;
@@ -134,8 +139,13 @@ fn center_on_monitor(size: Size, monitor: Size) -> Point {
 }
 
 fn main() -> iced::Result {
+    let job_mode = job::parse_job_args().is_some();
     let mut window = iced::window::Settings {
-        size: APP_WINDOW_SIZE,
+        size: if job_mode {
+            job::JOB_WINDOW_SIZE
+        } else {
+            APP_WINDOW_SIZE
+        },
         resizable: false,
         decorations: false,
         transparent: true,
@@ -361,7 +371,22 @@ struct OxizipApp {
     pending_create_inputs: Option<Vec<PathBuf>>,
     busy: Option<Busy>,
     progress_fraction: f32,
+    progress_file_fraction: f32,
     progress_detail: String,
+    /// Shell `--job` compact dialog state.
+    job_verb: job::JobVerb,
+    job_out: Option<PathBuf>,
+    job_started: Option<std::time::Instant>,
+    job_close_when_done: bool,
+    job_open_folder: bool,
+    job_finished: bool,
+    /// Close after `WindowId` arrives when the job finished too quickly.
+    job_pending_close: bool,
+    /// Shell extract waiting for overwrite / auto-rename choice.
+    pending_shell_extract: Option<job::ExtractJob>,
+    /// Main-window extract (archive, dest) waiting for conflict choice.
+    pending_main_extract: Option<(PathBuf, PathBuf)>,
+    job_conflicts: Vec<String>,
     open_temp: Option<Arc<TempDir>>,
     icons: IconSet,
     setup_exts: BTreeMap<&'static str, bool>,
@@ -399,7 +424,18 @@ impl Default for OxizipApp {
             pending_create_inputs: None,
             busy: None,
             progress_fraction: 0.0,
+            progress_file_fraction: 0.0,
             progress_detail: String::new(),
+            job_verb: job::JobVerb::Create,
+            job_out: None,
+            job_started: None,
+            job_close_when_done: true,
+            job_open_folder: false,
+            job_finished: false,
+            job_pending_close: false,
+            pending_shell_extract: None,
+            pending_main_extract: None,
+            job_conflicts: Vec::new(),
             open_temp: None,
             icons: IconSet::load(),
             setup_exts: setup::default_assoc_selection(),
@@ -481,6 +517,11 @@ enum Message {
     SetupToggleSelectAll,
     SetupConfirm,
     SetupSkip,
+    JobCloseWhenDone(bool),
+    JobOpenFolder(bool),
+    JobConflictOverwrite,
+    JobConflictRename,
+    JobConflictCancel,
     WindowId(Option<window::Id>),
     RawWindowId(u64),
     TitleDrag,
@@ -490,8 +531,11 @@ enum Message {
 
 impl OxizipApp {
     fn new() -> (Self, Task<Message>) {
+        let pending_job = job::parse_job_args();
         let (force_setup, pending_open) = setup::parse_launch_args();
-        let screen = if setup::needs_first_run_setup(force_setup) {
+        let screen = if pending_job.is_some() {
+            Screen::Job
+        } else if setup::needs_first_run_setup(force_setup) {
             Screen::Setup
         } else {
             Screen::Main
@@ -511,6 +555,11 @@ impl OxizipApp {
             pending_open,
             ..Self::default()
         };
+        let job_task = match pending_job {
+            Some(job::PendingJob::Create(spec)) => app.start_shell_create(spec),
+            Some(job::PendingJob::Extract(spec)) => app.start_shell_extract(spec),
+            None => Task::none(),
+        };
         let open_task = if app.screen == Screen::Main {
             app.take_pending_open_task()
         } else {
@@ -522,7 +571,7 @@ impl OxizipApp {
             Task::none()
         };
         let boot = window::get_oldest().map(Message::WindowId);
-        (app, Task::batch([boot, open_task, top_task]))
+        (app, Task::batch([boot, job_task, open_task, top_task]))
     }
 
     fn take_pending_open_task(&mut self) -> Task<Message> {
@@ -561,6 +610,22 @@ impl OxizipApp {
     }
 
     fn title(&self) -> String {
+        if self.screen == Screen::Job {
+            let pct = (self.progress_fraction * 100.0).round() as i32;
+            let name = self
+                .job_out
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let verb = match (self.job_verb, self.job_finished) {
+                (job::JobVerb::Create, false) => t(self.lang, "gui.busy.create"),
+                (job::JobVerb::Create, true) => t(self.lang, "gui.status.created"),
+                (job::JobVerb::Extract, false) => t(self.lang, "gui.busy.extract"),
+                (job::JobVerb::Extract, true) => t(self.lang, "gui.status.extracted"),
+            };
+            return format!("{pct}% {verb} {name} - {}", t(self.lang, "app.name"));
+        }
         t(self.lang, "app.name").to_string()
     }
 
@@ -593,6 +658,7 @@ impl OxizipApp {
             progress: progress.clone(),
         });
         self.progress_fraction = 0.0;
+        self.progress_file_fraction = 0.0;
         self.progress_detail.clear();
         self.last_error = None;
         self.status = match kind {
@@ -626,10 +692,17 @@ impl OxizipApp {
         match message {
             Message::WindowId(id) => {
                 self.window_id = id;
-                match id {
+                let round = match id {
                     Some(id) => window::get_raw_id::<Message>(id).map(Message::RawWindowId),
                     None => Task::none(),
-                }
+                };
+                let close = if self.job_pending_close {
+                    self.job_pending_close = false;
+                    self.close_job_window()
+                } else {
+                    Task::none()
+                };
+                Task::batch([round, close])
             }
             Message::RawWindowId(raw) => {
                 apply_native_window_rounding(raw);
@@ -640,10 +713,43 @@ impl OxizipApp {
                 .window_id
                 .map(|id| window::minimize(id, true))
                 .unwrap_or_else(Task::none),
-            Message::Close => self
-                .window_id
-                .map(window::close)
-                .unwrap_or_else(Task::none),
+            Message::Close => {
+                if self.screen == Screen::Job {
+                    if let Some(busy) = &self.busy {
+                        busy.cancel.cancel();
+                    }
+                }
+                self.window_id
+                    .map(window::close)
+                    .unwrap_or_else(Task::none)
+            }
+            Message::JobCloseWhenDone(on) => {
+                self.job_close_when_done = on;
+                Task::none()
+            }
+            Message::JobOpenFolder(on) => {
+                self.job_open_folder = on;
+                Task::none()
+            }
+            Message::JobConflictOverwrite => {
+                self.continue_extract_after_conflict(ConflictPolicy::Overwrite)
+            }
+            Message::JobConflictRename => {
+                self.continue_extract_after_conflict(ConflictPolicy::AutoRename)
+            }
+            Message::JobConflictCancel => {
+                self.job_conflicts.clear();
+                self.pending_shell_extract = None;
+                self.pending_main_extract = None;
+                self.busy = None;
+                self.job_finished = true;
+                self.status = t(self.lang, "gui.status.canceled").to_string();
+                if self.screen == Screen::Job {
+                    self.close_job_window()
+                } else {
+                    Task::none()
+                }
+            }
             Message::OpenClicked => {
                 if self.is_busy() {
                     return Task::none();
@@ -920,15 +1026,28 @@ impl OxizipApp {
                 if let Some(busy) = &self.busy {
                     let snap = busy.progress.snapshot();
                     self.progress_fraction = snap.fraction;
+                    self.progress_file_fraction = snap.file_fraction;
                     self.progress_detail = snap.detail;
                 }
                 Task::none()
             }
             Message::JobFinished(outcome) => {
                 self.busy = None;
-                self.progress_fraction = 0.0;
-                self.progress_detail.clear();
-                self.apply_outcome(outcome)
+                if matches!(outcome, JobOutcome::NeedsConflictChoice { .. }) {
+                    // Keep progress detail; conflict UI needs pending extract state.
+                    if self.screen == Screen::Job {
+                        return self.apply_shell_job_outcome(outcome);
+                    }
+                    return self.apply_outcome(outcome);
+                }
+                if self.screen == Screen::Job {
+                    self.apply_shell_job_outcome(outcome)
+                } else {
+                    self.progress_fraction = 0.0;
+                    self.progress_file_fraction = 0.0;
+                    self.progress_detail.clear();
+                    self.apply_outcome(outcome)
+                }
             }
             Message::HideLicenses => {
                 self.screen = Screen::Main;
@@ -975,6 +1094,8 @@ impl OxizipApp {
         let Some(archive) = self.archive.clone() else {
             return Task::none();
         };
+        self.pending_main_extract = Some((archive.clone(), dir.clone()));
+        self.job_conflicts.clear();
         let (cancel, progress) = self.begin_busy(JobKind::Extract);
         let password = self.password_opt();
         let lang = self.lang;
@@ -983,7 +1104,7 @@ impl OxizipApp {
             cancel,
             progress,
             move |cancel, progress| {
-                worker::extract_archive(archive, dir, password, cancel, progress, lang)
+                worker::extract_archive(archive, dir, password, None, cancel, progress, lang)
             },
         )
     }
@@ -1078,6 +1199,181 @@ impl OxizipApp {
         )
     }
 
+    fn start_shell_create(&mut self, spec: job::CreateJob) -> Task<Message> {
+        self.screen = Screen::Job;
+        self.job_verb = job::JobVerb::Create;
+        self.job_out = Some(spec.out.clone());
+        self.job_started = Some(std::time::Instant::now());
+        self.job_finished = false;
+        // Keep the dialog open after create so the user can confirm the result.
+        self.job_close_when_done = false;
+        self.job_open_folder = false;
+        self.create_format = spec.format;
+        let out = spec.out;
+        let inputs = spec.inputs;
+        let format = spec.format;
+        let opts = self.create_options();
+        let lang = self.lang;
+        let (cancel, progress) = self.begin_busy(JobKind::Create);
+        spawn_job(
+            JobKind::Create,
+            cancel,
+            progress,
+            move |cancel, progress| {
+                worker::create_archive(out, format, inputs, opts, cancel, progress, lang)
+            },
+        )
+    }
+
+    fn start_shell_extract(&mut self, spec: job::ExtractJob) -> Task<Message> {
+        self.screen = Screen::Job;
+        self.job_verb = job::JobVerb::Extract;
+        self.job_out = spec.archives.first().cloned();
+        self.job_started = Some(std::time::Instant::now());
+        self.job_finished = false;
+        // Keep the dialog open after extract so the user can confirm the result.
+        self.job_close_when_done = false;
+        self.job_open_folder = false;
+        self.job_conflicts.clear();
+        self.pending_shell_extract = Some(spec.clone());
+        self.run_shell_extract(spec, None)
+    }
+
+    fn run_shell_extract(
+        &mut self,
+        spec: job::ExtractJob,
+        conflict: Option<ConflictPolicy>,
+    ) -> Task<Message> {
+        let archives = spec.archives;
+        let mode = spec.mode;
+        let password = self.password_opt();
+        let lang = self.lang;
+        let (cancel, progress) = self.begin_busy(JobKind::Extract);
+        spawn_job(
+            JobKind::Extract,
+            cancel,
+            progress,
+            move |cancel, progress| {
+                worker::extract_shell_job(
+                    archives, mode, password, conflict, cancel, progress, lang,
+                )
+            },
+        )
+    }
+
+    fn continue_extract_after_conflict(&mut self, policy: ConflictPolicy) -> Task<Message> {
+        self.job_conflicts.clear();
+        if let Some(spec) = self.pending_shell_extract.clone() {
+            return self.run_shell_extract(spec, Some(policy));
+        }
+        if let Some((archive, dest)) = self.pending_main_extract.clone() {
+            let password = self.password_opt();
+            let lang = self.lang;
+            let (cancel, progress) = self.begin_busy(JobKind::Extract);
+            return spawn_job(
+                JobKind::Extract,
+                cancel,
+                progress,
+                move |cancel, progress| {
+                    worker::extract_archive(
+                        archive,
+                        dest,
+                        password,
+                        Some(policy),
+                        cancel,
+                        progress,
+                        lang,
+                    )
+                },
+            );
+        }
+        Task::none()
+    }
+
+    fn close_job_window(&mut self) -> Task<Message> {
+        if let Some(id) = self.window_id {
+            return window::close(id);
+        }
+        self.job_pending_close = true;
+        window::get_oldest().then(|id| match id {
+            Some(id) => window::close(id),
+            None => Task::none(),
+        })
+    }
+
+    fn apply_shell_job_outcome(&mut self, outcome: JobOutcome) -> Task<Message> {
+        match outcome {
+            JobOutcome::NeedsConflictChoice { conflicts } => {
+                self.job_finished = false;
+                self.progress_fraction = 0.0;
+                self.progress_file_fraction = 0.0;
+                self.job_conflicts = conflicts;
+                self.status = t(self.lang, "gui.job.conflict_title").to_string();
+                Task::none()
+            }
+            JobOutcome::Canceled => {
+                self.job_finished = true;
+                self.progress_fraction = 1.0;
+                self.progress_file_fraction = 1.0;
+                self.pending_shell_extract = None;
+                self.status = t(self.lang, "gui.status.canceled").to_string();
+                self.last_error = None;
+                self.close_job_window()
+            }
+            JobOutcome::Created { path, error, .. } => {
+                self.job_finished = true;
+                self.progress_fraction = 1.0;
+                self.progress_file_fraction = 1.0;
+                if let Some(err) = error {
+                    self.last_error = Some(err);
+                    self.status = t(self.lang, "gui.job.failed").to_string();
+                    self.progress_detail.clear();
+                    return Task::none();
+                }
+                self.last_error = None;
+                self.status = t(self.lang, "gui.status.created").to_string();
+                self.job_out = Some(path.clone());
+                if self.job_open_folder {
+                    let _ = shell_ops::reveal_in_file_manager(&path);
+                }
+                if self.job_close_when_done {
+                    self.close_job_window()
+                } else {
+                    Task::none()
+                }
+            }
+            JobOutcome::Extracted { dest, error } => {
+                self.job_finished = true;
+                self.progress_fraction = 1.0;
+                self.progress_file_fraction = 1.0;
+                self.pending_shell_extract = None;
+                self.job_conflicts.clear();
+                if let Some(err) = error {
+                    self.last_error = Some(err);
+                    self.status = t(self.lang, "gui.job.extract_failed").to_string();
+                    self.progress_detail.clear();
+                    return Task::none();
+                }
+                self.last_error = None;
+                self.status = t(self.lang, "gui.status.extracted").to_string();
+                self.job_out = Some(dest.clone());
+                if self.job_open_folder {
+                    let _ = shell_ops::open_folder(&dest);
+                }
+                if self.job_close_when_done {
+                    self.close_job_window()
+                } else {
+                    Task::none()
+                }
+            }
+            other => {
+                self.job_finished = true;
+                self.last_error = Some(format!("{other:?}"));
+                Task::none()
+            }
+        }
+    }
+
     fn start_create(&mut self, out: PathBuf) -> Task<Message> {
         if self.is_busy() {
             return Task::none();
@@ -1157,7 +1453,14 @@ impl OxizipApp {
                 }
                 Task::none()
             }
+            JobOutcome::NeedsConflictChoice { conflicts } => {
+                self.job_conflicts = conflicts;
+                self.status = t(self.lang, "gui.job.conflict_title").to_string();
+                Task::none()
+            }
             JobOutcome::Extracted { dest, error } => {
+                self.pending_main_extract = None;
+                self.job_conflicts.clear();
                 if let Some(err) = error {
                     self.last_error = Some(err);
                 } else {
@@ -2009,11 +2312,20 @@ impl OxizipApp {
             Screen::Setup => self.view_setup(),
             Screen::Licenses => self.view_licenses(),
             Screen::Settings => self.shell_page(self.view_settings()),
+            Screen::Job => self.view_job(),
+        };
+        let with_conflict = if self.screen != Screen::Job && !self.job_conflicts.is_empty() {
+            stack![page, self.view_conflict_modal()]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            page
         };
         let inner = if self.overlay == Overlay::None {
-            page
+            with_conflict
         } else {
-            stack![page, self.view_overlay()]
+            stack![with_conflict, self.view_overlay()]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
@@ -2225,6 +2537,198 @@ impl OxizipApp {
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+    }
+
+    fn view_job(&self) -> Element<'_, Message> {
+        if !self.job_conflicts.is_empty() {
+            return self.view_job_conflict();
+        }
+
+        let pct = (self.progress_fraction * 100.0).round() as i32;
+        let file_pct = (self.progress_file_fraction * 100.0).round() as i32;
+        let (elapsed, total) = match self.job_started {
+            Some(started) => job::eta_pair(started, self.progress_fraction),
+            None => ("00:00:00".into(), "--:--:--".into()),
+        };
+        let (file_elapsed, file_total) = match self.job_started {
+            Some(started) => job::eta_pair(started, self.progress_file_fraction),
+            None => ("00:00:00".into(), "--:--:--".into()),
+        };
+        let current = if self.progress_detail.is_empty() {
+            self.job_out
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default()
+        } else {
+            // Show basename for long paths (Bandizip-style).
+            Path::new(&self.progress_detail)
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| self.progress_detail.clone())
+        };
+
+        let overall = column![
+            row![
+                text(format!("{pct}%")).size(12),
+                Space::with_width(Length::Fill),
+                text(format!("{elapsed} / {total}")).size(11),
+            ]
+            .align_y(Alignment::Center),
+            progress_bar(0.0..=1.0, self.progress_fraction).height(14),
+        ]
+        .spacing(4);
+
+        let file_bar = column![
+            row![
+                text(format!("{file_pct}%")).size(12),
+                Space::with_width(Length::Fill),
+                text(format!("{file_elapsed} / {file_total}")).size(11),
+            ]
+            .align_y(Alignment::Center),
+            progress_bar(0.0..=1.0, self.progress_file_fraction).height(14),
+        ]
+        .spacing(4);
+
+        let err: Element<'_, Message> = if let Some(err) = &self.last_error {
+            text(err.clone()).size(11).into()
+        } else {
+            Space::with_height(0).into()
+        };
+
+        let stop_label = if self.job_finished {
+            t(self.lang, "gui.job.close")
+        } else {
+            t(self.lang, "gui.job.stop")
+        };
+        let stop_msg = if self.is_busy() {
+            Message::CancelClicked
+        } else {
+            Message::Close
+        };
+
+        let actions = row![
+            checkbox(
+                t(self.lang, "gui.job.close_when_done"),
+                self.job_close_when_done
+            )
+            .on_toggle(Message::JobCloseWhenDone)
+            .text_size(11),
+            Space::with_width(8),
+            checkbox(t(self.lang, "gui.job.open_folder"), self.job_open_folder)
+                .on_toggle(Message::JobOpenFolder)
+                .text_size(11),
+            Space::with_width(Length::Fill),
+            button(text(stop_label).size(12))
+                .padding([8, 16])
+                .style(rounded_secondary)
+                .on_press(stop_msg),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(4);
+
+        container(
+            column![
+                overall,
+                Space::with_height(8),
+                file_bar,
+                Space::with_height(6),
+                text(current).size(12),
+                err,
+                Space::with_height(Length::Fill),
+                actions,
+            ]
+            .spacing(2)
+            .padding(12)
+            .width(Length::Fill)
+            .height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn conflict_prompt_column(&self) -> Column<'_, Message> {
+        let sample = self
+            .job_conflicts
+            .iter()
+            .take(3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = if self.job_conflicts.len() > 3 {
+            format!(" …(+{})", self.job_conflicts.len().saturating_sub(3))
+        } else {
+            String::new()
+        };
+        let body = format!(
+            "{}{}{}",
+            t(self.lang, "gui.job.conflict_body"),
+            sample,
+            more
+        );
+        column![
+            text(t(self.lang, "gui.job.conflict_title")).size(14),
+            Space::with_height(6),
+            text(body).size(12),
+            Space::with_height(12),
+            row![
+                button(text(t(self.lang, "gui.job.conflict_overwrite")).size(12))
+                    .padding([8, 12])
+                    .style(rounded_primary)
+                    .on_press(Message::JobConflictOverwrite),
+                button(text(t(self.lang, "gui.job.conflict_rename")).size(12))
+                    .padding([8, 12])
+                    .style(rounded_secondary)
+                    .on_press(Message::JobConflictRename),
+                Space::with_width(Length::Fill),
+                button(text(t(self.lang, "gui.job.conflict_cancel")).size(12))
+                    .padding([8, 12])
+                    .style(rounded_secondary)
+                    .on_press(Message::JobConflictCancel),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(4)
+    }
+
+    fn view_job_conflict(&self) -> Element<'_, Message> {
+        container(
+            self.conflict_prompt_column()
+                .padding(12)
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn view_conflict_modal(&self) -> Element<'_, Message> {
+        container(
+            container(self.conflict_prompt_column().padding(16).width(420))
+                .style(|theme: &Theme| {
+                    let palette = theme.extended_palette();
+                    iced::widget::container::Style {
+                        background: Some(Background::Color(palette.background.weak.color)),
+                        border: Border {
+                            color: palette.background.strong.color,
+                            width: 1.0,
+                            radius: CONTROL_RADIUS.into(),
+                        },
+                        ..Default::default()
+                    }
+                }),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .style(|_theme| iced::widget::container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.35))),
+            ..Default::default()
+        })
+        .into()
     }
 
     fn view_main(&self) -> Element<'_, Message> {

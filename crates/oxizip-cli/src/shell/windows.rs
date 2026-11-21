@@ -1,10 +1,12 @@
-//! HKCU Explorer context-menu verbs + file-type icons + open associations (no COM DLL).
+//! HKCU Explorer context-menu verbs + file-type icons + open associations.
 //!
 //! Association model aligned with Bandizip.exe (clean-room, from strings + registry):
 //! - `Software\Classes\<ProgID>` + `.{ext}` default + DefaultIcon + OpenWithProgids
 //! - `RegisteredApplications` + `Capabilities` / `FileAssociations`
 //! - classic `FileExts\%s\UserChoice` (`ProgId` + `Hash`) only — **no** `UserChoiceLatest`
 //! - `SHChangeNotify(SHCNE_ASSOCCHANGED)`
+//! - Cascade static verbs (`ExtendedSubCommandsKey`) + optional `oxizip-shellext.dll`
+//!   (classic `IContextMenu3` + Win11 Sparse `IExplorerCommand`)
 //!
 //! Elevated installs also mirror ProgID / `.{ext}` under HKLM (Bandizip setup path).
 
@@ -372,6 +374,11 @@ fn delete_open_association(classes: &RegKey, ext: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Classic Explorer (Win10 / 「显示更多选项」): **flat** verbs only — no cascade.
+/// Win11 modern cascade lives solely in Sparse `IExplorerCommand` (`oxizip-shellext`).
+const CASCADE_PARENT: &str = VERB_PREFIX;
+const CASCADE_MENU_SUFFIX: &str = "OxizipMenu";
+
 fn write_verb(
     classes: &RegKey,
     ext: &str,
@@ -380,57 +387,173 @@ fn write_verb(
     exe: &Path,
     args: &str,
     icon: &Path,
+    multi_select: &str,
 ) -> Result<(), String> {
-    let base = format!("{}\\shell\\{VERB_PREFIX}.{verb}", association_key(ext));
+    let key_path = format!("{}\\shell\\{VERB_PREFIX}.{verb}", association_key(ext));
     let key = classes
-        .create_subkey(&base)
-        .map_err(|e| format!("create {base}: {e}"))?
+        .create_subkey(&key_path)
+        .map_err(|e| format!("create {key_path}: {e}"))?
         .0;
     key.set_value("", &label)
-        .map_err(|e| format!("set label {base}: {e}"))?;
+        .map_err(|e| format!("set label {key_path}: {e}"))?;
+    let _ = key.set_value("MUIVerb", &label.to_string());
     let _ = key.set_value("Icon", &icon_registry_value(icon));
+    let _ = key.set_value("MultiSelectModel", &multi_select.to_string());
     let (cmd_key, _) = key
         .create_subkey("command")
-        .map_err(|e| format!("create command under {base}: {e}"))?;
+        .map_err(|e| format!("create command {key_path}: {e}"))?;
     let command = format!("{} {args}", quote_path(exe));
     cmd_key
         .set_value("", &command)
-        .map_err(|e| format!("set command {base}: {e}"))?;
+        .map_err(|e| format!("set command {key_path}: {e}"))?;
     Ok(())
 }
 
-fn delete_verb(classes: &RegKey, ext: &str, verb: &str) -> Result<(), String> {
-    let base = format!("{}\\shell\\{VERB_PREFIX}.{verb}", association_key(ext));
-    match classes.delete_subkey_all(&base) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(format!("delete {base}: {e}")),
-    }
-}
-
 fn write_compress_verb(
-    root: &RegKey,
+    classes: &RegKey,
+    root_name: &str,
     verb: &str,
     label: &str,
     exe: &Path,
     args: &str,
     icon: &Path,
 ) -> Result<(), String> {
-    let key_name = format!("{VERB_PREFIX}.{verb}");
-    let key = root
-        .create_subkey(&key_name)
-        .map_err(|e| format!("create compress verb: {e}"))?
+    let key_path = format!("{root_name}\\shell\\{VERB_PREFIX}.{verb}");
+    let key = classes
+        .create_subkey(&key_path)
+        .map_err(|e| format!("create {key_path}: {e}"))?
         .0;
     key.set_value("", &label)
-        .map_err(|e| format!("set compress label: {e}"))?;
+        .map_err(|e| format!("set label {key_path}: {e}"))?;
+    let _ = key.set_value("MUIVerb", &label.to_string());
     let _ = key.set_value("Icon", &icon_registry_value(icon));
+    let _ = key.set_value("MultiSelectModel", &"Player".to_string());
     let (cmd_key, _) = key
         .create_subkey("command")
-        .map_err(|e| format!("create compress command: {e}"))?;
+        .map_err(|e| format!("create command {key_path}: {e}"))?;
     let command = format!("{} {args}", quote_path(exe));
     cmd_key
         .set_value("", &command)
-        .map_err(|e| format!("set compress command: {e}"))?;
+        .map_err(|e| format!("set command {key_path}: {e}"))?;
+    Ok(())
+}
+
+fn write_archive_verbs(
+    classes: &RegKey,
+    ext: &str,
+    cli: &Path,
+    gui: &Path,
+    icon: &Path,
+    lang: Lang,
+) -> Result<(), String> {
+    // Extract → GUI progress dialog; test/checksum/repair stay on CLI.
+    write_verb(
+        classes,
+        ext,
+        "ExtractHere",
+        t(lang, "shell.extract_here"),
+        gui,
+        "--job extract --here \"%1\"",
+        icon,
+        "Document",
+    )?;
+    write_verb(
+        classes,
+        ext,
+        "ExtractSmart",
+        t(lang, "shell.extract_smart"),
+        gui,
+        "--job extract --smart \"%1\"",
+        icon,
+        "Document",
+    )?;
+    write_verb(
+        classes,
+        ext,
+        "ExtractToFolder",
+        t(lang, "shell.extract_to_folder"),
+        gui,
+        "--job extract --archive-name-dir \"%1\"",
+        icon,
+        "Document",
+    )?;
+    write_verb(
+        classes,
+        ext,
+        "Test",
+        t(lang, "shell.test"),
+        cli,
+        "test \"%1\"",
+        icon,
+        "Document",
+    )?;
+    write_verb(
+        classes,
+        ext,
+        "Checksum",
+        t(lang, "shell.checksum"),
+        cli,
+        "checksum \"%1\"",
+        icon,
+        "Single",
+    )?;
+    write_verb(
+        classes,
+        ext,
+        "Repair",
+        t(lang, "shell.repair"),
+        cli,
+        "repair \"%1\"",
+        icon,
+        "Single",
+    )?;
+    Ok(())
+}
+
+fn write_files_dirs_verbs(
+    classes: &RegKey,
+    root_name: &str,
+    // CLI for checksum; GUI for compress (progress dialog).
+    cli: &Path,
+    gui: &Path,
+    icons_dir: &Path,
+    lang: Lang,
+    with_checksum: bool,
+    path_ph: &str,
+) -> Result<(), String> {
+    let zip_icon = icon_path_for_ext(icons_dir, "zip");
+    let seven_icon = icon_path_for_ext(icons_dir, "7z");
+    let app_icon = icon_path_for_ext(icons_dir, "oxizip");
+    // Launch GUI compact job window (Bandizip-style progress), not bare CLI.
+    write_compress_verb(
+        classes,
+        root_name,
+        "CompressZip",
+        t(lang, "shell.compress_zip"),
+        gui,
+        &format!("--job create --beside -f zip \"{path_ph}\""),
+        &zip_icon,
+    )?;
+    write_compress_verb(
+        classes,
+        root_name,
+        "Compress7z",
+        t(lang, "shell.compress_7z"),
+        gui,
+        &format!("--job create --beside -f 7z \"{path_ph}\""),
+        &seven_icon,
+    )?;
+    if with_checksum {
+        write_compress_verb(
+            classes,
+            root_name,
+            "Checksum",
+            t(lang, "shell.checksum"),
+            cli,
+            &format!("checksum \"{path_ph}\""),
+            &app_icon,
+        )?;
+    }
     Ok(())
 }
 
@@ -442,70 +565,23 @@ fn write_all_verbs(
     lang: Lang,
     exts: &[&str],
 ) -> Result<(), String> {
-    let archive_verbs = [
-        ("ExtractHere", "shell.extract_here", "extract --here \"%1\""),
-        (
-            "ExtractSmart",
-            "shell.extract_smart",
-            "extract --smart \"%1\"",
-        ),
-        (
-            "ExtractToFolder",
-            "shell.extract_to_folder",
-            "extract --archive-name-dir \"%1\"",
-        ),
-        ("Test", "shell.test", "test \"%1\""),
-        ("Checksum", "shell.checksum", "checksum \"%1\""),
-        ("Repair", "shell.repair", "repair \"%1\""),
-    ];
     for ext in exts {
         let icon = icon_path_for_ext(icons_dir, ext);
         write_open_association(classes, ext, gui, &icon, lang, true)?;
-        for (verb, key, args) in archive_verbs {
-            write_verb(classes, ext, verb, t(lang, key), exe, args, &icon)?;
-        }
+        write_archive_verbs(classes, ext, exe, gui, &icon, lang)?;
     }
-
-    let zip_icon = icon_path_for_ext(icons_dir, "zip");
-    let seven_icon = icon_path_for_ext(icons_dir, "7z");
-    let app_icon = icon_path_for_ext(icons_dir, "oxizip");
-    let compress = [
-        (
-            "CompressZip",
-            "shell.compress_zip",
-            "create --beside -f zip \"%1\"",
-            &zip_icon,
-        ),
-        (
-            "Compress7z",
-            "shell.compress_7z",
-            "create --beside -f 7z \"%1\"",
-            &seven_icon,
-        ),
-    ];
-    for root_name in ["*\\shell", "Directory\\shell"] {
-        let root = classes
-            .create_subkey(root_name)
-            .map_err(|e| format!("create {root_name}: {e}"))?
-            .0;
-        for (verb, key, args, icon) in compress {
-            write_compress_verb(&root, verb, t(lang, key), exe, args, icon)?;
-        }
-    }
-    {
-        let root = classes
-            .create_subkey("*\\shell")
-            .map_err(|e| format!("create *\\shell: {e}"))?
-            .0;
-        write_compress_verb(
-            &root,
-            "Checksum",
-            t(lang, "shell.checksum"),
-            exe,
-            "checksum \"%1\"",
-            &app_icon,
-        )?;
-    }
+    write_files_dirs_verbs(classes, "*", exe, gui, icons_dir, lang, true, "%1")?;
+    write_files_dirs_verbs(classes, "Directory", exe, gui, icons_dir, lang, false, "%1")?;
+    write_files_dirs_verbs(
+        classes,
+        "Directory\\Background",
+        exe,
+        gui,
+        icons_dir,
+        lang,
+        false,
+        "%V",
+    )?;
     Ok(())
 }
 
@@ -518,33 +594,16 @@ fn delete_default_icon(classes: &RegKey, ext: &str) -> Result<(), String> {
     }
 }
 
-fn delete_all_verbs(classes: &RegKey) -> Result<(), String> {
-    for ext in assoc_cleanup_extensions() {
-        for verb in [
-            "ExtractHere",
-            "ExtractSmart",
-            "ExtractToFolder",
-            "Test",
-            "Checksum",
-            "Repair",
-        ] {
-            delete_verb(classes, ext, verb)?;
-        }
-        delete_default_icon(classes, ext)?;
-        delete_open_association(classes, ext)?;
+fn delete_key_tree(classes: &RegKey, path: &str) {
+    match classes.delete_subkey_all(path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => {}
     }
-    for root_name in ["*\\shell", "Directory\\shell"] {
-        if let Ok(root) = classes.open_subkey_with_flags(root_name, KEY_READ | KEY_WRITE) {
-            for verb in ["CompressZip", "Compress7z", "Checksum"] {
-                let key_name = format!("{VERB_PREFIX}.{verb}");
-                let _ = root.delete_subkey_all(key_name);
-            }
-        }
-    }
-    Ok(())
 }
 
-fn cleanup_exe_association(classes: &RegKey) {
+fn delete_legacy_flat_verbs(classes: &RegKey, ext: &str) {
+    // Pre-cascade layout: Oxizip.ExtractHere etc. under SFA\shell.
     for verb in [
         "ExtractHere",
         "ExtractSmart",
@@ -553,10 +612,175 @@ fn cleanup_exe_association(classes: &RegKey) {
         "Checksum",
         "Repair",
     ] {
-        let _ = delete_verb(classes, "exe", verb);
+        delete_key_tree(
+            classes,
+            &format!("{}\\shell\\{VERB_PREFIX}.{verb}", association_key(ext)),
+        );
     }
+}
+
+fn delete_all_verbs(classes: &RegKey) -> Result<(), String> {
+    for ext in assoc_cleanup_extensions() {
+        let sfa = association_key(ext);
+        delete_key_tree(classes, &format!("{sfa}\\shell\\{CASCADE_PARENT}"));
+        delete_key_tree(classes, &format!("{sfa}\\{CASCADE_MENU_SUFFIX}"));
+        delete_legacy_flat_verbs(classes, ext);
+        delete_default_icon(classes, ext)?;
+        delete_open_association(classes, ext)?;
+    }
+    for root in ["*", "Directory", "Directory\\Background"] {
+        delete_key_tree(classes, &format!("{root}\\shell\\{CASCADE_PARENT}"));
+        delete_key_tree(classes, &format!("{root}\\{CASCADE_MENU_SUFFIX}"));
+        // Legacy flat compress verbs.
+        if let Ok(shell) =
+            classes.open_subkey_with_flags(format!("{root}\\shell"), KEY_READ | KEY_WRITE)
+        {
+            for verb in ["CompressZip", "Compress7z", "Checksum"] {
+                let _ = shell.delete_subkey_all(format!("{VERB_PREFIX}.{verb}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cleanup_exe_association(classes: &RegKey) {
+    let sfa = association_key("exe");
+    delete_key_tree(classes, &format!("{sfa}\\shell\\{CASCADE_PARENT}"));
+    delete_key_tree(classes, &format!("{sfa}\\{CASCADE_MENU_SUFFIX}"));
+    delete_legacy_flat_verbs(classes, "exe");
     let _ = delete_default_icon(classes, "exe");
     let _ = delete_open_association(classes, "exe");
+}
+
+fn shellext_dll(cli: &Path) -> Option<std::path::PathBuf> {
+    let dir = cli.parent()?;
+    let dll = dir.join("oxizip-shellext.dll");
+    dll.is_file().then_some(dll)
+}
+
+fn run_regsvr32(dll: &Path, unregister: bool) {
+    let mut cmd = std::process::Command::new("regsvr32.exe");
+    cmd.arg("/s");
+    if unregister {
+        cmd.arg("/u");
+    }
+    cmd.arg(dll);
+    let _ = cmd.status();
+}
+
+/// Ensure classic `ContextMenuHandlers` from older builds are gone (cascade only via Sparse).
+fn scrub_classic_context_menu_handlers() {
+    let keys = [
+        r"Software\Classes\*\shellex\ContextMenuHandlers\OxizipCtx",
+        r"Software\Classes\Directory\shellex\ContextMenuHandlers\OxizipCtx",
+        r"Software\Classes\Directory\Background\shellex\ContextMenuHandlers\OxizipCtx",
+    ];
+    let hkcu = winreg::RegKey::predef(HKEY_CURRENT_USER);
+    for key in keys {
+        let _ = hkcu.delete_subkey_all(key);
+    }
+    // HKLM / regsvr32 only when elevated — otherwise deletes can stall.
+    if is_process_elevated() {
+        let hklm = winreg::RegKey::predef(HKEY_LOCAL_MACHINE);
+        for key in keys {
+            let _ = hklm.delete_subkey_all(key);
+        }
+        if let Ok(exe) = current_oxizip() {
+            if let Some(dll) = shellext_dll(&exe) {
+                run_regsvr32(&dll, true);
+            }
+        }
+    }
+}
+
+/// Win11 Sparse Package only (modern cascade). Do **not** register classic IContextMenu.
+fn register_shellext_stack(cli: &Path) -> String {
+    scrub_classic_context_menu_handlers();
+    let Some(_dll) = shellext_dll(cli) else {
+        return "shellext=absent".into();
+    };
+    if !is_process_elevated() {
+        return "shellext=dll (sparse needs elevation — re-run shell install as admin, or reinstall)".into();
+    }
+    let install_dir = match cli.parent() {
+        Some(d) => d,
+        None => return "shellext=dll".into(),
+    };
+    let script = install_dir.join("scripts").join("register-sparse.ps1");
+    // Prefer packaged script next to install; fall back to repo-relative when developing.
+    let script_fallback = cli
+        .parent()
+        .and_then(|d| d.parent())
+        .map(|d| d.join("scripts").join("register-sparse.ps1"));
+    let script_path = if script.is_file() {
+        Some(script)
+    } else {
+        script_fallback.filter(|p| p.is_file())
+    };
+    let status = if let Some(script) = script_path {
+        std::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                &script.display().to_string(),
+                "-InstallDir",
+                &install_dir.display().to_string(),
+            ])
+            .status()
+    } else {
+        let manifest = install_dir.join("sparse").join("AppxManifest.xml");
+        if !manifest.is_file() {
+            return "shellext=dll (sparse manifest missing)".into();
+        }
+        let cmd = format!(
+            "$ErrorActionPreference='Stop'; \
+             $p=Get-AppxPackage -Name 'cn.wujunyi.oxizip.shellext' -EA SilentlyContinue; \
+             if($p){{Remove-AppxPackage -Package $p.PackageFullName -EA SilentlyContinue}}; \
+             Add-AppxPackage -Path '{}' -Register -ExternalLocation '{}'",
+            manifest.display(),
+            install_dir.display()
+        );
+        std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &cmd])
+            .status()
+    };
+    match status {
+        Ok(s) if s.success() => "shellext=sparse".into(),
+        Ok(s) => format!("shellext=dll (sparse exit {s})"),
+        Err(e) => format!("shellext=dll (sparse err {e})"),
+    }
+}
+
+fn unregister_shellext_stack(cli: &Path) {
+    scrub_classic_context_menu_handlers();
+    if let Some(dir) = cli.parent() {
+        let script = dir.join("scripts").join("unregister-sparse.ps1");
+        if script.is_file() {
+            let _ = std::process::Command::new("powershell.exe")
+                .args([
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    &script.display().to_string(),
+                    "-InstallDir",
+                    &dir.display().to_string(),
+                ])
+                .status();
+            return;
+        }
+    }
+    let _ = std::process::Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "$p=Get-AppxPackage -Name 'cn.wujunyi.oxizip.shellext' -EA SilentlyContinue; if($p){Remove-AppxPackage -Package $p.PackageFullName}",
+        ])
+        .status();
 }
 
 pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> {
@@ -580,18 +804,23 @@ pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> 
         }
     }
 
+    let shellext = register_shellext_stack(&exe);
     notify_assoc_changed();
     Ok(format!(
-        "{} (exts={} ; cli={} ; gui={} ; icons={})",
+        "{} (exts={} ; cli={} ; gui={} ; icons={} ; {})",
         t(lang, "shell.install_ok"),
         exts.join(","),
         exe.display(),
         gui.display(),
-        icons_dir.display()
+        icons_dir.display(),
+        shellext
     ))
 }
 
 pub fn uninstall(lang: Lang) -> Result<String, String> {
+    if let Ok(exe) = current_oxizip() {
+        unregister_shellext_stack(&exe);
+    }
     let classes = classes_root()?;
     cleanup_exe_association(&classes);
     delete_all_verbs(&classes)?;
@@ -602,11 +831,12 @@ pub fn uninstall(lang: Lang) -> Result<String, String> {
 
 pub fn status(lang: Lang) -> Result<String, String> {
     let classes = classes_root()?;
-    let probe = format!(
+    let flat = format!(
         "{}\\shell\\{VERB_PREFIX}.ExtractHere\\command",
         association_key("zip")
     );
-    if classes.open_subkey(probe).is_ok() {
+    let cascade = format!("{}\\shell\\{CASCADE_PARENT}", association_key("zip"));
+    if classes.open_subkey(&flat).is_ok() || classes.open_subkey(cascade).is_ok() {
         Ok(t(lang, "shell.status_installed").to_string())
     } else {
         Ok(t(lang, "shell.status_missing").to_string())

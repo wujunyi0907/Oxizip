@@ -6,14 +6,28 @@
 
 ## [Unreleased]
 
+### Added
+
+- 自研 `oxizip-shellext` + Win11 Sparse Package（`IExplorerCommand` 级联，仅拉起 `oxizip-cli`）
+- Sparse 注册/卸载脚本；安装包捆绑 DLL、已签名 Sparse MSIX 与发布者证书
+- GUI 紧凑作业进度窗（`--job create|extract`，对齐 Bandizip：双进度条 / 用时 / 停止 / 完成后关闭）
+- 右键压缩与解压（此处 / 智能 / 归档名目录）改为拉起 GUI 进度窗（经典动词与 Sparse）
+- 解压遇同名文件时提示「覆盖」或「自动改名」（`name (1).ext`）
+- Win11 Sparse 注册：信任自签 `CN=Oxizip`、AllowAllTrustedApps；安装器强制尝试注册现代右键菜单
+
 ### Changed
 
 - Package CI：`checkout@v7`、`upload-artifact@v7`、`download-artifact@v8`（Node 24）
+- 经典右键（「显示更多选项」）改回**扁平**解压/压缩项；级联仅出现在 Win11 现代菜单
+- 不再注册经典 `ContextMenuHandlers`，避免双份「Oxizip」
 
 ### Fixed
 
+- CLI：`create --beside` 误把输入路径当成 ARCHIVE，导致右键「压缩为 ZIP/7z」闪退且无产物
 - 卸载残留：对齐 Bandizip（`launch_in_temp` + `CloseApp explorer` + `DeleteFolderRec`/`SHFileOperation`），点「完成」后彻底删除安装目录
 - 关联页说明去掉「ProgID / UserChoice / 可稍后」技术旁注
+- Win11 现代右键：打包时预签名 Sparse MSIX（`oxizip-shellext.msix` + `Oxizip.cer`），安装时信任发布者再 `Add-AppxPackage`；失败回退开发者解锁 + 松散 `-Register`，并写入 `sparse-register.log`
+- Win11 Sparse 注册：去掉安装过程中的 `regsvr32`（易被 AV 卡住导致安装器一直「处理中」）；`Add-AppxPackage` 与安装器侧均加超时，超时后仍完成安装
 
 ## [0.1.5] - 2026-11-20
 
