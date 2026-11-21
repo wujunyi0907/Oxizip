@@ -20,6 +20,7 @@
 - Package CI：`checkout@v7`、`upload-artifact@v7`、`download-artifact@v8`（Node 24）
 - 经典右键（「显示更多选项」）改回**扁平**解压/压缩项；级联仅出现在 Win11 现代菜单
 - 不再注册经典 `ContextMenuHandlers`，避免双份「Oxizip」
+- 安装时先 `shell install --menus-only` 注册右键；关联页仅管默认打开，文案不再提右键；已关联则跳过关联页进主界面
 
 ### Fixed
 

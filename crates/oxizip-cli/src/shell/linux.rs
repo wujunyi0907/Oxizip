@@ -13,7 +13,9 @@ use std::process::Command;
 
 use oxizip_i18n::{t, Lang};
 
-use super::{current_oxizip, current_oxizip_gui, resolve_install_exts};
+use super::{
+    archive_extensions, current_oxizip, current_oxizip_gui, resolve_install_exts,
+};
 
 /// Desktop file id used with `xdg-mime default` (must match the file name).
 const OPEN_DESKTOP_ID: &str = "cn.wujunyi.oxizip.desktop";
@@ -421,8 +423,13 @@ fn clear_oxizip_defaults(home: &Path) {
     }
 }
 
-pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> {
-    let exts = resolve_install_exts(requested_exts)?;
+pub fn install(lang: Lang, requested_exts: &[String], menus_only: bool) -> Result<String, String> {
+    let exts: Vec<&str> = if menus_only {
+        // Menus cover all archive types; default-open is left to the association UI.
+        archive_extensions().to_vec()
+    } else {
+        resolve_install_exts(requested_exts)?
+    };
     let mimes = collect_mimes(&exts);
     if mimes.is_empty() {
         return Err("no MIME types for selected extensions".into());
@@ -433,10 +440,12 @@ pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> 
     let home = home_dir()?;
     let apps = applications_dir(&home);
 
-    // Clean previous default claims before rewriting the desktop + mimeapps entries.
-    clear_oxizip_defaults(&home);
+    if !menus_only {
+        // Clean previous default claims before rewriting the desktop + mimeapps entries.
+        clear_oxizip_defaults(&home);
+        write_file(&apps.join(OPEN_DESKTOP_ID), &open_desktop(&gui, &mimes))?;
+    }
 
-    write_file(&apps.join(OPEN_DESKTOP_ID), &open_desktop(&gui, &mimes))?;
     write_file(
         &apps.join("oxizip-extract.desktop"),
         &extract_desktop(&cli, &gui, &mimes),
@@ -446,13 +455,15 @@ pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> 
         &compress_desktop(&gui),
     )?;
 
-    let mime_pkg = mime_packages_dir(&home).join(MIME_PACKAGE_NAME);
-    if let Some(xml) = build_mime_package(&exts) {
-        write_file(&mime_pkg, &xml)?;
-        refresh_mime_db(&home);
-    } else {
-        let _ = fs::remove_file(&mime_pkg);
-        refresh_mime_db(&home);
+    if !menus_only {
+        let mime_pkg = mime_packages_dir(&home).join(MIME_PACKAGE_NAME);
+        if let Some(xml) = build_mime_package(&exts) {
+            write_file(&mime_pkg, &xml)?;
+            refresh_mime_db(&home);
+        } else {
+            let _ = fs::remove_file(&mime_pkg);
+            refresh_mime_db(&home);
+        }
     }
 
     let scripts = nautilus_scripts_dir(&home);
@@ -475,13 +486,16 @@ pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> 
     )?;
 
     refresh_desktop_db(&apps);
-    for mime in &mimes {
-        xdg_mime_default(OPEN_DESKTOP_ID, mime);
+    if !menus_only {
+        for mime in &mimes {
+            xdg_mime_default(OPEN_DESKTOP_ID, mime);
+        }
     }
 
     Ok(format!(
-        "{} (exts={} ; gui={} ; cli={})",
+        "{} ({}exts={} ; gui={} ; cli={})",
         t(lang, "shell.install_ok"),
+        if menus_only { "menus-only; " } else { "" },
         exts.join(","),
         gui.display(),
         cli.display()

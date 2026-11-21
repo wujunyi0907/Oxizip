@@ -27,7 +27,92 @@ pub fn setup_done_marker() -> Option<PathBuf> {
     Some(config_dir()?.join("setup_done"))
 }
 
+/// Whether Oxizip is already the default opener for common archive types.
+/// Used to skip the first-run association page (context menus are installed earlier).
+pub fn associations_already_present() -> bool {
+    #[cfg(windows)]
+    {
+        windows_zip_associated()
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        linux_zip_associated()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        false
+    }
+}
+
+#[cfg(windows)]
+fn windows_zip_associated() -> bool {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    const PROGID: &str = "cn.wujunyi.oxizip.zip";
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let parent = r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.zip";
+    if let Ok(k) = hkcu.open_subkey(format!("{parent}\\UserChoice")) {
+        if let Ok(p) = k.get_value::<String, _>("ProgId") {
+            if p.trim().eq_ignore_ascii_case(PROGID) {
+                return true;
+            }
+        }
+    }
+    // Fallback: HKCU Classes default for .zip (elevated installs may only set this).
+    if let Ok(k) = hkcu.open_subkey(r"Software\Classes\.zip") {
+        if let Ok(p) = k.get_value::<String, _>("") {
+            if p.trim().eq_ignore_ascii_case(PROGID) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn linux_zip_associated() -> bool {
+    let home = match std::env::var_os("HOME") {
+        Some(h) => PathBuf::from(h),
+        None => return false,
+    };
+    let mimeapps = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"))
+        .join("mimeapps.list");
+    let Ok(text) = fs::read_to_string(&mimeapps) else {
+        return false;
+    };
+    // Look for application/zip=cn.wujunyi.oxizip.desktop in Default Applications.
+    let mut in_defaults = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_defaults = t.eq_ignore_ascii_case("[Default Applications]");
+            continue;
+        }
+        if !in_defaults || t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        if let Some((mime, desktop)) = t.split_once('=') {
+            if mime.trim() == "application/zip"
+                && desktop
+                    .split(';')
+                    .any(|d| d.trim() == "cn.wujunyi.oxizip.desktop")
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Show the association page unless formats are already associated.
+/// `--setup` from the installer still skips when associations exist.
 pub fn needs_first_run_setup(force: bool) -> bool {
+    if associations_already_present() {
+        mark_setup_done();
+        return false;
+    }
     if force {
         return true;
     }

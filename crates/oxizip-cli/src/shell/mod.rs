@@ -41,7 +41,7 @@ pub fn current_oxizip_gui() -> Result<PathBuf, String> {
 
 pub fn run(action: ShellAction, lang: Lang) -> ExitCode {
     match action {
-        ShellAction::Install { exts } => install(lang, &exts),
+        ShellAction::Install { exts, menus_only } => install(lang, &exts, menus_only),
         ShellAction::Uninstall => uninstall(lang),
         ShellAction::Status => status(lang),
     }
@@ -49,13 +49,16 @@ pub fn run(action: ShellAction, lang: Lang) -> ExitCode {
 
 #[derive(Debug, Clone)]
 pub enum ShellAction {
-    Install { exts: Vec<String> },
+    Install {
+        exts: Vec<String>,
+        menus_only: bool,
+    },
     Uninstall,
     Status,
 }
 
-fn install(lang: Lang, exts: &[String]) -> ExitCode {
-    match platform_install(lang, exts) {
+fn install(lang: Lang, exts: &[String], menus_only: bool) -> ExitCode {
+    match platform_install(lang, exts, menus_only) {
         Ok(msg) => {
             println!("{msg}");
             ExitCode::SUCCESS
@@ -94,8 +97,8 @@ fn status(lang: Lang) -> ExitCode {
 }
 
 #[cfg(windows)]
-fn platform_install(lang: Lang, exts: &[String]) -> Result<String, String> {
-    windows::install(lang, exts)
+fn platform_install(lang: Lang, exts: &[String], menus_only: bool) -> Result<String, String> {
+    windows::install(lang, exts, menus_only)
 }
 #[cfg(windows)]
 fn platform_uninstall(lang: Lang) -> Result<String, String> {
@@ -107,8 +110,8 @@ fn platform_status(lang: Lang) -> Result<String, String> {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-fn platform_install(lang: Lang, exts: &[String]) -> Result<String, String> {
-    linux::install(lang, exts)
+fn platform_install(lang: Lang, exts: &[String], menus_only: bool) -> Result<String, String> {
+    linux::install(lang, exts, menus_only)
 }
 #[cfg(all(unix, not(target_os = "macos")))]
 fn platform_uninstall(lang: Lang) -> Result<String, String> {
@@ -120,7 +123,7 @@ fn platform_status(lang: Lang) -> Result<String, String> {
 }
 
 #[cfg(target_os = "macos")]
-fn platform_install(_lang: Lang, _exts: &[String]) -> Result<String, String> {
+fn platform_install(_lang: Lang, _exts: &[String], _menus_only: bool) -> Result<String, String> {
     Err(
         "macOS shell integration is not implemented yet; use CLI extract/create modes directly"
             .into(),

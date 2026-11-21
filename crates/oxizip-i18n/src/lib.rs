@@ -221,11 +221,9 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
         (Lang::En, "shell.app_desc") => "Oxizip is a clean-room archive manager.",
         (Lang::ZhCn, "gui.setup.title") => "将文件扩展名关联至 Oxizip",
         (Lang::En, "gui.setup.title") => "Associate file extensions with Oxizip",
-        (Lang::ZhCn, "gui.setup.intro") => {
-            "将 Oxizip 设为下列扩展名的打开程序，并安装资源管理器右键菜单。"
-        }
+        (Lang::ZhCn, "gui.setup.intro") => "将 Oxizip 设为下列扩展名的默认打开程序。",
         (Lang::En, "gui.setup.intro") => {
-            "Set Oxizip as the opener for the formats below and install Explorer context menus."
+            "Set Oxizip as the default opener for the formats below."
         }
         (Lang::ZhCn, "gui.setup.group.archive") => "压缩包文件",
         (Lang::En, "gui.setup.group.archive") => "Archive files",

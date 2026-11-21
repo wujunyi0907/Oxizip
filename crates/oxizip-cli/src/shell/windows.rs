@@ -19,7 +19,8 @@ use winreg::RegKey;
 use super::icons::{ensure_icons_dir, icon_path_for_ext, icon_registry_value};
 use super::user_choice;
 use super::{
-    assoc_cleanup_extensions, current_oxizip, current_oxizip_gui, resolve_install_exts,
+    archive_extensions, assoc_cleanup_extensions, current_oxizip, current_oxizip_gui,
+    resolve_install_exts,
 };
 
 const VERB_PREFIX: &str = "Oxizip";
@@ -783,14 +784,32 @@ fn unregister_shellext_stack(cli: &Path) {
         .status();
 }
 
-pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> {
-    let exts = resolve_install_exts(requested_exts)?;
+pub fn install(lang: Lang, requested_exts: &[String], menus_only: bool) -> Result<String, String> {
     let exe = current_oxizip()?;
     let gui = current_oxizip_gui().unwrap_or_else(|_| exe.clone());
     let icons_dir = ensure_icons_dir(&exe)?;
     let classes = classes_root()?;
     cleanup_exe_association(&classes);
     delete_all_verbs(&classes)?;
+
+    if menus_only {
+        // Context menus for every supported archive type + * / Directory compress.
+        // Default-open / UserChoice is left to the GUI association page.
+        let menu_exts = archive_extensions();
+        write_menus_only(&classes, &exe, &gui, &icons_dir, lang, menu_exts)?;
+        let shellext = register_shellext_stack(&exe);
+        notify_assoc_changed();
+        return Ok(format!(
+            "{} (menus-only; exts={} ; cli={} ; gui={} ; {})",
+            t(lang, "shell.install_ok"),
+            menu_exts.join(","),
+            exe.display(),
+            gui.display(),
+            shellext
+        ));
+    }
+
+    let exts = resolve_install_exts(requested_exts)?;
     register_capabilities(lang, &exts)?;
     write_all_verbs(&classes, &exe, &gui, &icons_dir, lang, &exts)?;
 
@@ -815,6 +834,36 @@ pub fn install(lang: Lang, requested_exts: &[String]) -> Result<String, String> 
         icons_dir.display(),
         shellext
     ))
+}
+
+/// Flat / Sparse-backed verbs without claiming default open (UserChoice).
+fn write_menus_only(
+    classes: &RegKey,
+    exe: &Path,
+    gui: &Path,
+    icons_dir: &Path,
+    lang: Lang,
+    exts: &[&str],
+) -> Result<(), String> {
+    for ext in exts {
+        let icon = icon_path_for_ext(icons_dir, ext);
+        // Icons under SFA help Explorer show the right glyph next to verbs.
+        let _ = write_format_icons(classes, ext, &icon);
+        write_archive_verbs(classes, ext, exe, gui, &icon, lang)?;
+    }
+    write_files_dirs_verbs(classes, "*", exe, gui, icons_dir, lang, true, "%1")?;
+    write_files_dirs_verbs(classes, "Directory", exe, gui, icons_dir, lang, false, "%1")?;
+    write_files_dirs_verbs(
+        classes,
+        "Directory\\Background",
+        exe,
+        gui,
+        icons_dir,
+        lang,
+        false,
+        "%V",
+    )?;
+    Ok(())
 }
 
 pub fn uninstall(lang: Lang) -> Result<String, String> {

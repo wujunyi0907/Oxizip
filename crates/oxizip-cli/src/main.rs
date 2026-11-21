@@ -188,6 +188,10 @@ enum ShellCmd {
         /// Optional comma-separated extensions (e.g. zip,7z,rar). Default: all supported.
         #[arg(long, value_delimiter = ',')]
         ext: Vec<String>,
+        /// Only register Explorer / file-manager context menus (no default-open associations).
+        /// Used by the installer before the GUI association page.
+        #[arg(long)]
+        menus_only: bool,
     },
     /// Remove Oxizip shell integration
     Uninstall,
@@ -241,7 +245,10 @@ fn main() -> ExitCode {
 
     if let Commands::Shell { action } = &cli.command {
         let action = match action {
-            ShellCmd::Install { ext } => shell::ShellAction::Install { exts: ext.clone() },
+            ShellCmd::Install { ext, menus_only } => shell::ShellAction::Install {
+                exts: ext.clone(),
+                menus_only: *menus_only,
+            },
             ShellCmd::Uninstall => shell::ShellAction::Uninstall,
             ShellCmd::Status => shell::ShellAction::Status,
         };

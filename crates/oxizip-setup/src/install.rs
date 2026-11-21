@@ -715,13 +715,35 @@ pub fn perform_install(opts: &InstallOptions, progress: &mut ProgressCb<'_>) -> 
     report(progress, 0.94, "shortcut");
     create_start_menu_shortcut(&opts.dir)?;
 
+    // Context menus first (before the GUI association page claims default open).
+    report(progress, 0.96, "menus");
+    let cli = opts.dir.join(if cfg!(windows) {
+        "oxizip-cli.exe"
+    } else {
+        "oxizip-cli"
+    });
+    if cli.is_file() {
+        let mut cmd = Command::new(&cli);
+        let status = hide_console(&mut cmd)
+            .args([
+                "--lang",
+                &opts.lang,
+                "shell",
+                "install",
+                "--menus-only",
+            ])
+            .status()
+            .map_err(InstallError::Io)?;
+        if !status.success() {
+            return Err(InstallError::Msg(format!(
+                "shell menus install failed with {status}"
+            )));
+        }
+    }
+
+    // Optional full associations during silent/elevated flows that pass --associate.
     if opts.associate {
         report(progress, 0.97, "associate");
-        let cli = opts.dir.join(if cfg!(windows) {
-            "oxizip-cli.exe"
-        } else {
-            "oxizip-cli"
-        });
         if cli.is_file() {
             let mut cmd = Command::new(&cli);
             let status = hide_console(&mut cmd)
@@ -736,8 +758,7 @@ pub fn perform_install(opts: &InstallOptions, progress: &mut ProgressCb<'_>) -> 
         }
     }
 
-    // Win11 modern context menu (Sparse) — always attempt when elevated installer runs,
-    // even if the user skipped file associations (classic verbs still need shell install).
+    // Win11 Sparse backup — `shell install --menus-only` already tries; this is idempotent.
     #[cfg(windows)]
     {
         report(progress, 0.985, "sparse");
