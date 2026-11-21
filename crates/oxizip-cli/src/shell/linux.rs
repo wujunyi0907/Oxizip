@@ -299,8 +299,7 @@ fn shell_escape_desktop_exec(path: &Path) -> String {
     }
 }
 
-fn kde_servicemenu(cli: &Path, gui: &Path, mimes: &[&str]) -> String {
-    let cli_s = shell_escape_desktop_exec(cli);
+fn kde_servicemenu(gui: &Path, mimes: &[&str]) -> String {
     let gui_s = shell_escape_desktop_exec(gui);
     let mut mime = mime_type_list(mimes);
     if !mime.contains("inode/directory") {
@@ -335,7 +334,6 @@ Name[zh_CN]=Oxizip 压缩为 7z
 Exec={gui} --job create --beside -f 7z %F
 "#,
         mimes = mime,
-        cli = cli_s,
         gui = gui_s,
     )
 }
@@ -482,7 +480,7 @@ pub fn install(lang: Lang, requested_exts: &[String], menus_only: bool) -> Resul
 
     write_file(
         &kde_servicemenus_dir(&home).join("oxizip.desktop"),
-        &kde_servicemenu(&cli, &gui, &mimes),
+        &kde_servicemenu(&gui, &mimes),
     )?;
 
     refresh_desktop_db(&apps);

@@ -6,6 +6,13 @@
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-11-21
+
+### Fixed
+
+- Linux：`kde_servicemenu` 去掉未使用的 `cli` 命名参数，修复 Package 编译失败
+- `oxizip-cli`：`winresource` / `cc` 仅作 Windows build-dependencies，消除 Linux 上 unused dependency 警告
+
 ## [0.1.6] - 2026-11-21
 
 ### Added
@@ -121,7 +128,8 @@
 - 二进制命名：GUI = `oxizip`，CLI = `oxizip-cli`
 - 应用 ID：`cn.wujunyi.oxizip`
 
-[Unreleased]: https://github.com/wujunyi0907/Oxizip/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/wujunyi0907/Oxizip/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.7
 [0.1.6]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.6
 [0.1.5]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.5
 [0.1.4]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.4

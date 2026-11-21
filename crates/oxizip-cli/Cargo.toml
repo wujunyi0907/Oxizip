@@ -24,6 +24,6 @@ winreg = { workspace = true }
 md-5 = { workspace = true }
 base64 = { workspace = true }
 
-[build-dependencies]
+[target.'cfg(windows)'.build-dependencies]
 winresource = { workspace = true }
 cc = "1"
