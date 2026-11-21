@@ -221,7 +221,22 @@ impl IExplorerCommand_Impl for OxizipShellExt_Impl {
     }
 
     fn GetIcon(&self, _psiitemarray: Option<&IShellItemArray>) -> Result<PWSTR> {
-        Err(E_NOTIMPL.into())
+        match crate::launch::icon_location_for_action("Parent") {
+            Ok(loc) => {
+                let wide: Vec<u16> = loc.encode_utf16().chain(std::iter::once(0)).collect();
+                let ptr = unsafe {
+                    windows::Win32::System::Com::CoTaskMemAlloc(wide.len() * 2) as *mut u16
+                };
+                if ptr.is_null() {
+                    return Err(E_OUTOFMEMORY.into());
+                }
+                unsafe {
+                    std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
+                }
+                Ok(PWSTR(ptr))
+            }
+            Err(_) => Err(E_NOTIMPL.into()),
+        }
     }
 
     fn GetToolTip(&self, _psiitemarray: Option<&IShellItemArray>) -> Result<PWSTR> {

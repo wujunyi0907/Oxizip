@@ -29,6 +29,7 @@
 - 关联页说明去掉「ProgID / UserChoice / 可稍后」技术旁注
 - Win11 现代右键：打包时预签名 Sparse MSIX（`oxizip-shellext.msix` + `Oxizip.cer`），安装时信任发布者再 `Add-AppxPackage`；失败回退开发者解锁 + 松散 `-Register`，并写入 `sparse-register.log`
 - Win11 Sparse 注册：去掉安装过程中的 `regsvr32`（易被 AV 卡住导致安装器一直「处理中」）；`Add-AppxPackage` 与安装器侧均加超时，超时后仍完成安装
+- Win11 现代菜单「Oxizip」父项：`GetIcon` 改为返回 `assets\icons\oxizip.ico`（此前 `E_NOTIMPL` 导致无图标）
 
 ## [0.1.5] - 2026-11-20
 

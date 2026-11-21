@@ -44,6 +44,37 @@ pub fn gui_path() -> Result<PathBuf> {
     }
 }
 
+/// Absolute icon location for Win11 `IExplorerCommand::GetIcon`.
+/// Prefer bare `.ico` under `assets\icons\` (same layout as classic verb Icon values);
+/// fall back to `oxizip.exe,0` if the ico is missing.
+pub fn icon_location_for_action(action: &str) -> Result<String> {
+    let dir = install_dir()?;
+    let icons = dir.join("assets").join("icons");
+    let stem = match action {
+        "CompressZip" | "ExtractHere" | "ExtractSmart" | "ExtractToFolder" => "zip",
+        "Compress7z" => "7z",
+        _ => "oxizip",
+    };
+    let preferred = icons.join(format!("{stem}.ico"));
+    if preferred.is_file() {
+        return Ok(normalize_icon_path(&preferred));
+    }
+    let app = icons.join("oxizip.ico");
+    if app.is_file() {
+        return Ok(normalize_icon_path(&app));
+    }
+    let exe = dir.join("oxizip.exe");
+    if exe.is_file() {
+        return Ok(format!("{},0", normalize_icon_path(&exe)));
+    }
+    Err(Error::from(E_FAIL))
+}
+
+fn normalize_icon_path(path: &Path) -> String {
+    let s = path.display().to_string();
+    s.strip_prefix(r"\\?\").unwrap_or(&s).to_string()
+}
+
 pub fn quote(s: &str) -> String {
     format!("\"{}\"", s.replace('\"', "\\\""))
 }

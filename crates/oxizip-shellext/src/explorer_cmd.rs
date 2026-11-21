@@ -6,11 +6,11 @@ use windows::Win32::System::Com::IBindCtx;
 use windows::Win32::UI::Shell::*;
 
 use crate::launch::{
-    child_actions, child_actions_sparse_all, paths_from_array, run_action, selection_kind,
-    title_zh_short, SelectionKind,
+    child_actions, child_actions_sparse_all, icon_location_for_action, paths_from_array, run_action,
+    selection_kind, title_zh_short, SelectionKind,
 };
 
-fn alloc_title(s: &str) -> Result<PWSTR> {
+fn alloc_pwstr(s: &str) -> Result<PWSTR> {
     let wide: Vec<u16> = s.encode_utf16().chain(std::iter::once(0)).collect();
     let ptr =
         unsafe { windows::Win32::System::Com::CoTaskMemAlloc(wide.len() * 2) as *mut u16 };
@@ -21,6 +21,13 @@ fn alloc_title(s: &str) -> Result<PWSTR> {
         std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
     }
     Ok(PWSTR(ptr))
+}
+
+fn alloc_icon(action: &str) -> Result<PWSTR> {
+    match icon_location_for_action(action) {
+        Ok(loc) => alloc_pwstr(&loc),
+        Err(_) => Err(E_NOTIMPL.into()),
+    }
 }
 
 #[implement(IExplorerCommand)]
@@ -34,11 +41,11 @@ impl BackgroundRoot {
 
 impl IExplorerCommand_Impl for BackgroundRoot_Impl {
     fn GetTitle(&self, _psiitemarray: Option<&IShellItemArray>) -> Result<PWSTR> {
-        alloc_title(title_zh_short("Parent"))
+        alloc_pwstr(title_zh_short("Parent"))
     }
 
     fn GetIcon(&self, _psiitemarray: Option<&IShellItemArray>) -> Result<PWSTR> {
-        Err(E_NOTIMPL.into())
+        alloc_icon("Parent")
     }
 
     fn GetToolTip(&self, _psiitemarray: Option<&IShellItemArray>) -> Result<PWSTR> {
@@ -104,11 +111,11 @@ impl ExplorerCommand {
 
 impl IExplorerCommand_Impl for ExplorerCommand_Impl {
     fn GetTitle(&self, _psiitemarray: Option<&IShellItemArray>) -> Result<PWSTR> {
-        alloc_title(title_zh_short(&self.action))
+        alloc_pwstr(title_zh_short(&self.action))
     }
 
     fn GetIcon(&self, _psiitemarray: Option<&IShellItemArray>) -> Result<PWSTR> {
-        Err(E_NOTIMPL.into())
+        alloc_icon(&self.action)
     }
 
     fn GetToolTip(&self, _psiitemarray: Option<&IShellItemArray>) -> Result<PWSTR> {
