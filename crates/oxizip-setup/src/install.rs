@@ -627,6 +627,312 @@ pub fn resolve_install_dir(dir: Option<PathBuf>) -> PathBuf {
     })
 }
 
+#[cfg(windows)]
+fn norm_path_key(path: &Path) -> String {
+    let canon = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf());
+    let s = canon.to_string_lossy();
+    // Strip Windows `\\?\` prefix from canonicalize for stable compares.
+    let s = s.strip_prefix(r"\\?\").unwrap_or(&s);
+    s.trim_end_matches(['/', '\\'])
+        .to_ascii_lowercase()
+}
+
+#[cfg(windows)]
+fn path_is_inside(child: &Path, root: &Path) -> bool {
+    let c = norm_path_key(child);
+    let r = norm_path_key(root);
+    c == r || c.starts_with(&(r.clone() + "\\"))
+}
+
+/// Delete everything under `dir` except `keep` (typically the running Uninstall.exe).
+#[cfg(windows)]
+fn delete_tree_except(dir: &Path, keep: Option<&Path>) -> io::Result<()> {
+    let keep_key = keep.map(norm_path_key);
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if keep_key
+            .as_ref()
+            .is_some_and(|k| norm_path_key(&path) == *k)
+        {
+            continue;
+        }
+        let ty = entry.file_type()?;
+        if ty.is_dir() {
+            // If keep is nested under this subdir, recurse; else wipe.
+            if keep.is_some_and(|k| path_is_inside(k, &path)) {
+                delete_tree_except(&path, keep)?;
+                // Leave dir if keep still inside; otherwise remove if empty.
+                let _ = fs::remove_dir(&path);
+            } else {
+                let _ = fs::remove_dir_all(&path);
+            }
+        } else {
+            let _ = fs::remove_file(&path);
+        }
+    }
+    Ok(())
+}
+
+/// Best-effort: mark path for deletion after reboot (handles stubborn locks).
+#[cfg(windows)]
+fn mark_delete_on_reboot(path: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    const MOVEFILE_DELAY_UNTIL_REBOOT: u32 = 0x4;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
+    }
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        let _ = MoveFileExW(wide.as_ptr(), std::ptr::null(), MOVEFILE_DELAY_UNTIL_REBOOT);
+    }
+}
+
+/// Bandizip-style final wipe (`launch_in_temp` / `~xinst~temp~.exe`):
+/// copy this EXE to `%TEMP%\~oxizip~uninst~…~.exe`, start it, then caller must
+/// `ExitProcess` so the helper can delete the install folder.
+pub fn schedule_install_dir_cleanup(dir: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::Stdio;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // Do **not** use DETACHED_PROCESS — it can tear down the child with the UI
+        // process on some Windows job objects. CREATE_NO_WINDOW is enough (no flash).
+
+        let self_exe = std::env::current_exe()?;
+        let pid = std::process::id();
+        let temp_dir = std::env::temp_dir();
+        let temp = temp_dir.join(format!("~oxizip~uninst~{pid}~.exe"));
+        let _ = fs::remove_file(&temp);
+        fs::copy(&self_exe, &temp)?;
+        clear_readonly(&temp);
+
+        let mut child = Command::new(&temp);
+        child
+            .args([
+                "--cleanup-dir",
+                &dir.display().to_string(),
+                "--wait-pid",
+                &pid.to_string(),
+            ])
+            .current_dir(&temp_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW);
+        let _child = child.spawn()?;
+        // Intentionally leak/detach: do not wait; UI will ExitProcess next.
+        std::mem::forget(_child);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn clear_readonly(path: &Path) {
+    if let Ok(meta) = fs::metadata(path) {
+        let mut perms = meta.permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        let _ = fs::set_permissions(path, perms);
+    }
+}
+
+/// Recursively delete like Bandizip `DeleteOrMoveFile` / `RemoveDirectory`.
+#[cfg(windows)]
+fn force_remove_tree(path: &Path) -> io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    clear_readonly(path);
+    if path.is_dir() {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let p = entry.path();
+            force_remove_tree(&p)?;
+        }
+        match fs::remove_dir(path) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                mark_delete_on_reboot(path);
+                Err(e)
+            }
+        }
+    } else {
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                // Locked: rename aside then mark reboot delete (Bandizip DeleteOrMoveFile).
+                let alt = {
+                    let mut p = path.as_os_str().to_owned();
+                    p.push(".pending_delete");
+                    PathBuf::from(p)
+                };
+                let _ = fs::rename(path, &alt);
+                mark_delete_on_reboot(path);
+                mark_delete_on_reboot(&alt);
+                let _ = fs::remove_file(&alt);
+                if path.exists() {
+                    Err(io::Error::other(format!(
+                        "still locked: {}",
+                        path.display()
+                    )))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn wait_for_pid(pid: u32, timeout_ms: u32) {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut u8;
+        fn WaitForSingleObject(handle: *mut u8, ms: u32) -> u32;
+        fn CloseHandle(handle: *mut u8) -> i32;
+    }
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    unsafe {
+        let h = OpenProcess(SYNCHRONIZE, 0, pid);
+        if h.is_null() {
+            return;
+        }
+        let _ = WaitForSingleObject(h, timeout_ms);
+        let _ = CloseHandle(h);
+    }
+}
+
+/// Bandizip closes `explorer.exe` before wiping (shell ext DLLs lock the folder).
+#[cfg(windows)]
+fn close_explorer() {
+    let mut kill = Command::new("taskkill");
+    let _ = hide_console(&mut kill)
+        .args(["/F", "/IM", "explorer.exe"])
+        .status();
+    std::thread::sleep(std::time::Duration::from_millis(600));
+}
+
+#[cfg(windows)]
+fn restart_explorer() {
+    let _ = Command::new("explorer.exe").spawn();
+}
+
+/// SHFileOperation FO_DELETE — Bandizip `DeleteFolderRec` equivalent.
+#[cfg(windows)]
+fn sh_delete_folder(dir: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    #[repr(C)]
+    struct ShFileOpStructW {
+        hwnd: *mut u8,
+        w_func: u32,
+        p_from: *const u16,
+        p_to: *const u16,
+        f_flags: u16,
+        f_any_operations_aborted: i32,
+        h_name_mappings: *mut u8,
+        lpsz_progress_title: *const u16,
+    }
+    #[link(name = "shell32")]
+    extern "system" {
+        fn SHFileOperationW(op: *mut ShFileOpStructW) -> i32;
+    }
+    const FO_DELETE: u32 = 3;
+    const FOF_SILENT: u16 = 0x0004;
+    const FOF_NOCONFIRMATION: u16 = 0x0010;
+    const FOF_NOERRORUI: u16 = 0x0400;
+    const FOF_NOCONFIRMMKDIR: u16 = 0x0200;
+
+    // pFrom is a double-null-terminated list of paths.
+    let mut from: Vec<u16> = dir
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .chain(std::iter::once(0))
+        .collect();
+    let mut op = ShFileOpStructW {
+        hwnd: std::ptr::null_mut(),
+        w_func: FO_DELETE,
+        p_from: from.as_mut_ptr(),
+        p_to: std::ptr::null(),
+        f_flags: FOF_SILENT | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_NOCONFIRMMKDIR,
+        f_any_operations_aborted: 0,
+        h_name_mappings: std::ptr::null_mut(),
+        lpsz_progress_title: std::ptr::null(),
+    };
+    unsafe { SHFileOperationW(&mut op) == 0 && op.f_any_operations_aborted == 0 }
+}
+
+/// Temp-helper: wait for UI PID, close Explorer (unlock shellext), wipe install folder.
+pub fn perform_cleanup_dir(dir: PathBuf, wait_pid: u32) {
+    #[cfg(windows)]
+    {
+        if wait_pid != 0 {
+            wait_for_pid(wait_pid, 120_000);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(800));
+
+        // Bandizip `CloseApp explorer.exe` — releases locks on shellext / icons.
+        close_explorer();
+
+        for _ in 0..120 {
+            if !dir.exists() {
+                break;
+            }
+            clear_readonly(&dir);
+            let _ = sh_delete_folder(&dir);
+            let _ = force_remove_tree(&dir);
+            let _ = fs::remove_dir_all(&dir);
+            if !dir.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+
+        if dir.exists() {
+            clear_readonly(&dir);
+            let _ = sh_delete_folder(&dir);
+            let _ = fs::remove_dir_all(&dir);
+            mark_delete_on_reboot(&dir);
+        }
+
+        restart_explorer();
+
+        if let Ok(exe) = std::env::current_exe() {
+            clear_readonly(&exe);
+            mark_delete_on_reboot(&exe);
+            let doomed = {
+                let mut p = exe.as_os_str().to_owned();
+                p.push(".old");
+                PathBuf::from(p)
+            };
+            let _ = fs::rename(&exe, &doomed);
+            clear_readonly(&doomed);
+            mark_delete_on_reboot(&doomed);
+            let _ = fs::remove_file(&doomed);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (dir, wait_pid);
+    }
+}
+
 pub fn perform_uninstall(dir: Option<PathBuf>, progress: &mut ProgressCb<'_>) -> InstallResult<()> {
     let dir = resolve_install_dir(dir);
     report(progress, 0.05, "prepare");
@@ -646,16 +952,32 @@ pub fn perform_uninstall(dir: Option<PathBuf>, progress: &mut ProgressCb<'_>) ->
 
     #[cfg(windows)]
     {
+        // Best-effort Sparse / COM cleanup before files vanish.
+        let unreg = dir.join("scripts").join("unregister-sparse.ps1");
+        if unreg.is_file() {
+            let mut ps = Command::new("powershell.exe");
+            let _ = hide_console(&mut ps)
+                .args([
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    &unreg.display().to_string(),
+                    "-InstallDir",
+                    &dir.display().to_string(),
+                ])
+                .status();
+        }
+    }
+
+    #[cfg(windows)]
+    {
         report(progress, 0.30, "stop");
-        let mut kill_gui = Command::new("taskkill");
-        let _ = hide_console(&mut kill_gui)
-            .args(["/F", "/IM", "oxizip.exe"])
-            .status();
-        let mut kill_cli = Command::new("taskkill");
-        let _ = hide_console(&mut kill_cli)
-            .args(["/F", "/IM", "oxizip-cli.exe"])
-            .status();
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        for image in ["oxizip.exe", "oxizip-cli.exe"] {
+            let mut kill = Command::new("taskkill");
+            let _ = hide_console(&mut kill).args(["/F", "/IM", image]).status();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(400));
     }
 
     #[cfg(windows)]
@@ -679,34 +1001,38 @@ pub fn perform_uninstall(dir: Option<PathBuf>, progress: &mut ProgressCb<'_>) ->
         notify_shell_assoc_changed();
     }
 
-    // Delete files. If this process is Uninstall.exe inside the dir, schedule
-    // a delayed rmdir so the running binary can exit first.
+    report(progress, 0.85, "delete");
     #[cfg(windows)]
     {
         let self_exe = std::env::current_exe().ok();
         let self_in_dir = self_exe
             .as_ref()
-            .and_then(|p| p.parent().map(|parent| parent == dir))
-            .unwrap_or(false);
+            .is_some_and(|p| path_is_inside(p, &dir));
         if self_in_dir {
-            report(progress, 0.85, "schedule_delete");
-            let script = format!(
-                "ping 127.0.0.1 -n 3 >nul & rmdir /S /Q \"{}\"",
-                dir.display()
-            );
-            let mut cmd = Command::new("cmd");
-            let _ = hide_console(&mut cmd).args(["/C", &script]).spawn();
+            // Leave only this Uninstall.exe; final wipe runs when user clicks「完成」.
+            let keep = self_exe.as_deref();
+            let _ = delete_tree_except(&dir, keep);
             report(progress, 1.0, "done");
             return Ok(());
         }
+        // Not running from install dir — delete immediately; fall back to temp helper.
+        if dir.is_dir() {
+            if force_remove_tree(&dir).is_err() || dir.exists() {
+                let _ = schedule_install_dir_cleanup(&dir);
+            }
+        }
+        report(progress, 1.0, "done");
+        return Ok(());
     }
 
-    report(progress, 0.85, "delete");
-    if dir.is_dir() {
-        let _ = fs::remove_dir_all(&dir);
+    #[cfg(not(windows))]
+    {
+        if dir.is_dir() {
+            let _ = fs::remove_dir_all(&dir);
+        }
+        report(progress, 1.0, "done");
+        Ok(())
     }
-    report(progress, 1.0, "done");
-    Ok(())
 }
 
 pub fn launch_app(dir: &Path) -> InstallResult<()> {
@@ -766,6 +1092,8 @@ pub fn parse_cli() -> CliMode {
     let mut auto_uninstall = false;
     let mut associate = false;
     let mut dir = None;
+    let mut cleanup_dir = None;
+    let mut wait_pid = 0u32;
     let mut lang = "zh-cn".to_string();
     let mut pos_x = None;
     let mut pos_y = None;
@@ -779,6 +1107,10 @@ pub fn parse_cli() -> CliMode {
             "--auto-install" => auto_install = true,
             "--auto-uninstall" => auto_uninstall = true,
             "--associate" => associate = true,
+            "--cleanup-dir" => cleanup_dir = args.next().map(PathBuf::from),
+            "--wait-pid" => {
+                wait_pid = args.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+            }
             "--dir" => dir = args.next().map(PathBuf::from),
             "--lang" => {
                 if let Some(v) = args.next() {
@@ -798,6 +1130,13 @@ pub fn parse_cli() -> CliMode {
         (Some(x), Some(y)) => Some((x, y)),
         _ => None,
     };
+    // Temp helper copied out of the install dir (Bandizip `~xinst~temp~.exe`).
+    if let Some(d) = cleanup_dir {
+        return CliMode::CleanupDir {
+            dir: d,
+            wait_pid,
+        };
+    }
     // If this binary was installed as Uninstall.exe, default to uninstall UI.
     if let Ok(exe) = std::env::current_exe() {
         if exe
@@ -854,6 +1193,11 @@ pub enum CliMode {
     },
     ElevatedUninstall {
         dir: Option<PathBuf>,
+    },
+    /// Headless wipe launched from `%TEMP%` after「完成」(no UI).
+    CleanupDir {
+        dir: PathBuf,
+        wait_pid: u32,
     },
 }
 

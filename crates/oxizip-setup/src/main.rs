@@ -11,7 +11,8 @@ use iced::widget::{
 use iced::{window, Alignment, Element, Length, Point, Size, Subscription, Task};
 use install::{
     append_window_pos, default_install_dir, encode_install_args, encode_uninstall_args,
-    is_elevated, launch_app, parse_cli, perform_install, perform_uninstall, relaunch_elevated,
+    is_elevated, launch_app, parse_cli, perform_cleanup_dir, perform_install, perform_uninstall,
+    relaunch_elevated, schedule_install_dir_cleanup,
     resolve_install_dir, CliMode, InstallOptions, APP_NAME, VERSION,
 };
 use std::path::PathBuf;
@@ -42,6 +43,10 @@ fn main() -> iced::Result {
                 std::process::exit(1);
             }
         },
+        CliMode::CleanupDir { dir, wait_pid } => {
+            perform_cleanup_dir(dir, wait_pid);
+            std::process::exit(0);
+        }
         CliMode::UninstallUi {
             dir,
             auto_start,
@@ -783,6 +788,8 @@ enum UMessage {
     LangSelected(Lang),
     Confirm,
     Cancel,
+    ///「完成」：调度删除残留 Uninstall.exe / 安装目录后退出。
+    FinishCleanup,
     ElevateWithPosition(Option<Point>),
     PollJob,
     Finished(Result<(), String>),
@@ -881,6 +888,9 @@ impl UninstallApp {
                 if self.busy {
                     return Task::none();
                 }
+                if self.done {
+                    return Task::done(UMessage::FinishCleanup);
+                }
                 self.window_id.map(window::close).unwrap_or_else(Task::none)
             }
             UMessage::LangSelected(lang) => {
@@ -888,13 +898,22 @@ impl UninstallApp {
                 Task::none()
             }
             UMessage::Cancel => {
-                if !self.busy {
-                    if let Some(id) = self.window_id {
-                        return window::close(id);
-                    }
-                    std::process::exit(0);
+                if self.busy {
+                    return Task::none();
                 }
-                Task::none()
+                //「取消」在未开始时关闭；若已卸载完成则等同「完成」。
+                if self.done {
+                    return Task::done(UMessage::FinishCleanup);
+                }
+                if let Some(id) = self.window_id {
+                    return window::close(id);
+                }
+                std::process::exit(0);
+            }
+            UMessage::FinishCleanup => {
+                // Bandizip: launch_in_temp helper, then hard-exit so WaitAppExit can proceed.
+                let _ = schedule_install_dir_cleanup(&self.dir);
+                std::process::exit(0);
             }
             UMessage::Confirm => {
                 if self.busy || self.done {
@@ -1001,7 +1020,7 @@ impl UninstallApp {
                 )
                 .width(Length::Fill)
                 .padding(10)
-                .on_press(UMessage::Cancel)
+                .on_press(UMessage::FinishCleanup)
                 .style(rounded_primary),
             ]
             .into()

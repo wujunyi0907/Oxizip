@@ -10,6 +10,11 @@
 
 - Package CI：`checkout@v7`、`upload-artifact@v7`、`download-artifact@v8`（Node 24）
 
+### Fixed
+
+- 卸载残留：对齐 Bandizip（`launch_in_temp` + `CloseApp explorer` + `DeleteFolderRec`/`SHFileOperation`），点「完成」后彻底删除安装目录
+- 关联页说明去掉「ProgID / UserChoice / 可稍后」技术旁注
+
 ## [0.1.5] - 2026-11-20
 
 ### Added
