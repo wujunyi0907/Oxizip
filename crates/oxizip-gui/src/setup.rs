@@ -5,8 +5,15 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-/// App config directory. Display name stays "Oxizip"; on-disk id uses reverse-DNS.
+use crate::prefs;
+
+/// App config directory (same tree as `prefs.json`: `%APPDATA%\Oxizip` / `~/.config/oxizip`).
 pub fn config_dir() -> Option<PathBuf> {
+    prefs::prefs_path().parent().map(PathBuf::from)
+}
+
+/// Legacy marker dir from older builds (`cn.wujunyi.oxizip`).
+fn legacy_config_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         let appdata = std::env::var_os("APPDATA")?;
@@ -27,6 +34,15 @@ pub fn setup_done_marker() -> Option<PathBuf> {
     Some(config_dir()?.join("setup_done"))
 }
 
+fn setup_done_already() -> bool {
+    if setup_done_marker().is_some_and(|p| p.is_file()) {
+        return true;
+    }
+    legacy_config_dir()
+        .map(|d| d.join("setup_done"))
+        .is_some_and(|p| p.is_file())
+}
+
 /// Whether Oxizip is already the default opener for common archive types.
 /// Used to skip the first-run association page (context menus are installed earlier).
 pub fn associations_already_present() -> bool {
@@ -45,28 +61,53 @@ pub fn associations_already_present() -> bool {
 }
 
 #[cfg(windows)]
-fn windows_zip_associated() -> bool {
+fn is_our_progid(progid: &str) -> bool {
+    progid
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("cn.wujunyi.oxizip.")
+}
+
+#[cfg(windows)]
+fn windows_ext_associated(ext: &str) -> bool {
     use winreg::enums::*;
     use winreg::RegKey;
-    const PROGID: &str = "cn.wujunyi.oxizip.zip";
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let parent = r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.zip";
+    let parent =
+        format!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.{ext}");
+    // Classic UserChoice.
     if let Ok(k) = hkcu.open_subkey(format!("{parent}\\UserChoice")) {
         if let Ok(p) = k.get_value::<String, _>("ProgId") {
-            if p.trim().eq_ignore_ascii_case(PROGID) {
+            if is_our_progid(&p) {
                 return true;
             }
         }
     }
-    // Fallback: HKCU Classes default for .zip (elevated installs may only set this).
-    if let Ok(k) = hkcu.open_subkey(r"Software\Classes\.zip") {
+    // Win11 Settings-managed Latest (Bandizip does not write it; we still read it).
+    if let Ok(k) = hkcu.open_subkey(format!("{parent}\\UserChoiceLatest\\ProgId")) {
+        if let Ok(p) = k.get_value::<String, _>("ProgId") {
+            if is_our_progid(&p) {
+                return true;
+            }
+        }
+    }
+    // HKCU Classes default (elevated / non-UserChoice installs).
+    if let Ok(k) = hkcu.open_subkey(format!(r"Software\Classes\.{ext}")) {
         if let Ok(p) = k.get_value::<String, _>("") {
-            if p.trim().eq_ignore_ascii_case(PROGID) {
+            if is_our_progid(&p) {
                 return true;
             }
         }
     }
     false
+}
+
+#[cfg(windows)]
+fn windows_zip_associated() -> bool {
+    // Any common archive defaulted to Oxizip counts as "already associated".
+    ["zip", "7z", "rar", "tar", "gz"]
+        .into_iter()
+        .any(windows_ext_associated)
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -106,20 +147,18 @@ fn linux_zip_associated() -> bool {
     false
 }
 
-/// Show the association page unless formats are already associated.
-/// `--setup` from the installer still skips when associations exist.
-pub fn needs_first_run_setup(force: bool) -> bool {
+/// Show the association page on first GUI launch unless the user already
+/// finished/skipped it, or Oxizip is already a default opener for archives.
+///
+/// Installer always relaunches with `--setup`. That flag only means “post-install
+/// entry”; it must **not** force the page again when `setup_done` already exists
+/// (clean machine reinstall / upgrade keeps `%APPDATA%\Oxizip\setup_done`).
+pub fn needs_first_run_setup(_force: bool) -> bool {
     if associations_already_present() {
         mark_setup_done();
         return false;
     }
-    if force {
-        return true;
-    }
-    match setup_done_marker() {
-        Some(p) => !p.is_file(),
-        None => false,
-    }
+    !setup_done_already()
 }
 
 pub fn mark_setup_done() {
