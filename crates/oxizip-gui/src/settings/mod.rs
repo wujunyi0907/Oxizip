@@ -1,4 +1,4 @@
-//! Multi-tab Settings dialog (Bandizip-aligned layout, clean-room).
+//! Multi-tab Settings dialog (left-nav layout, clean-room).
 //! Opened as a dedicated `--settings` window; edits stay in a draft until OK.
 
 use iced::widget::{

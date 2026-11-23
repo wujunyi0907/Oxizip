@@ -5,12 +5,12 @@ Layout:
   svg-badge/   format SVGs with enlarged extension labels (48/256)
   <name>.ico   multi-size ICO at icons/ root (256/48/32/16 embedded)
 
-Bandizip note (clean-room observation):
+ICO layout note (clean-room observation):
   - DefaultIcon points at a multi-size .ico (no IconHandler).
   - 16/32 frames are hand-tuned: large light glyphs on a solid tile,
     not a downscaled 256px artwork. Explorer list/small views use 16px.
   - We mirror that by painting crisp 16/32 frames with PIL; 48/256 come from SVG.
-  - ICO container (from Bandizip 7z.ico detail): 7 BMP-DIB entries —
+  - ICO container (7-entry layout): 7 BMP-DIB entries —
     48/32/16 @ 8-bit, then 256/48/32/16 @ 32-bit (height doubled for AND mask).
     No PNG-in-ICO. We match that layout.
 """
@@ -219,7 +219,7 @@ def _load_label_font(size: int, label: str) -> ImageFont.ImageFont:
 def _draw_tiny_mark(draw: ImageDraw.ImageDraw, size: int, pad: int) -> None:
     """Compact archive mark — leaves most of the 16px tile for the label."""
     if size <= 16:
-        # 3px-tall zipper hint only (Bandizip-like: text dominates at 16).
+        # 3px-tall zipper hint only (text dominates at 16).
         y0 = pad
         draw.rectangle([pad + 3, y0, size - 2 - pad, y0 + 2], fill=ACCENT_HI)
         mid = size // 2
@@ -332,7 +332,7 @@ def _dib_header(
         bit_count,
         0,
         size_image,
-        2835,  # ~72 DPI, same ballpark as Bandizip (0x0b13)
+        2835,  # ~72 DPI, same ballpark as common shell ICOs (0x0b13)
         2835,
         clr_used,
         clr_used,
@@ -405,9 +405,9 @@ def _rgba_to_dib8(image: Image.Image) -> bytes:
 
 
 def write_multi_size_ico(path: Path, frames: list[tuple[int, Image.Image]]) -> None:
-    """Write Bandizip-style ICO: 8-bit 48/32/16 then 32-bit 256/48/32/16 (BMP-DIB)."""
+    """Write multi-size ICO: 8-bit 48/32/16 then 32-bit 256/48/32/16 (BMP-DIB)."""
     by_size = {size: image.convert("RGBA") for size, image in frames}
-    # Prefer the Bandizip size set; extra sizes (e.g. 24) still get both depths.
+    # Prefer the 7-entry size set; extra sizes (e.g. 24) still get both depths.
     preferred_8 = [s for s in (48, 32, 16) if s in by_size]
     preferred_8 += sorted((s for s in by_size if s not in preferred_8 and s < 256), reverse=True)
     preferred_32 = [s for s in (256, 48, 32, 16) if s in by_size]
@@ -530,7 +530,7 @@ def _hicon_to_image(hicon: int, size: int) -> Image.Image:
 
 
 def extract_uac_shield(size: int) -> Image.Image:
-    """Windows stock UAC shield (imageres SIID_SHIELD) — not Bandizip assets."""
+    """Windows stock UAC shield (imageres SIID_SHIELD) — system asset, not third-party art."""
     import ctypes
     from ctypes import wintypes
 
@@ -576,9 +576,9 @@ def extract_uac_shield(size: int) -> Image.Image:
 
 
 def _setup_glass_svg() -> str:
-    """Molded acrylic open tray (Bandizip-setup pixel feel; clean-room SVG).
+    """Molded acrylic open tray (clean-room SVG).
 
-    Bandizip samples: milky face ~lum 210 (e.g. 168,210,255); top rim near-solid
+    Reference palette: milky face ~lum 210 (e.g. 168,210,255); top rim near-solid
     white band; FR vertical rim ~x0.63. Faces are filled material, not neon wire.
     """
     return """<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
@@ -617,7 +617,7 @@ def _setup_glass_svg() -> str:
   <polygon points="30,188 155,188 212,222 55,222" fill="url(#milkFloor)" filter="url(#soft)"/>
   <polygon points="161,142 218,114 218,222 161,236" fill="url(#milkSide)" filter="url(#soft)"/>
   <polygon points="24,142 161,142 161,236 24,236" fill="url(#milkFront)" filter="url(#soft)"/>
-  <!-- wide top lip / bevel (Bandizip: solid white band across opening) -->
+  <!-- wide top lip / bevel (solid white band across opening) -->
   <rect x="28" y="138" width="130" height="18" rx="6" fill="url(#lip)" filter="url(#softer)"/>
   <rect x="34" y="142" width="118" height="8" rx="3" fill="#ffffff" opacity="0.95"/>
   <!-- front-right vertical rim as thick filled capsule (~x161) -->
@@ -629,7 +629,7 @@ def _setup_glass_svg() -> str:
   <rect x="22" y="146" width="10" height="88" rx="4" fill="#eef6ff" opacity="0.75" filter="url(#soft)"/>
   <rect x="28" y="228" width="130" height="10" rx="4" fill="#c8d8e8" opacity="0.7" filter="url(#soft)"/>
   <path d="M161,232 L216,220 L218,228 L163,240 Z" fill="#c8d8e8" opacity="0.65" filter="url(#soft)"/>
-  <!-- download arrow (Bandizip ~ rgb 0,56,159) -->
+  <!-- download arrow (~ rgb 0,56,159) -->
   <g fill="#00389f">
     <rect x="76" y="168" width="16" height="38" rx="2.5"/>
     <polygon points="84,224 60,190 108,190"/>
@@ -639,7 +639,7 @@ def _setup_glass_svg() -> str:
 
 
 def _brighten_product_tile(brand: Image.Image) -> Image.Image:
-    """Bright product squircle (Bandizip-setup style) with Oxizip glyph on top.
+    """Bright product squircle with Oxizip glyph on top.
 
     Glass milky overlays need a luminous blue plate underneath; stock oxizip.ico
     navy turns any frost grey.
@@ -648,7 +648,7 @@ def _brighten_product_tile(brand: Image.Image) -> Image.Image:
     w, h = src.size
     plate = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(plate)
-    # Vertical blue gradient plate (Bandizip product face ~ bright mid-blue).
+    # Vertical blue gradient plate (~ bright mid-blue).
     for y in range(h):
         t = y / max(1, h - 1)
         r = int(40 + 20 * (1 - t))
@@ -693,7 +693,7 @@ def _render_setup_glass(edge: str, size: int) -> Image.Image:
 
 
 def compose_uac_frame(size: int, brand: Image.Image) -> Image.Image:
-    """Full UAC shield with Oxizip badge (Bandizip shellicons/uac.ico layout)."""
+    """Full UAC shield with Oxizip badge (shellicons/uac.ico layout)."""
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     shield = extract_uac_shield(size)
     if shield.size != (size, size):

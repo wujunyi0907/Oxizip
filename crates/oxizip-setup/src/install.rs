@@ -860,7 +860,7 @@ fn mark_delete_on_reboot(path: &Path) {
     }
 }
 
-/// Bandizip-style final wipe (`launch_in_temp` / `~xinst~temp~.exe`):
+/// Final wipe via temp helper (`launch_in_temp` / `~xinst~temp~.exe`):
 /// copy this EXE to `%TEMP%\~oxizip~uninst~…~.exe`, start it, then caller must
 /// `ExitProcess` so the helper can delete the install folder.
 pub fn schedule_install_dir_cleanup(dir: &Path) -> io::Result<()> {
@@ -914,7 +914,7 @@ fn clear_readonly(path: &Path) {
     }
 }
 
-/// Recursively delete like Bandizip `DeleteOrMoveFile` / `RemoveDirectory`.
+/// Recursively delete (rename-aside + reboot-delete when locked).
 #[cfg(windows)]
 fn force_remove_tree(path: &Path) -> io::Result<()> {
     if !path.exists() {
@@ -938,7 +938,7 @@ fn force_remove_tree(path: &Path) -> io::Result<()> {
         match fs::remove_file(path) {
             Ok(()) => Ok(()),
             Err(_) => {
-                // Locked: rename aside then mark reboot delete (Bandizip DeleteOrMoveFile).
+                // Locked: rename aside then mark reboot delete.
                 let alt = {
                     let mut p = path.as_os_str().to_owned();
                     p.push(".pending_delete");
@@ -980,7 +980,7 @@ fn wait_for_pid(pid: u32, timeout_ms: u32) {
     }
 }
 
-/// Bandizip closes `explorer.exe` before wiping (shell ext DLLs lock the folder).
+/// Close `explorer.exe` before wiping (shell ext DLLs lock the folder).
 #[cfg(windows)]
 fn close_explorer() {
     let mut kill = Command::new("taskkill");
@@ -995,7 +995,7 @@ fn restart_explorer() {
     let _ = Command::new("explorer.exe").spawn();
 }
 
-/// SHFileOperation FO_DELETE — Bandizip `DeleteFolderRec` equivalent.
+/// SHFileOperation FO_DELETE recursive folder wipe.
 #[cfg(windows)]
 fn sh_delete_folder(dir: &Path) -> bool {
     use std::os::windows::ffi::OsStrExt;
@@ -1049,7 +1049,7 @@ pub fn perform_cleanup_dir(dir: PathBuf, wait_pid: u32) {
         }
         std::thread::sleep(std::time::Duration::from_millis(800));
 
-        // Bandizip `CloseApp explorer.exe` — releases locks on shellext / icons.
+        // Close explorer.exe — releases locks on shellext / icons.
         close_explorer();
 
         for _ in 0..120 {
@@ -1292,7 +1292,7 @@ pub fn parse_cli() -> CliMode {
         (Some(x), Some(y)) => Some((x, y)),
         _ => None,
     };
-    // Temp helper copied out of the install dir (Bandizip `~xinst~temp~.exe`).
+    // Temp helper copied out of the install dir (`~xinst~temp~.exe`).
     if let Some(d) = cleanup_dir {
         return CliMode::CleanupDir {
             dir: d,

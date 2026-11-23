@@ -2,7 +2,7 @@
 <!--
   Oxizip Sparse Package for Win11 File Explorer modern context menus.
   Clean-room: self-owned Identity / CLSIDs; DLL loaded via AllowExternalContent
-  from the install directory (oxizip-shellext.dll). Do not ship Bandizip packages.
+  from the install directory (oxizip-shellext.dll). Do not ship third-party proprietary packages.
 -->
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"

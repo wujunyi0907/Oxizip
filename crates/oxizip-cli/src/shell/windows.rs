@@ -1,6 +1,6 @@
 //! HKCU Explorer context-menu verbs + file-type icons + open associations.
 //!
-//! Association model aligned with Bandizip.exe (clean-room, from strings + registry):
+//! Clean-room association model (from public registry / shell behavior notes):
 //! - `Software\Classes\<ProgID>` + `.{ext}` default + DefaultIcon + OpenWithProgids
 //! - `RegisteredApplications` + `Capabilities` / `FileAssociations`
 //! - classic `FileExts\%s\UserChoice` (`ProgId` + `Hash`) only — **no** `UserChoiceLatest`
@@ -8,7 +8,7 @@
 //! - Cascade static verbs (`ExtendedSubCommandsKey`) + optional `oxizip-shellext.dll`
 //!   (classic `IContextMenu3` + Win11 Sparse `IExplorerCommand`)
 //!
-//! Elevated installs also mirror ProgID / `.{ext}` under HKLM (Bandizip setup path).
+//! Elevated installs also mirror ProgID / `.{ext}` under HKLM (setup path).
 
 use std::path::Path;
 
@@ -111,7 +111,7 @@ fn file_exts_parent(ext: &str) -> String {
     format!("Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\.{ext}")
 }
 
-/// Write DefaultIcon in places Explorer consults (Bandizip: ProgID + `.{ext}` + SFA).
+/// Write DefaultIcon in places Explorer consults (ProgID + `.{ext}` + SFA).
 fn write_format_icons(classes: &RegKey, ext: &str, icon: &Path) -> Result<(), String> {
     let value = icon_registry_value(icon);
     let progid = progid_for_ext(ext);
@@ -168,14 +168,14 @@ fn read_latest_user_progid(ext: &str) -> Option<String> {
     }
 }
 
-/// Clear only keys that still point at Oxizip (do not wipe Bandizip / system defaults).
+/// Clear only keys that still point at Oxizip (do not wipe other apps / system defaults).
 fn clear_user_choice_if_ours(ext: &str) {
     let parent = file_exts_parent(ext);
     if read_classic_user_progid(ext).is_some_and(|p| is_our_progid(&p)) {
         user_choice::delete_classic_user_choice_key(&parent);
     }
     if read_latest_user_progid(ext).is_some_and(|p| is_our_progid(&p)) {
-        // Legacy Oxizip builds wrote Latest; Bandizip never does — clean ours only.
+        // Legacy Oxizip builds wrote Latest; we no longer do — clean ours only.
         user_choice::delete_latest_user_choice_key(&parent);
     }
 }
@@ -311,7 +311,7 @@ fn write_open_association(
     let (prog, _) = classes
         .create_subkey(&progid)
         .map_err(|e| format!("create progid {progid}: {e}"))?;
-    // Bandizip-style type label: "7z 压缩文件" — Explorer may append " (.7z)".
+    // Type label: "7z 压缩文件" — Explorer may append " (.7z)".
     let type_label = assoc_type_label(lang, ext);
     prog.set_value("", &type_label)
         .map_err(|e| format!("set progid label: {e}"))?;
@@ -337,7 +337,7 @@ fn write_open_association(
     cmd.set_value("", &format!("{} {open_args}", quote_path(gui)))
         .map_err(|e| format!("set progid command: {e}"))?;
 
-    // Claim `.{ext}` default ProgID (Bandizip writes this under HKLM when elevated).
+    // Claim `.{ext}` default ProgID (also under HKLM when elevated).
     let (ext_key, _) = classes
         .create_subkey(format!(".{ext}"))
         .map_err(|e| format!("create .{ext}: {e}"))?;
@@ -358,7 +358,7 @@ fn write_open_association(
         )) {
             let _ = fe.set_value(&progid, &"");
         }
-        // Classic UserChoice only — Bandizip does not write UserChoiceLatest.
+        // Classic UserChoice only — do not write UserChoiceLatest.
         user_choice::set_user_default(ext, &progid)?;
     }
     Ok(())
@@ -777,7 +777,7 @@ pub fn install(lang: Lang, requested_exts: &[String], menus_only: bool) -> Resul
     register_capabilities(lang, &exts)?;
     write_all_verbs_filtered(&classes, &exe, &gui, &icons_dir, lang, &exts, &filter)?;
 
-    // Bandizip setup (elevated) also registers under HKLM\Software\Classes.
+    // Elevated setup also registers under HKLM\Software\Classes.
     if is_process_elevated() {
         if let Some(hklm) = hklm_classes_root() {
             for ext in &exts {

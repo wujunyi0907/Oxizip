@@ -34,7 +34,7 @@
   <polygon points="30,188 155,188 212,222 55,222" fill="url(#milkFloor)" filter="url(#soft)"/>
   <polygon points="161,142 218,114 218,222 161,236" fill="url(#milkSide)" filter="url(#soft)"/>
   <polygon points="24,142 161,142 161,236 24,236" fill="url(#milkFront)" filter="url(#soft)"/>
-  <!-- wide top lip / bevel (Bandizip: solid white band across opening) -->
+  <!-- wide top lip / bevel (solid white band across opening) -->
   <rect x="28" y="138" width="130" height="18" rx="6" fill="url(#lip)" filter="url(#softer)"/>
   <rect x="34" y="142" width="118" height="8" rx="3" fill="#ffffff" opacity="0.95"/>
   <!-- front-right vertical rim as thick filled capsule (~x161) -->
@@ -46,7 +46,7 @@
   <rect x="22" y="146" width="10" height="88" rx="4" fill="#eef6ff" opacity="0.75" filter="url(#soft)"/>
   <rect x="28" y="228" width="130" height="10" rx="4" fill="#c8d8e8" opacity="0.7" filter="url(#soft)"/>
   <path d="M161,232 L216,220 L218,228 L163,240 Z" fill="#c8d8e8" opacity="0.65" filter="url(#soft)"/>
-  <!-- download arrow (Bandizip ~ rgb 0,56,159) -->
+  <!-- download arrow (~ rgb 0,56,159) -->
   <g fill="#00389f">
     <rect x="76" y="168" width="16" height="38" rx="2.5"/>
     <polygon points="84,224 60,190 108,190"/>

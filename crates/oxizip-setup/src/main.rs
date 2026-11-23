@@ -915,7 +915,7 @@ impl UninstallApp {
                 std::process::exit(0);
             }
             UMessage::FinishCleanup => {
-                // Bandizip: launch_in_temp helper, then hard-exit so WaitAppExit can proceed.
+                // launch_in_temp helper, then hard-exit so WaitAppExit can proceed.
                 let _ = schedule_install_dir_cleanup(&self.dir);
                 std::process::exit(0);
             }

@@ -82,7 +82,7 @@ fn windows_ext_associated(ext: &str) -> bool {
             }
         }
     }
-    // Win11 Settings-managed Latest (Bandizip does not write it; we still read it).
+    // Win11 Settings-managed Latest (we do not write it; we still read it).
     if let Ok(k) = hkcu.open_subkey(format!("{parent}\\UserChoiceLatest\\ProgId")) {
         if let Ok(p) = k.get_value::<String, _>("ProgId") {
             if is_our_progid(&p) {

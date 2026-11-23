@@ -1,5 +1,5 @@
 ---
-description: 干净室与许可红线（禁止复制 Bandizip / 修改 RAR）
+description: 干净室与许可红线（禁止复制第三方专有压缩软件 / 修改 RAR）
 alwaysApply: true
 ---
 
@@ -7,9 +7,9 @@ alwaysApply: true
 
 ## 禁止
 
-- 嵌入或链接 `ark*.dll` / Bandizip 专有二进制
-- 复制 Bandizip 的皮肤、图标、`.lang`、广告页、授权校验逻辑
-- 将 `reference/Bandizip/` 下文件加入 Cargo 构建或发布产物
+- 嵌入或链接 `ark*.dll` / 第三方专有压缩软件二进制
+- 复制第三方专有压缩软件的皮肤、图标、`.lang`、广告页、授权校验逻辑
+- 将 `reference/` 下本地参考安装包文件加入 Cargo 构建或发布产物
 - Vendoring、编译或修改 unrar/RAR 源码；禁止在本仓库实现 RAR 压缩比特流
 
 ## 允许

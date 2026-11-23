@@ -130,7 +130,7 @@ impl std::fmt::Display for LicenseFilter {
 
 /// Single size for main GUI screens (association, main, licenses, …).
 const APP_WINDOW_SIZE: Size = Size::new(775.0, 480.0);
-/// Dedicated settings dialog (Bandizip-style separate window).
+/// Dedicated settings dialog (separate process / window).
 const SETTINGS_WINDOW_SIZE: Size = Size::new(700.0, 460.0);
 const WINDOW_RADIUS: f32 = 12.0;
 const CONTROL_RADIUS: f32 = 8.0;
@@ -405,7 +405,7 @@ struct OxizipApp {
     settings_tab: SettingsTab,
     /// Short feedback line on the Settings screen (never the full CLI log).
     settings_status: String,
-    /// Dedicated `--settings` process (Bandizip-style dialog).
+    /// Dedicated `--settings` process.
     settings_mode: bool,
     /// Draft prefs edited in the settings dialog; committed only on OK.
     settings_draft: Prefs,
@@ -1352,7 +1352,7 @@ impl OxizipApp {
             }
             Message::Close => {
                 if self.settings_child.is_some() {
-                    // Modal settings open: ignore main close (Bandizip-style).
+                    // Modal settings open: ignore main close.
                     return Task::none();
                 }
                 if self.screen == Screen::Job {
@@ -3391,7 +3391,7 @@ impl OxizipApp {
                 .map(|p| p.display().to_string())
                 .unwrap_or_default()
             } else {
-            // Show basename for long paths (Bandizip-style).
+            // Show basename for long paths.
             Path::new(&self.progress_detail)
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())

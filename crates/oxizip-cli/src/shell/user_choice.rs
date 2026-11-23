@@ -1,12 +1,9 @@
-//! Per-user default handler via classic `FileExts\...\UserChoice` (Bandizip-aligned).
+//! Per-user default handler via classic `FileExts\...\UserChoice`.
 //!
-//! Bandizip.exe (strings / registry behavior) writes only:
+//! Oxizip writes only:
 //! `Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\%s\UserChoice`
-//! with `ProgId` + `Hash` (Firefox / SetUserFTA algorithm). It has **no**
-//! `UserChoiceLatest` strings and does not touch that key.
-//!
-//! Oxizip matches that path: rewrite classic `UserChoice` only; do not create or
-//! delete `UserChoiceLatest` (leave Win11 Settings-managed Latest alone).
+//! with `ProgId` + `Hash` (Firefox / SetUserFTA algorithm). It does **not**
+//! create or delete `UserChoiceLatest` (leave Win11 Settings-managed Latest alone).
 //!
 //! `set_latest_user_choice` remains available for experiments but is unused by install.
 
@@ -294,7 +291,7 @@ fn delete_named_user_choice_tree(parent_rel: &str, sub_name_nul: &str) {
     }
 }
 
-/// Delete classic `UserChoice` only (Bandizip-style). Does not touch `UserChoiceLatest`.
+/// Delete classic `UserChoice` only. Does not touch `UserChoiceLatest`.
 pub fn delete_classic_user_choice_key(parent_rel: &str) {
     delete_named_user_choice_tree(parent_rel, "UserChoice\0");
 }
@@ -430,7 +427,7 @@ fn set_latest_user_choice(
     Ok(())
 }
 
-/// Set ProgID via classic `UserChoice` only — same surface as Bandizip.
+/// Set ProgID via classic `UserChoice` only.
 ///
 /// Does **not** create/update/delete `UserChoiceLatest` (Win11 Settings owns that).
 pub fn set_user_default(ext: &str, progid: &str) -> Result<(), String> {

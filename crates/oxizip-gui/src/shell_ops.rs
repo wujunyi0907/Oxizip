@@ -12,7 +12,7 @@ pub fn spawn_new_window() -> Result<(), String> {
         .map(|_| ())
 }
 
-/// Spawn a dedicated `--settings` dialog process (Bandizip-style modal sibling).
+/// Spawn a dedicated `--settings` dialog process (modal sibling).
 pub fn spawn_settings_window(tab: Option<&str>) -> Result<Child, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let mut cmd = Command::new(exe);

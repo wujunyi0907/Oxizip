@@ -68,8 +68,8 @@ oxizip-cli / oxizip-gui
 
 | 能力 | Windows | Linux | 注意 |
 |---|---|---|---|
-| 文件关联 / 默认打开 | `oxizip-cli shell install`：ProgID + `.{ext}` + OpenWithProgids + Capabilities + **经典** `UserChoice`（对齐 Bandizip；**不写** `UserChoiceLatest`）；提权时同步 HKLM Classes | 同命令：用户级 `cn.wujunyi.oxizip.desktop` + `xdg-mime default` + 必要时 `~/.local/share/mime/packages`；卸载清理 `mimeapps.list` 中本应用条目 | GUI 关联页勾选的 `--ext` **两边都要生效**；勿只在 Win 写注册表而 Linux 忽略扩展过滤 |
-| 右键 / 文件管理器菜单 | 经典：**扁平**静态动词；Win11 现代：Sparse `IExplorerCommand` 级联（`oxizip-shellext`）；不注册经典 `ContextMenuHandlers`；禁止 `bdzshl`/`bzshell`/`ark*` | FreeDesktop Actions + Nautilus scripts + KDE service menus | 动作语义对齐（解压三态/测试/校验/ZIP·7z 压缩）；路径含空格须正确引用；Sparse 需签名或开发者模式 |
+| 文件关联 / 默认打开 | `oxizip-cli shell install`：ProgID + `.{ext}` + OpenWithProgids + Capabilities + **经典** `UserChoice`（**不写** `UserChoiceLatest`）；提权时同步 HKLM Classes | 同命令：用户级 `cn.wujunyi.oxizip.desktop` + `xdg-mime default` + 必要时 `~/.local/share/mime/packages`；卸载清理 `mimeapps.list` 中本应用条目 | GUI 关联页勾选的 `--ext` **两边都要生效**；勿只在 Win 写注册表而 Linux 忽略扩展过滤 |
+| 右键 / 文件管理器菜单 | 经典：**扁平**静态动词；Win11 现代：Sparse `IExplorerCommand` 级联（`oxizip-shellext`）；不注册经典 `ContextMenuHandlers`；禁止嵌入/注册第三方壳扩展（如 `ark*`） | FreeDesktop Actions + Nautilus scripts + KDE service menus | 动作语义对齐（解压三态/测试/校验/ZIP·7z 压缩）；路径含空格须正确引用；Sparse 需签名或开发者模式 |
 | 安装 / 卸载 | `oxizip-setup` + `package-windows.ps1` | deb/rpm/AppImage（`package-linux.sh`） | 禁止嵌入第三方安装器资源；Linux 包内 `oxizip.desktop` 与用户级关联可并存 |
 | 外部工具 | Windows 安装包附带 `lib/`；亦可旁路查找 | PATH / 系统 `unrar`、`wimlib-imagex` | 缺失时返回可本地化错误；Linux 不捆绑 |
 | GUI | iced 775×480；字体 YaHei | iced 同尺寸；系统默认字体 | 勿把 Win 专用 API 写进跨平台 UI 路径且不加 `cfg` |
@@ -194,7 +194,7 @@ oxizip-cli / oxizip-gui
 
 #### 不要做（UI）
 
-- 不要复制 Bandizip / 第三方安装器的皮肤、广告页、授权墙或图标集
+- 不要复制第三方专有安装器的皮肤、广告页、授权墙或图标集
 - 不要引入 WebView、花哨多阴影卡片墙、无意义渐变英雄区
 - 不要在 iced UI 线程做重 CPU / 大文件解压；进度必须可感知
 - 不要让危险操作使用 primary 样式；不要让次要操作用 danger

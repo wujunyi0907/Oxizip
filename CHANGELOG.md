@@ -18,7 +18,7 @@
 
 ### Added
 
-- GUI：Bandizip 风格独立设置窗口（`--settings`，左导航：常规 / 文件关联 / 上下文菜单 / 解压 / 压缩 / 查看 / 高级）；语言仍走「设置 → 语言」菜单二级
+- GUI：独立设置窗口（`--settings`，左导航：常规 / 文件关联 / 上下文菜单 / 解压 / 压缩 / 查看 / 高级）；语言仍走「设置 → 语言」菜单二级
 - 设置：关联与右键菜单开关可写回 `shell install`（含 `--menus-only` + `shell_menu.json` 过滤）
 - 设置：重置默认、导出/导入 prefs、临时目录与高级偏好项（含 Zone.Identifier）
 
@@ -26,7 +26,7 @@
 
 - 设置确定写回 Prefs 并应用关联/菜单；`--settings` 进程关闭/Esc 丢弃草稿
 - `--menus-only` 同步刷新已有 ProgID 的双击打开命令（上下文菜单偏好真正生效）
-- 设置对照 Bandizip（不含安全/内置预览）：常规「修改后测试」、上下文菜单解压对话框/打开/并删除与多格式压缩、压缩级别与排除过滤/默认新建目录、查看「类型」列、高级回收站/起始页/临时尽快清理；UTF-8 ZIP 名与排除规则写入 CreateOptions
+- 设置项补齐（不做应用内预览）：常规「修改后测试」、上下文菜单解压对话框/打开/并删除与多格式压缩、压缩级别与排除过滤/默认新建目录、查看「类型」列、高级回收站/起始页/临时尽快清理；UTF-8 ZIP 名与排除规则写入 CreateOptions
 - 设置偏好已接入行为：双击动作 / 隐藏菜单图标、Zone.Identifier 开关、取消解压清理、智能解压单文件进新目录、临时目录、长路径、`[..]`/网格/单击打开、排除 Thumbs.db、单文件夹根目录、压缩后测试等
 
 ## [0.1.7] - 2026-11-21
@@ -42,7 +42,7 @@
 
 - 自研 `oxizip-shellext` + Win11 Sparse Package（`IExplorerCommand` 级联，仅拉起 `oxizip-cli`）
 - Sparse 注册/卸载脚本；安装包捆绑 DLL、已签名 Sparse MSIX 与发布者证书
-- GUI 紧凑作业进度窗（`--job create|extract`，对齐 Bandizip：双进度条 / 用时 / 停止 / 完成后关闭）
+- GUI 紧凑作业进度窗（`--job create|extract`：双进度条 / 用时 / 停止 / 完成后关闭）
 - 右键压缩与解压（此处 / 智能 / 归档名目录）改为拉起 GUI 进度窗（经典动词与 Sparse）
 - 解压遇同名文件时提示「覆盖」或「自动改名」（`name (1).ext`）
 - Win11 Sparse 注册：信任自签 `CN=Oxizip`、AllowAllTrustedApps；安装器强制尝试注册现代右键菜单
@@ -57,7 +57,7 @@
 ### Fixed
 
 - CLI：`create --beside` 误把输入路径当成 ARCHIVE，导致右键「压缩为 ZIP/7z」闪退且无产物
-- 卸载残留：对齐 Bandizip（`launch_in_temp` + `CloseApp explorer` + `DeleteFolderRec`/`SHFileOperation`），点「完成」后彻底删除安装目录
+- 卸载残留：临时进程清目录（`launch_in_temp` + 关闭 explorer + `DeleteFolderRec`/`SHFileOperation`），点「完成」后彻底删除安装目录
 - 关联页说明去掉「ProgID / UserChoice / 可稍后」技术旁注
 - Win11 现代右键：打包时预签名 Sparse MSIX（`oxizip-shellext.msix` + `Oxizip.cer`），安装时信任发布者再 `Add-AppxPackage`；失败回退开发者解锁 + 松散 `-Register`，并写入 `sparse-register.log`
 - Win11 Sparse 注册：去掉安装过程中的 `regsvr32`（易被 AV 卡住导致安装器一直「处理中」）；`Add-AppxPackage` 与安装器侧均加超时，超时后仍完成安装
@@ -83,7 +83,7 @@
 
 ### Added
 
-- 多尺寸格式图标（对齐 Bandizip 的 7 档 ICO：含 8 位/32 位 BMP-DIB 与 AND 掩码）
+- 多尺寸格式图标（7 档 ICO：含 8 位/32 位 BMP-DIB 与 AND 掩码）
 - 安装器专用 `oxizip-setup.ico`（品牌 + UAC 盾）与独立 `oxizip-uac.ico`
 
 ### Changed

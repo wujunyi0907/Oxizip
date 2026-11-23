@@ -99,7 +99,7 @@ pub fn icon_path_for_ext(icons_dir: &Path, ext: &str) -> PathBuf {
 }
 
 /// Format for registry DefaultIcon / Icon values.
-/// Match Bandizip: bare `.ico` path (no `,0`). Quotes only when the path has spaces.
+/// Bare `.ico` path (no `,0`). Quotes only when the path has spaces.
 pub fn icon_registry_value(icon: &Path) -> String {
     let path = normalize_shell_path(icon);
     let s = path.display().to_string();

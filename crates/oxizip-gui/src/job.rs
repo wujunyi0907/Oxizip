@@ -1,4 +1,4 @@
-//! Shell-launched compact job dialog (`--job create|extract …`), Bandizip-style progress.
+//! Shell-launched compact job dialog (`--job create|extract …`) with dual progress.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

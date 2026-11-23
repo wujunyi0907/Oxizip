@@ -1,6 +1,6 @@
 //! Cross-platform shell / file-manager integration.
 //!
-//! Windows: ProgID / Capabilities / classic UserChoice (Bandizip-aligned; no UserChoiceLatest).
+//! Windows: ProgID / Capabilities / classic UserChoice (no UserChoiceLatest).
 //! Linux: FreeDesktop default open (`.desktop` + `xdg-mime`) + Nautilus / KDE menus.
 //! Both honor the GUI association page `--ext` selection.
 

@@ -3,7 +3,7 @@
 //! - Win11 modern menu: `IExplorerCommand` via Sparse Package / SurrogateServer
 //! - Classic menu: `IShellExtInit` + `IContextMenu3` via ContextMenuHandlers
 //!
-//! Never links ark / Bandizip DLLs. All actions spawn sibling `oxizip-cli.exe`.
+//! Never links third-party proprietary shell DLLs (`ark*` etc.). All actions spawn sibling `oxizip-cli.exe`.
 
 #![allow(non_snake_case)]
 
