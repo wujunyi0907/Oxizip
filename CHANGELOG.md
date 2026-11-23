@@ -6,6 +6,8 @@
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-23
+
 ### Fixed
 
 - i18n：`locales/*.toml` 随安装分发；用户可增改语言文件，重启后生效（亦支持 %APPDATA%\Oxizip\locales）
@@ -148,7 +150,8 @@
 - 二进制命名：GUI = `oxizip`，CLI = `oxizip-cli`
 - 应用 ID：`cn.wujunyi.oxizip`
 
-[Unreleased]: https://github.com/wujunyi0907/Oxizip/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/wujunyi0907/Oxizip/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.8
 [0.1.7]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.7
 [0.1.6]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.6
 [0.1.5]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.5
