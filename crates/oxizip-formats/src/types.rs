@@ -217,6 +217,8 @@ pub struct ExtractOptions {
     /// When set, only extract matching entry names (exact).
     pub entries: Option<Vec<String>>,
     pub conflict: ConflictPolicy,
+    /// Copy the archive Zone.Identifier ADS onto extracted files (Windows).
+    pub copy_zone_identifier: bool,
 }
 
 impl ExtractOptions {
@@ -226,11 +228,12 @@ impl ExtractOptions {
             password: None,
             entries: None,
             conflict: ConflictPolicy::Overwrite,
+            copy_zone_identifier: true,
         }
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CreateOptions {
     pub password: Option<String>,
     /// Compression level hint (format-specific; e.g. 0–9).
@@ -241,4 +244,64 @@ pub struct CreateOptions {
     pub volume_size: Option<u64>,
     /// ZIP encryption algorithm when password is set.
     pub zip_crypto: ZipCryptoKind,
+    /// Skip `Thumbs.db` when walking folders.
+    pub exclude_thumbs_db: bool,
+    /// When compressing one folder, store entries without that folder as root.
+    pub no_root_for_single_folder: bool,
+    /// Prefer UTF-8 ZIP name flag for Unicode names (default on).
+    pub utf8_names: bool,
+    /// Extra exclude patterns (e.g. `*.tmp`, `desktop.ini`); matched against file name.
+    pub exclude_patterns: Vec<String>,
+}
+
+impl Default for CreateOptions {
+    fn default() -> Self {
+        Self {
+            password: None,
+            level: None,
+            method: None,
+            volume_size: None,
+            zip_crypto: ZipCryptoKind::default(),
+            exclude_thumbs_db: true,
+            no_root_for_single_folder: false,
+            utf8_names: true,
+            exclude_patterns: Vec::new(),
+        }
+    }
+}
+
+impl CreateOptions {
+    /// True when `path`'s file name should be skipped by thumbs / exclude_patterns.
+    pub fn should_exclude_file(&self, path: &std::path::Path) -> bool {
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            return false;
+        };
+        if self.exclude_thumbs_db && name.eq_ignore_ascii_case("Thumbs.db") {
+            return true;
+        }
+        for pat in &self.exclude_patterns {
+            let pat = pat.trim();
+            if pat.is_empty() {
+                continue;
+            }
+            if pattern_matches(pat, name) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+fn pattern_matches(pat: &str, name: &str) -> bool {
+    if let Some(rest) = pat.strip_prefix("*.") {
+        return name
+            .rsplit_once('.')
+            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case(rest));
+    }
+    if let Some(prefix) = pat.strip_suffix('*') {
+        return name
+            .to_ascii_lowercase()
+            .starts_with(&prefix.to_ascii_lowercase());
+    }
+    name.eq_ignore_ascii_case(pat)
 }

@@ -47,7 +47,7 @@ impl OxizipShellExt {
         let paths = self.paths.borrow();
         let kind = selection_kind(&paths);
         *self.kind.borrow_mut() = kind;
-        *self.actions.borrow_mut() = child_actions(kind).to_vec();
+        *self.actions.borrow_mut() = child_actions(kind);
     }
 }
 
@@ -94,7 +94,7 @@ impl IShellExtInit_Impl for OxizipShellExt_Impl {
         }
         if paths.is_empty() {
             *self.kind.borrow_mut() = SelectionKind::Background;
-            *self.actions.borrow_mut() = child_actions(SelectionKind::Background).to_vec();
+            *self.actions.borrow_mut() = child_actions(SelectionKind::Background);
             *self.paths.borrow_mut() = paths;
         } else {
             *self.paths.borrow_mut() = paths;

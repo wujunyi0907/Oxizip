@@ -8,6 +8,7 @@ mod job;
 mod licenses;
 mod menu;
 mod prefs;
+mod settings;
 mod setup;
 mod shell_ops;
 mod worker;
@@ -34,6 +35,7 @@ use oxizip_engine::{
 };
 use oxizip_i18n::{t, Lang};
 use prefs::{ColorAccent, ListViewMode, Prefs, ToolbarSize};
+use settings::{SettingsMsg, SettingsTab, SettingsView};
 use std::collections::BTreeMap;
 use tempfile::TempDir;
 use worker::{spawn_job, JobKind, JobOutcome, ProgressSlot};
@@ -128,6 +130,8 @@ impl std::fmt::Display for LicenseFilter {
 
 /// Single size for main GUI screens (association, main, licenses, …).
 const APP_WINDOW_SIZE: Size = Size::new(775.0, 480.0);
+/// Dedicated settings dialog (Bandizip-style separate window).
+const SETTINGS_WINDOW_SIZE: Size = Size::new(700.0, 460.0);
 const WINDOW_RADIUS: f32 = 12.0;
 const CONTROL_RADIUS: f32 = 8.0;
 
@@ -140,9 +144,12 @@ fn center_on_monitor(size: Size, monitor: Size) -> Point {
 
 fn main() -> iced::Result {
     let job_mode = job::parse_job_args().is_some();
+    let settings_mode = setup::parse_settings_launch().is_some();
     let mut window = iced::window::Settings {
         size: if job_mode {
             job::JOB_WINDOW_SIZE
+        } else if settings_mode {
+            SETTINGS_WINDOW_SIZE
         } else {
             APP_WINDOW_SIZE
         },
@@ -165,6 +172,7 @@ fn main() -> iced::Result {
 #[cfg(windows)]
 fn apply_native_window_rounding(raw_id: u64) {
     // Win11 DWM rounded corners for the HWND backing this iced window.
+    // Prefer ROUND over ROUNDSMALL so 700×460 settings matches the 775×480 main look.
     #[link(name = "dwmapi")]
     extern "system" {
         fn DwmSetWindowAttribute(
@@ -176,13 +184,24 @@ fn apply_native_window_rounding(raw_id: u64) {
     }
     const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
     const DWMWCP_ROUND: i32 = 2;
+    // Avoid a system-drawn dark border fighting the iced 1px frame on transparent windows.
+    const DWMWA_BORDER_COLOR: u32 = 34;
+    const DWMWA_COLOR_NONE: u32 = 0xFFFFFFFE;
     unsafe {
+        let hwnd = raw_id as *mut core::ffi::c_void;
         let pref = DWMWCP_ROUND;
         let _ = DwmSetWindowAttribute(
-            raw_id as *mut core::ffi::c_void,
+            hwnd,
             DWMWA_WINDOW_CORNER_PREFERENCE,
             (&pref as *const i32).cast(),
             std::mem::size_of_val(&pref) as u32,
+        );
+        let border = DWMWA_COLOR_NONE;
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR,
+            (&border as *const u32).cast(),
+            std::mem::size_of_val(&border) as u32,
         );
     }
 }
@@ -327,30 +346,6 @@ impl std::fmt::Display for MethodLabel {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LangLabel {
-    Zh,
-    En,
-}
-
-impl LangLabel {
-    fn to_lang(self) -> Lang {
-        match self {
-            Self::Zh => Lang::ZhCn,
-            Self::En => Lang::En,
-        }
-    }
-}
-
-impl std::fmt::Display for LangLabel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Zh => f.write_str("中文"),
-            Self::En => f.write_str("EN"),
-        }
-    }
-}
-
 struct Busy {
     cancel: oxizip_engine::CancellationToken,
     progress: ProgressSlot,
@@ -405,6 +400,21 @@ struct OxizipApp {
     clipboard_temp: Option<Arc<TempDir>>,
     pending_repair: Option<PathBuf>,
     window_id: Option<window::Id>,
+    settings_tab: SettingsTab,
+    /// Short feedback line on the Settings screen (never the full CLI log).
+    settings_status: String,
+    /// Dedicated `--settings` process (Bandizip-style dialog).
+    settings_mode: bool,
+    /// Draft prefs edited in the settings dialog; committed only on OK.
+    settings_draft: Prefs,
+    settings_draft_exts: BTreeMap<&'static str, bool>,
+    /// Reload prefs.json while a spawned settings dialog may still be open.
+    prefs_watch_until: Option<std::time::Instant>,
+    prefs_mtime: Option<std::time::SystemTime>,
+    /// Native HWND of the main iced window (for modal disable).
+    main_hwnd: Option<u64>,
+    /// Child `--settings` process; main stays visible but non-operable.
+    settings_child: Option<std::process::Child>,
 }
 
 impl Default for OxizipApp {
@@ -454,6 +464,15 @@ impl Default for OxizipApp {
             clipboard_temp: None,
             pending_repair: None,
             window_id: None,
+            settings_tab: SettingsTab::General,
+            settings_status: String::new(),
+            settings_mode: false,
+            settings_draft: Prefs::default(),
+            settings_draft_exts: setup::default_assoc_selection(),
+            prefs_watch_until: None,
+            prefs_mtime: None,
+            main_hwnd: None,
+            settings_child: None,
         }
     }
 }
@@ -485,10 +504,11 @@ enum Message {
     WordlistChosen(Option<PathBuf>),
     FindApply,
     FindClear,
-    SettingsBack,
-    SettingsFormat(FormatLabel),
-    SettingsMethod(MethodLabel),
-    SettingsOpenDest(bool),
+    Settings(SettingsMsg),
+    SettingsBrowseTemp(Option<PathBuf>),
+    SettingsBrowseNewArchiveFolder(Option<PathBuf>),
+    SettingsExportPath(Option<PathBuf>),
+    SettingsImportPath(Option<PathBuf>),
     ToolbarFlagToggled(ToolbarFlag, bool),
     ColorPicked(ColorAccent),
     ToggleSelect(usize),
@@ -501,11 +521,11 @@ enum Message {
     ConfirmDeleteArchive,
     FormatSelected(FormatLabel),
     MethodSelected(MethodLabel),
-    LangSelected(LangLabel),
     PasswordChanged(String),
     OpenEntry(usize),
     ArchiveChosen(Option<PathBuf>),
     ExtractDirChosen(Option<PathBuf>),
+    ShellExtractDialogChosen(Option<PathBuf>),
     CreateInputsChosen(Option<Vec<PathBuf>>),
     CreateOutputChosen(Option<PathBuf>),
     AddInputsChosen(Option<Vec<PathBuf>>),
@@ -524,6 +544,8 @@ enum Message {
     JobConflictCancel,
     WindowId(Option<window::Id>),
     RawWindowId(u64),
+    /// Click on the modal blocker while settings child is open (ignored).
+    SettingsModalNop,
     TitleDrag,
     Minimize,
     Close,
@@ -532,9 +554,13 @@ enum Message {
 impl OxizipApp {
     fn new() -> (Self, Task<Message>) {
         let pending_job = job::parse_job_args();
+        let settings_tab_arg = setup::parse_settings_launch();
+        let settings_mode = settings_tab_arg.is_some();
         let (force_setup, pending_open) = setup::parse_launch_args();
         let screen = if pending_job.is_some() {
             Screen::Job
+        } else if settings_mode {
+            Screen::Settings
         } else if setup::needs_first_run_setup(force_setup) {
             Screen::Setup
         } else {
@@ -544,7 +570,16 @@ impl OxizipApp {
         let lang = prefs.lang_enum();
         let create_format = prefs.default_format_id();
         let create_method = method_label_from_prefs(&prefs);
-        let always_on_top = prefs.always_on_top;
+        let always_on_top = prefs.always_on_top && !settings_mode;
+        let settings_tab = settings_tab_arg
+            .as_deref()
+            .and_then(SettingsTab::parse_cli)
+            .unwrap_or(SettingsTab::General);
+        let settings_draft = prefs.clone();
+        let settings_draft_exts = setup::default_assoc_selection();
+        let prefs_mtime = std::fs::metadata(prefs::prefs_path())
+            .and_then(|m| m.modified())
+            .ok();
         let mut app = Self {
             lang,
             prefs,
@@ -553,6 +588,11 @@ impl OxizipApp {
             create_method,
             screen,
             pending_open,
+            settings_mode,
+            settings_tab,
+            settings_draft,
+            settings_draft_exts,
+            prefs_mtime,
             ..Self::default()
         };
         let job_task = match pending_job {
@@ -609,7 +649,530 @@ impl OxizipApp {
         self.take_pending_open_task()
     }
 
+    fn lang_arg(&self) -> &'static str {
+        match self.lang {
+            Lang::ZhCn => "zh-cn",
+            Lang::En => "en",
+        }
+    }
+
+    fn save_prefs(&mut self) {
+        self.prefs.save();
+        self.prefs.write_shell_menu_sidecar();
+    }
+
+    /// Settings-page feedback only — keep it short so the layout is not crushed.
+    fn set_settings_status(&mut self, msg: impl Into<String>) {
+        let mut s = msg.into();
+        // Drop verbose CLI tails after the first sentence / em dash detail.
+        if let Some((head, _)) = s.split_once(" (") {
+            s = head.trim_end_matches('—').trim().to_string();
+        }
+        if s.chars().count() > 80 {
+            s = s.chars().take(77).collect::<String>() + "…";
+        }
+        self.settings_status = s;
+    }
+
+    fn commit_settings_ok(&mut self) -> Task<Message> {
+        self.prefs = self.settings_draft.clone();
+        self.setup_exts = self.settings_draft_exts.clone();
+        self.lang = self.prefs.lang_enum();
+        self.create_format = self.prefs.default_format_id();
+        self.create_method = method_label_from_prefs(&self.prefs);
+        self.save_prefs();
+        self.prefs_mtime = std::fs::metadata(prefs::prefs_path())
+            .and_then(|m| m.modified())
+            .ok();
+
+        let lang_arg = self.lang_arg();
+        let selected = setup::selected_exts(&self.setup_exts);
+        if !selected.is_empty() {
+            match setup::install_associations(lang_arg, &selected) {
+                Ok(_) => {
+                    setup::mark_setup_done();
+                    self.last_error = None;
+                }
+                Err(e) => {
+                    self.last_error = Some(format!("{}: {e}", t(self.lang, "gui.setup.failed")));
+                    self.set_settings_status(t(self.lang, "gui.setup.failed"));
+                    return Task::none();
+                }
+            }
+        }
+        if let Err(e) = setup::install_menus_only(lang_arg) {
+            self.last_error = Some(format!("{}: {e}", t(self.lang, "gui.setup.failed")));
+            self.set_settings_status(t(self.lang, "gui.setup.failed"));
+            return Task::none();
+        }
+        self.set_settings_status(t(self.lang, "gui.settings.status.assoc_ok"));
+        if self.settings_mode {
+            // Standalone `--settings` process: close after apply.
+            return self
+                .window_id
+                .map(window::close)
+                .unwrap_or_else(Task::none);
+        }
+        self.leave_settings()
+    }
+
+    fn open_settings_modal(&mut self, tab: Option<&str>) -> Task<Message> {
+        // Already running as the settings process — stay in-process.
+        if self.settings_mode {
+            self.settings_tab = tab
+                .and_then(SettingsTab::parse_cli)
+                .unwrap_or(SettingsTab::General);
+            self.settings_draft = self.prefs.clone();
+            self.settings_draft_exts = self.setup_exts.clone();
+            if self.settings_draft_exts.is_empty() {
+                self.settings_draft_exts = setup::default_assoc_selection();
+            }
+            self.settings_status.clear();
+            self.last_error = None;
+            self.menu_popup = MenuPopup::None;
+            self.screen = Screen::Settings;
+            return Task::none();
+        }
+        // Main window: spawn a sibling `--settings` process and disable this HWND.
+        if self.settings_child.is_some() {
+            return Task::none();
+        }
+        self.menu_popup = MenuPopup::None;
+        let tab_name = tab
+            .and_then(SettingsTab::parse_cli)
+            .map(SettingsTab::cli_name);
+        match shell_ops::spawn_settings_window(tab_name) {
+            Ok(child) => {
+                self.settings_child = Some(child);
+                if let Some(hwnd) = self.main_hwnd {
+                    shell_ops::set_native_window_enabled(hwnd, false);
+                }
+                self.prefs_watch_until =
+                    Some(std::time::Instant::now() + Duration::from_secs(3600));
+            }
+            Err(e) => {
+                self.last_error = Some(format!("{}: {e}", t(self.lang, "gui.setup.failed")));
+            }
+        }
+        Task::none()
+    }
+
+    fn leave_settings(&mut self) -> Task<Message> {
+        if self.settings_mode {
+            return self
+                .window_id
+                .map(window::close)
+                .unwrap_or_else(Task::none);
+        }
+        // In-process Settings screen is no longer used from main; keep as safety.
+        self.screen = Screen::Main;
+        self.settings_status.clear();
+        Task::none()
+    }
+
+    fn finish_settings_child(&mut self) -> Task<Message> {
+        if let Some(mut child) = self.settings_child.take() {
+            let _ = child.try_wait();
+        }
+        if let Some(hwnd) = self.main_hwnd {
+            shell_ops::set_native_window_enabled(hwnd, true);
+        }
+        self.prefs_watch_until = None;
+        self.maybe_reload_prefs_from_disk()
+    }
+
+    fn poll_settings_child(&mut self) -> Task<Message> {
+        let Some(child) = self.settings_child.as_mut() else {
+            return Task::none();
+        };
+        match child.try_wait() {
+            Ok(Some(_)) => self.finish_settings_child(),
+            Ok(None) => Task::none(),
+            Err(_) => self.finish_settings_child(),
+        }
+    }
+
+    fn maybe_reload_prefs_from_disk(&mut self) -> Task<Message> {
+        if self.settings_mode || self.settings_child.is_some() {
+            return Task::none();
+        }
+        let path = prefs::prefs_path();
+        let Ok(meta) = std::fs::metadata(&path) else {
+            return Task::none();
+        };
+        let Ok(modified) = meta.modified() else {
+            return Task::none();
+        };
+        if self.prefs_mtime.is_some_and(|t| t >= modified) {
+            return Task::none();
+        }
+        let loaded = Prefs::load();
+        let on_top = loaded.always_on_top;
+        self.lang = loaded.lang_enum();
+        self.create_format = loaded.default_format_id();
+        self.create_method = method_label_from_prefs(&loaded);
+        self.prefs = loaded;
+        self.prefs_mtime = Some(modified);
+        apply_window_level(on_top)
+    }
+
+    fn handle_settings(&mut self, msg: SettingsMsg) -> Task<Message> {
+        let draft = &mut self.settings_draft;
+        match msg {
+            SettingsMsg::Tab(tab) => {
+                self.settings_tab = tab;
+                Task::none()
+            }
+            SettingsMsg::Ok => self.commit_settings_ok(),
+            SettingsMsg::Reset => {
+                let passwords = draft.passwords.clone();
+                let recent = draft.recent.clone();
+                let lang = draft.lang_enum();
+                *draft = Prefs::default();
+                draft.passwords = passwords;
+                draft.recent = recent;
+                draft.set_lang(lang);
+                self.settings_draft_exts = setup::default_assoc_selection();
+                self.set_settings_status(t(self.lang, "gui.settings.status.reset"));
+                Task::none()
+            }
+            SettingsMsg::ExtToggled(ext, on) => {
+                self.settings_draft_exts.insert(ext, on);
+                Task::none()
+            }
+            SettingsMsg::ToggleSelectAllAssoc => {
+                let all_on = !self.settings_draft_exts.is_empty()
+                    && self.settings_draft_exts.values().all(|v| *v);
+                for v in self.settings_draft_exts.values_mut() {
+                    *v = !all_on;
+                }
+                Task::none()
+            }
+            SettingsMsg::SelectAllAssocDefaults => {
+                self.settings_draft_exts = setup::default_assoc_selection();
+                for v in self.settings_draft_exts.values_mut() {
+                    *v = true;
+                }
+                Task::none()
+            }
+            SettingsMsg::DoubleClick(action) => {
+                draft.shell.double_click = action;
+                Task::none()
+            }
+            SettingsMsg::DeleteAfterDblExtract(v) => {
+                draft.shell.delete_after_dbl_extract = v;
+                Task::none()
+            }
+            SettingsMsg::ShellExtractHere(v) => {
+                draft.shell.extract_here = v;
+                Task::none()
+            }
+            SettingsMsg::ShellExtractSmart(v) => {
+                draft.shell.extract_smart = v;
+                Task::none()
+            }
+            SettingsMsg::ShellExtractToFolder(v) => {
+                draft.shell.extract_to_folder = v;
+                Task::none()
+            }
+            SettingsMsg::ShellExtractHereDel(v) => {
+                draft.shell.extract_here_del = v;
+                Task::none()
+            }
+            SettingsMsg::ShellExtractSmartDel(v) => {
+                draft.shell.extract_smart_del = v;
+                Task::none()
+            }
+            SettingsMsg::ShellExtractToFolderDel(v) => {
+                draft.shell.extract_to_folder_del = v;
+                Task::none()
+            }
+            SettingsMsg::ShellExtractDialog(v) => {
+                draft.shell.extract_dialog = v;
+                Task::none()
+            }
+            SettingsMsg::ShellOpenWith(v) => {
+                draft.shell.open_with = v;
+                Task::none()
+            }
+            SettingsMsg::ShellTest(v) => {
+                draft.shell.test = v;
+                Task::none()
+            }
+            SettingsMsg::ShellChecksum(v) => {
+                draft.shell.checksum = v;
+                Task::none()
+            }
+            SettingsMsg::ShellCompressZip(v) => {
+                draft.shell.compress_zip = v;
+                Task::none()
+            }
+            SettingsMsg::ShellCompress7z(v) => {
+                draft.shell.compress_7z = v;
+                Task::none()
+            }
+            SettingsMsg::ShellCompressZipx(v) => {
+                draft.shell.compress_zipx = v;
+                Task::none()
+            }
+            SettingsMsg::ShellCompressTar(v) => {
+                draft.shell.compress_tar = v;
+                Task::none()
+            }
+            SettingsMsg::ShellCompressTgz(v) => {
+                draft.shell.compress_tgz = v;
+                Task::none()
+            }
+            SettingsMsg::ShellCompressGz(v) => {
+                draft.shell.compress_gz = v;
+                Task::none()
+            }
+            SettingsMsg::ShellCompressXz(v) => {
+                draft.shell.compress_xz = v;
+                Task::none()
+            }
+            SettingsMsg::ShellCompressZpaq(v) => {
+                draft.shell.compress_zpaq = v;
+                Task::none()
+            }
+            SettingsMsg::ShellCompressEachZip(v) => {
+                draft.shell.compress_each_zip = v;
+                Task::none()
+            }
+            SettingsMsg::ShellCompressEach7z(v) => {
+                draft.shell.compress_each_7z = v;
+                Task::none()
+            }
+            SettingsMsg::ShellCascaded(v) => {
+                draft.shell.cascaded = v;
+                Task::none()
+            }
+            SettingsMsg::ShellDisabled(v) => {
+                draft.shell.disabled = v;
+                Task::none()
+            }
+            SettingsMsg::ShellHideIcon(v) => {
+                draft.shell.hide_icon = v;
+                Task::none()
+            }
+            SettingsMsg::EscToExit(v) => {
+                draft.esc_to_exit = v;
+                Task::none()
+            }
+            SettingsMsg::ShowDotDot(v) => {
+                draft.show_dotdot = v;
+                Task::none()
+            }
+            SettingsMsg::ShowGrid(v) => {
+                draft.show_gridlines = v;
+                Task::none()
+            }
+            SettingsMsg::FullRowSelect(v) => {
+                draft.full_row_select = v;
+                Task::none()
+            }
+            SettingsMsg::SingleClickOpen(v) => {
+                draft.single_click_open = v;
+                Task::none()
+            }
+            SettingsMsg::AlwaysOnTop(v) => {
+                draft.always_on_top = v;
+                Task::none()
+            }
+            SettingsMsg::ShowStatusBar(v) => {
+                draft.show_status_bar = v;
+                Task::none()
+            }
+            SettingsMsg::TestAfterModify(v) => {
+                draft.test_after_modify = v;
+                Task::none()
+            }
+            SettingsMsg::ShowTree(v) => {
+                draft.show_tree = v;
+                Task::none()
+            }
+            SettingsMsg::ShowComment(v) => {
+                draft.show_comment = v;
+                Task::none()
+            }
+            SettingsMsg::OpenDest(v) => {
+                draft.open_dest_after_extract = v;
+                Task::none()
+            }
+            SettingsMsg::JobKeepOpenExtract(v) => {
+                draft.job_keep_open_after_extract = v;
+                Task::none()
+            }
+            SettingsMsg::JobKeepOpenCreate(v) => {
+                draft.job_keep_open_after_create = v;
+                Task::none()
+            }
+            SettingsMsg::EnterSingleRoot(v) => {
+                draft.enter_single_root_folder = v;
+                Task::none()
+            }
+            SettingsMsg::SmartSingleFileFolder(v) => {
+                draft.smart_single_file_folder = v;
+                Task::none()
+            }
+            SettingsMsg::DefaultFormat(id) => {
+                draft.set_default_format(id);
+                Task::none()
+            }
+            SettingsMsg::DefaultMethodAuto => {
+                draft.set_default_method_auto();
+                Task::none()
+            }
+            SettingsMsg::DefaultMethod(id) => {
+                draft.set_default_method(id);
+                Task::none()
+            }
+            SettingsMsg::CompressionLevel(level) => {
+                draft.compression_level = level;
+                Task::none()
+            }
+            SettingsMsg::Utf8Zip(v) => {
+                draft.utf8_zip_names = v;
+                Task::none()
+            }
+            SettingsMsg::ExcludeThumbsDb(v) => {
+                draft.exclude_thumbs_db = v;
+                Task::none()
+            }
+            SettingsMsg::TestAfterCompress(v) => {
+                draft.test_after_compress = v;
+                Task::none()
+            }
+            SettingsMsg::NoRootSingleFolder(v) => {
+                draft.no_root_for_single_folder = v;
+                Task::none()
+            }
+            SettingsMsg::NewArchiveUseLast(v) => {
+                draft.new_archive_use_last = v;
+                Task::none()
+            }
+            SettingsMsg::NewArchiveFolderChanged(s) => {
+                draft.new_archive_folder = s;
+                Task::none()
+            }
+            SettingsMsg::BrowseNewArchiveFolder => Task::perform(
+                async {
+                    rfd::AsyncFileDialog::new()
+                        .pick_folder()
+                        .await
+                        .map(|f| f.path().to_path_buf())
+                },
+                Message::SettingsBrowseNewArchiveFolder,
+            ),
+            SettingsMsg::ExcludeFilterChanged(s) => {
+                draft.exclude_filter = s;
+                Task::none()
+            }
+            SettingsMsg::ColSize(v) => {
+                draft.columns.size = v;
+                Task::none()
+            }
+            SettingsMsg::ColCompressed(v) => {
+                draft.columns.compressed = v;
+                Task::none()
+            }
+            SettingsMsg::ColMethod(v) => {
+                draft.columns.method = v;
+                Task::none()
+            }
+            SettingsMsg::ColModified(v) => {
+                draft.columns.modified = v;
+                Task::none()
+            }
+            SettingsMsg::ColKind(v) => {
+                draft.columns.kind = v;
+                Task::none()
+            }
+            SettingsMsg::ColorAccent(accent) => {
+                draft.color_accent = accent;
+                Task::none()
+            }
+            SettingsMsg::CopyZoneId(v) => {
+                draft.copy_zone_identifier = v;
+                Task::none()
+            }
+            SettingsMsg::ShowRecent(v) => {
+                draft.show_recent = v;
+                Task::none()
+            }
+            SettingsMsg::UseLongPaths(v) => {
+                draft.use_long_paths = v;
+                Task::none()
+            }
+            SettingsMsg::DeleteOnCancel(v) => {
+                draft.delete_on_extract_cancel = v;
+                Task::none()
+            }
+            SettingsMsg::TitleFullPath(v) => {
+                draft.title_full_path = v;
+                Task::none()
+            }
+            SettingsMsg::AutoExpandTree(v) => {
+                draft.auto_expand_tree = v;
+                Task::none()
+            }
+            SettingsMsg::DeleteToTrash(v) => {
+                draft.delete_to_trash = v;
+                Task::none()
+            }
+            SettingsMsg::ShowStartScreen(v) => {
+                draft.show_start_screen = v;
+                Task::none()
+            }
+            SettingsMsg::DeleteTempAsap(v) => {
+                draft.delete_temp_asap = v;
+                Task::none()
+            }
+            SettingsMsg::TempFolderChanged(s) => {
+                draft.temp_folder = s;
+                Task::none()
+            }
+            SettingsMsg::BrowseTempFolder => Task::perform(
+                async {
+                    rfd::AsyncFileDialog::new()
+                        .pick_folder()
+                        .await
+                        .map(|f| f.path().to_path_buf())
+                },
+                Message::SettingsBrowseTemp,
+            ),
+            SettingsMsg::ExportPrefs => Task::perform(
+                async {
+                    rfd::AsyncFileDialog::new()
+                        .add_filter("JSON", &["json"])
+                        .set_file_name("oxizip-prefs.json")
+                        .save_file()
+                        .await
+                        .map(|f| f.path().to_path_buf())
+                },
+                Message::SettingsExportPath,
+            ),
+            SettingsMsg::ImportPrefs => Task::perform(
+                async {
+                    rfd::AsyncFileDialog::new()
+                        .add_filter("JSON", &["json"])
+                        .pick_file()
+                        .await
+                        .map(|f| f.path().to_path_buf())
+                },
+                Message::SettingsImportPath,
+            ),
+            SettingsMsg::ClearRecent => {
+                draft.clear_recent();
+                Task::none()
+            }
+        }
+    }
+
     fn title(&self) -> String {
+        if self.settings_mode || self.screen == Screen::Settings {
+            return format!("{} - {}", t(self.lang, "gui.settings.title"), t(self.lang, "app.name"));
+        }
         if self.screen == Screen::Job {
             let pct = (self.progress_fraction * 100.0).round() as i32;
             let name = self
@@ -625,6 +1188,11 @@ impl OxizipApp {
                 (job::JobVerb::Extract, true) => t(self.lang, "gui.status.extracted"),
             };
             return format!("{pct}% {verb} {name} - {}", t(self.lang, "app.name"));
+        }
+        if self.prefs.title_full_path {
+            if let Some(path) = self.archive.as_ref() {
+                return format!("{} - {}", path.display(), t(self.lang, "app.name"));
+            }
         }
         t(self.lang, "app.name").to_string()
     }
@@ -643,10 +1211,52 @@ impl OxizipApp {
     }
 
     fn create_options(&self) -> CreateOptions {
+        let exclude_patterns = self
+            .prefs
+            .exclude_filter
+            .split([';', ','])
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
         CreateOptions {
             password: self.password_opt(),
             method: self.create_method.to_option(),
+            level: self.prefs.compression_level.map(u32::from),
+            exclude_thumbs_db: self.prefs.exclude_thumbs_db,
+            no_root_for_single_folder: self.prefs.no_root_for_single_folder,
+            utf8_names: self.prefs.utf8_zip_names,
+            exclude_patterns,
             ..CreateOptions::default()
+        }
+    }
+
+    fn extract_runtime_prefs(&self) -> worker::ExtractRuntimePrefs {
+        worker::ExtractRuntimePrefs {
+            copy_zone_identifier: self.prefs.copy_zone_identifier,
+            delete_on_cancel: self.prefs.delete_on_extract_cancel,
+            smart_single_file_folder: self.prefs.smart_single_file_folder,
+        }
+    }
+
+    fn maybe_long_path(&self, path: PathBuf) -> PathBuf {
+        #[cfg(windows)]
+        {
+            if !self.prefs.use_long_paths {
+                return path;
+            }
+            let s = path.to_string_lossy();
+            if s.len() < 240 || s.starts_with(r"\\?\") {
+                return path;
+            }
+            if s.starts_with(r"\\") {
+                return PathBuf::from(format!(r"\\?\UNC\{}", s.trim_start_matches(r"\\")));
+            }
+            return PathBuf::from(format!(r"\\?\{s}"));
+        }
+        #[cfg(not(windows))]
+        {
+            path
         }
     }
 
@@ -681,11 +1291,27 @@ impl OxizipApp {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        if self.busy.is_some() {
+        let need_tick = self.busy.is_some()
+            || self.settings_child.is_some()
+            || self
+                .prefs_watch_until
+                .is_some_and(|until| std::time::Instant::now() < until);
+        let tick = if need_tick {
             iced::time::every(Duration::from_millis(100)).map(|_| Message::Tick)
         } else {
             Subscription::none()
-        }
+        };
+        let esc = if self.prefs.esc_to_exit || self.settings_mode {
+            iced::keyboard::on_key_press(|key, _mods| match key {
+                iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+                    Some(Message::Close)
+                }
+                _ => None,
+            })
+        } else {
+            Subscription::none()
+        };
+        Subscription::batch([tick, esc])
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -705,15 +1331,34 @@ impl OxizipApp {
                 Task::batch([round, close])
             }
             Message::RawWindowId(raw) => {
+                self.main_hwnd = Some(raw);
                 apply_native_window_rounding(raw);
+                // Settings child may have started before HWND was known.
+                if self.settings_child.is_some() {
+                    shell_ops::set_native_window_enabled(raw, false);
+                }
                 Task::none()
             }
-            Message::TitleDrag => self.window_id.map(window::drag).unwrap_or_else(Task::none),
-            Message::Minimize => self
-                .window_id
-                .map(|id| window::minimize(id, true))
-                .unwrap_or_else(Task::none),
+            Message::SettingsModalNop => Task::none(),
+            Message::TitleDrag => {
+                if self.settings_child.is_some() {
+                    return Task::none();
+                }
+                self.window_id.map(window::drag).unwrap_or_else(Task::none)
+            }
+            Message::Minimize => {
+                if self.settings_child.is_some() {
+                    return Task::none();
+                }
+                self.window_id
+                    .map(|id| window::minimize(id, true))
+                    .unwrap_or_else(Task::none)
+            }
             Message::Close => {
+                if self.settings_child.is_some() {
+                    // Modal settings open: ignore main close (Bandizip-style).
+                    return Task::none();
+                }
                 if self.screen == Screen::Job {
                     if let Some(busy) = &self.busy {
                         busy.cancel.cancel();
@@ -874,28 +1519,46 @@ impl OxizipApp {
                 self.overlay = Overlay::None;
                 Task::none()
             }
-            Message::SettingsBack => {
-                self.screen = Screen::Main;
-                Task::none()
-            }
-            Message::SettingsFormat(label) => {
-                self.create_format = label.0;
-                self.prefs.set_default_format(label.0);
-                self.prefs.save();
-                Task::none()
-            }
-            Message::SettingsMethod(label) => {
-                self.create_method = label;
-                match label.to_option() {
-                    Some(method) => self.prefs.set_default_method(method),
-                    None => self.prefs.set_default_method_auto(),
+            Message::Settings(msg) => self.handle_settings(msg),
+            Message::SettingsBrowseTemp(path) => {
+                if let Some(path) = path {
+                    self.settings_draft.temp_folder = path.to_string_lossy().into_owned();
                 }
-                self.prefs.save();
                 Task::none()
             }
-            Message::SettingsOpenDest(on) => {
-                self.prefs.open_dest_after_extract = on;
-                self.prefs.save();
+            Message::SettingsBrowseNewArchiveFolder(path) => {
+                if let Some(path) = path {
+                    self.settings_draft.new_archive_folder =
+                        path.to_string_lossy().into_owned();
+                    self.settings_draft.new_archive_use_last = false;
+                }
+                Task::none()
+            }
+            Message::SettingsExportPath(path) => {
+                if let Some(path) = path {
+                    match self.settings_draft.export_to(&path) {
+                        Ok(()) => {
+                            self.set_settings_status(t(self.lang, "gui.settings.status.export_ok"));
+                        }
+                        Err(e) => {
+                            self.last_error = Some(e);
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::SettingsImportPath(path) => {
+                if let Some(path) = path {
+                    match Prefs::import_from(&path) {
+                        Ok(prefs) => {
+                            self.settings_draft = prefs;
+                            self.set_settings_status(t(self.lang, "gui.settings.status.import_ok"));
+                        }
+                        Err(e) => {
+                            self.last_error = Some(e);
+                        }
+                    }
+                }
                 Task::none()
             }
             Message::ToolbarFlagToggled(flag, on) => {
@@ -989,7 +1652,6 @@ impl OxizipApp {
                 self.create_method = label;
                 Task::none()
             }
-            Message::LangSelected(label) => self.set_lang(label.to_lang()),
             Message::PasswordChanged(value) => {
                 self.password = value;
                 Task::none()
@@ -998,6 +1660,20 @@ impl OxizipApp {
             Message::ArchiveChosen(None) => Task::none(),
             Message::ExtractDirChosen(Some(dir)) => self.start_extract(dir),
             Message::ExtractDirChosen(None) => Task::none(),
+            Message::ShellExtractDialogChosen(Some(dir)) => {
+                let Some(mut spec) = self.pending_shell_extract.take() else {
+                    return Task::none();
+                };
+                spec.dest_override = Some(dir);
+                self.pending_shell_extract = Some(spec.clone());
+                self.run_shell_extract(spec, None)
+            }
+            Message::ShellExtractDialogChosen(None) => {
+                self.pending_shell_extract = None;
+                self.job_finished = true;
+                self.status = t(self.lang, "gui.status.canceled").to_string();
+                self.close_job_window()
+            }
             Message::CreateInputsChosen(Some(inputs)) => {
                 if inputs.is_empty() {
                     self.last_error = Some(t(self.lang, "gui.err.need_inputs").into());
@@ -1005,10 +1681,18 @@ impl OxizipApp {
                 }
                 self.pending_create_inputs = Some(inputs);
                 let fmt = self.create_format;
-                Task::perform(pick_create_output(fmt), Message::CreateOutputChosen)
+                let initial = self.prefs.new_archive_dir();
+                Task::perform(
+                    pick_create_output(fmt, initial),
+                    Message::CreateOutputChosen,
+                )
             }
             Message::CreateInputsChosen(None) => Task::none(),
-            Message::CreateOutputChosen(Some(out)) => self.start_create(out),
+            Message::CreateOutputChosen(Some(out)) => {
+                self.prefs.remember_new_archive_dir(&out);
+                self.save_prefs();
+                self.start_create(out)
+            }
             Message::CreateOutputChosen(None) => {
                 self.pending_create_inputs = None;
                 Task::none()
@@ -1029,7 +1713,15 @@ impl OxizipApp {
                     self.progress_file_fraction = snap.file_fraction;
                     self.progress_detail = snap.detail;
                 }
-                Task::none()
+                let settings_done = self.poll_settings_child();
+                if self
+                    .prefs_watch_until
+                    .is_some_and(|until| std::time::Instant::now() >= until)
+                    && self.settings_child.is_none()
+                {
+                    self.prefs_watch_until = None;
+                }
+                Task::batch([settings_done, self.maybe_reload_prefs_from_disk()])
             }
             Message::JobFinished(outcome) => {
                 self.busy = None;
@@ -1094,17 +1786,21 @@ impl OxizipApp {
         let Some(archive) = self.archive.clone() else {
             return Task::none();
         };
+        let dir = self.maybe_long_path(dir);
         self.pending_main_extract = Some((archive.clone(), dir.clone()));
         self.job_conflicts.clear();
         let (cancel, progress) = self.begin_busy(JobKind::Extract);
         let password = self.password_opt();
+        let prefs = self.extract_runtime_prefs();
         let lang = self.lang;
         spawn_job(
             JobKind::Extract,
             cancel,
             progress,
             move |cancel, progress| {
-                worker::extract_archive(archive, dir, password, None, cancel, progress, lang)
+                worker::extract_archive(
+                    archive, dir, password, None, prefs, cancel, progress, lang,
+                )
             },
         )
     }
@@ -1117,32 +1813,12 @@ impl OxizipApp {
             self.last_error = Some(t(self.lang, "gui.err.need_archive").into());
             return Task::none();
         };
-        let parent = archive
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
-        let stem = archive
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "archive".into());
-        let tops: std::collections::BTreeSet<&str> = self
-            .entries
-            .iter()
-            .filter_map(|e| {
-                let name = e.name.trim_matches('/');
-                if name.is_empty() {
-                    None
-                } else {
-                    Some(name.split('/').next().unwrap_or(name))
-                }
-            })
-            .collect();
-        let dest = if tops.len() == 1 {
-            parent
-        } else {
-            parent.join(stem)
-        };
-        self.start_extract(dest)
+        let dest = job::dest_smart(
+            &archive,
+            &self.entries,
+            self.prefs.smart_single_file_folder,
+        );
+        self.start_extract(self.maybe_long_path(dest))
     }
 
     fn start_test(&mut self) -> Task<Message> {
@@ -1205,24 +1881,36 @@ impl OxizipApp {
         self.job_out = Some(spec.out.clone());
         self.job_started = Some(std::time::Instant::now());
         self.job_finished = false;
-        // Keep the dialog open after create so the user can confirm the result.
-        self.job_close_when_done = false;
-        self.job_open_folder = false;
+        self.job_close_when_done = !self.prefs.job_keep_open_after_create;
+        self.job_open_folder = self.prefs.open_dest_after_extract;
         self.create_format = spec.format;
-        let out = spec.out;
-        let inputs = spec.inputs;
         let format = spec.format;
         let opts = self.create_options();
         let lang = self.lang;
         let (cancel, progress) = self.begin_busy(JobKind::Create);
-        spawn_job(
-            JobKind::Create,
-            cancel,
-            progress,
-            move |cancel, progress| {
-                worker::create_archive(out, format, inputs, opts, cancel, progress, lang)
-            },
-        )
+        if spec.each {
+            let inputs = spec.inputs;
+            let ext = format.as_str().to_string();
+            spawn_job(
+                JobKind::Create,
+                cancel,
+                progress,
+                move |cancel, progress| {
+                    worker::create_archive_each(inputs, format, ext, opts, cancel, progress, lang)
+                },
+            )
+        } else {
+            let out = spec.out;
+            let inputs = spec.inputs;
+            spawn_job(
+                JobKind::Create,
+                cancel,
+                progress,
+                move |cancel, progress| {
+                    worker::create_archive(out, format, inputs, opts, cancel, progress, lang)
+                },
+            )
+        }
     }
 
     fn start_shell_extract(&mut self, spec: job::ExtractJob) -> Task<Message> {
@@ -1231,10 +1919,21 @@ impl OxizipApp {
         self.job_out = spec.archives.first().cloned();
         self.job_started = Some(std::time::Instant::now());
         self.job_finished = false;
-        // Keep the dialog open after extract so the user can confirm the result.
-        self.job_close_when_done = false;
-        self.job_open_folder = false;
+        self.job_close_when_done = !self.prefs.job_keep_open_after_extract;
+        self.job_open_folder = self.prefs.open_dest_after_extract;
         self.job_conflicts.clear();
+        if matches!(spec.mode, job::ExtractMode::Dialog) && spec.dest_override.is_none() {
+            self.pending_shell_extract = Some(spec);
+            return Task::perform(
+                async {
+                    rfd::AsyncFileDialog::new()
+                        .pick_folder()
+                        .await
+                        .map(|f| f.path().to_path_buf())
+                },
+                Message::ShellExtractDialogChosen,
+            );
+        }
         self.pending_shell_extract = Some(spec.clone());
         self.run_shell_extract(spec, None)
     }
@@ -1246,7 +1945,9 @@ impl OxizipApp {
     ) -> Task<Message> {
         let archives = spec.archives;
         let mode = spec.mode;
+        let dest_override = spec.dest_override;
         let password = self.password_opt();
+        let prefs = self.extract_runtime_prefs();
         let lang = self.lang;
         let (cancel, progress) = self.begin_busy(JobKind::Extract);
         spawn_job(
@@ -1255,7 +1956,15 @@ impl OxizipApp {
             progress,
             move |cancel, progress| {
                 worker::extract_shell_job(
-                    archives, mode, password, conflict, cancel, progress, lang,
+                    archives,
+                    mode,
+                    dest_override,
+                    password,
+                    conflict,
+                    prefs,
+                    cancel,
+                    progress,
+                    lang,
                 )
             },
         )
@@ -1268,6 +1977,7 @@ impl OxizipApp {
         }
         if let Some((archive, dest)) = self.pending_main_extract.clone() {
             let password = self.password_opt();
+            let prefs = self.extract_runtime_prefs();
             let lang = self.lang;
             let (cancel, progress) = self.begin_busy(JobKind::Extract);
             return spawn_job(
@@ -1280,6 +1990,7 @@ impl OxizipApp {
                         dest,
                         password,
                         Some(policy),
+                        prefs,
                         cancel,
                         progress,
                         lang,
@@ -1346,6 +2057,16 @@ impl OxizipApp {
                 self.job_finished = true;
                 self.progress_fraction = 1.0;
                 self.progress_file_fraction = 1.0;
+                let delete_archives = self
+                    .pending_shell_extract
+                    .as_ref()
+                    .map(|s| s.delete_archive)
+                    .unwrap_or(false);
+                let archives = self
+                    .pending_shell_extract
+                    .as_ref()
+                    .map(|s| s.archives.clone())
+                    .unwrap_or_default();
                 self.pending_shell_extract = None;
                 self.job_conflicts.clear();
                 if let Some(err) = error {
@@ -1353,6 +2074,15 @@ impl OxizipApp {
                     self.status = t(self.lang, "gui.job.extract_failed").to_string();
                     self.progress_detail.clear();
                     return Task::none();
+                }
+                if delete_archives {
+                    for archive in archives {
+                        let _ = if self.prefs.delete_to_trash {
+                            shell_ops::trash_file(&archive)
+                        } else {
+                            shell_ops::delete_file_permanent(&archive)
+                        };
+                    }
                 }
                 self.last_error = None;
                 self.status = t(self.lang, "gui.status.extracted").to_string();
@@ -1411,13 +2141,24 @@ impl OxizipApp {
         }
         let (cancel, progress) = self.begin_busy(JobKind::OpenEntry);
         let password = self.password_opt();
+        let temp_folder = self.prefs.temp_folder.clone();
+        let copy_zone = self.prefs.copy_zone_identifier;
         let lang = self.lang;
         spawn_job(
             JobKind::OpenEntry,
             cancel,
             progress,
             move |cancel, progress| {
-                worker::open_entry(archive, entry, password, cancel, progress, lang)
+                worker::open_entry(
+                    archive,
+                    entry,
+                    password,
+                    temp_folder,
+                    copy_zone,
+                    cancel,
+                    progress,
+                    lang,
+                )
             },
         )
     }
@@ -1440,6 +2181,34 @@ impl OxizipApp {
                     self.entries = entries;
                     self.selected.clear();
                     self.tree_prefix = None;
+                    if self.prefs.enter_single_root_folder {
+                        let tops: std::collections::BTreeSet<String> = self
+                            .entries
+                            .iter()
+                            .filter_map(|e| {
+                                let name = e.name.trim_matches('/');
+                                if name.is_empty() {
+                                    None
+                                } else {
+                                    Some(name.split('/').next().unwrap_or(name).to_string())
+                                }
+                            })
+                            .collect();
+                        if tops.len() == 1 {
+                            if let Some(root) = tops.into_iter().next() {
+                                if self
+                                    .entries
+                                    .iter()
+                                    .any(|e| e.is_dir && e.name.trim_matches('/') == root)
+                                {
+                                    self.tree_prefix = Some(format!("{root}/"));
+                                }
+                            }
+                        }
+                    }
+                    if self.prefs.auto_expand_tree {
+                        self.prefs.show_tree = true;
+                    }
                     self.last_error = None;
                     self.prefs.push_recent(&path);
                     self.prefs.save();
@@ -1495,14 +2264,35 @@ impl OxizipApp {
                         path.display(),
                         format.as_str()
                     );
-                    self.start_list(path)
+                    if self.prefs.test_after_compress {
+                        self.pending_open = Some(path.clone());
+                        let (cancel, progress) = self.begin_busy(JobKind::Test);
+                        let password = self.password_opt();
+                        let lang = self.lang;
+                        spawn_job(JobKind::Test, cancel, progress, move |cancel, progress| {
+                            worker::test_archive_job(path, password, cancel, progress, lang)
+                        })
+                    } else {
+                        self.start_list(path)
+                    }
                 }
             }
             JobOutcome::Opened { name, temp, error } => {
                 if let Some(err) = error {
                     self.last_error = Some(err);
-                } else {
+                } else if self.prefs.delete_temp_asap {
+                    // Keep until next open so the system app can still read the file.
                     self.open_temp = temp;
+                    self.last_error = None;
+                    self.status = format!("{} {}", t(self.lang, "gui.status.opened"), name);
+                } else {
+                    // Leave files on disk (disable auto-clean of this temp dir).
+                    if let Some(t) = temp {
+                        if let Ok(dir) = Arc::try_unwrap(t) {
+                            let _ = dir.keep();
+                        }
+                    }
+                    self.open_temp = None;
                     self.last_error = None;
                     self.status = format!("{} {}", t(self.lang, "gui.status.opened"), name);
                 }
@@ -1511,12 +2301,17 @@ impl OxizipApp {
             JobOutcome::Tested { path, error } => {
                 if let Some(err) = error {
                     self.last_error = Some(err);
+                    self.pending_open = None;
                     Task::none()
                 } else {
                     self.last_error = None;
                     self.status =
                         format!("{} {}", t(self.lang, "gui.status.tested"), path.display());
-                    Task::none()
+                    if let Some(open_path) = self.pending_open.take() {
+                        self.start_list(open_path)
+                    } else {
+                        Task::none()
+                    }
                 }
             }
             JobOutcome::Edited { path, error } => {
@@ -1527,7 +2322,12 @@ impl OxizipApp {
                     self.last_error = None;
                     self.status =
                         format!("{} {}", t(self.lang, "gui.status.edited"), path.display());
-                    self.start_list(path)
+                    if self.prefs.test_after_modify {
+                        self.pending_open = Some(path.clone());
+                        self.start_test()
+                    } else {
+                        self.start_list(path)
+                    }
                 }
             }
             JobOutcome::Renamed { path, error } => {
@@ -1539,7 +2339,12 @@ impl OxizipApp {
                     self.overlay = Overlay::None;
                     self.status =
                         format!("{} {}", t(self.lang, "gui.status.renamed"), path.display());
-                    self.start_list(path)
+                    if self.prefs.test_after_modify {
+                        self.pending_open = Some(path.clone());
+                        self.start_test()
+                    } else {
+                        self.start_list(path)
+                    }
                 }
             }
             JobOutcome::Repaired { path, error } => {
@@ -1841,10 +2646,7 @@ impl OxizipApp {
                 self.overlay = Overlay::Find;
                 Task::none()
             }
-            MenuAction::ShowSettings => {
-                self.screen = Screen::Settings;
-                Task::none()
-            }
+            MenuAction::ShowSettings => self.open_settings_modal(None),
             MenuAction::LangZh => self.set_lang(Lang::ZhCn),
             MenuAction::LangEn => self.set_lang(Lang::En),
             MenuAction::StartScreen => {
@@ -1901,6 +2703,11 @@ impl OxizipApp {
             }
             MenuAction::ToggleColModified => {
                 self.prefs.columns.modified = !self.prefs.columns.modified;
+                self.prefs.save();
+                Task::none()
+            }
+            MenuAction::ToggleColKind => {
+                self.prefs.columns.kind = !self.prefs.columns.kind;
                 self.prefs.save();
                 Task::none()
             }
@@ -1970,12 +2777,11 @@ impl OxizipApp {
                 Task::none()
             }
             MenuAction::Associations => {
-                self.screen = Screen::Setup;
-                self.setup_exts = setup::default_assoc_selection();
                 self.last_error = None;
-                Task::none()
+                self.open_settings_modal(Some("assoc"))
             }
             MenuAction::OpenSettingsLang => {
+                // Keep Settings → Language as a cascade submenu (not the Settings page Lang tab).
                 self.menu_popup = if self.menu_popup == MenuPopup::SettingsLang {
                     MenuPopup::Settings
                 } else {
@@ -2060,10 +2866,11 @@ impl OxizipApp {
             self.last_error = Some(t(self.lang, "gui.err.need_archive").into());
             return Task::none();
         };
-        let result = if permanent {
-            shell_ops::delete_file_permanent(&path)
-        } else {
+        let use_trash = !permanent && self.prefs.delete_to_trash;
+        let result = if use_trash {
             shell_ops::trash_file(&path)
+        } else {
+            shell_ops::delete_file_permanent(&path)
         };
         match result {
             Ok(()) => {
@@ -2311,7 +3118,7 @@ impl OxizipApp {
             Screen::Main => self.view_main(),
             Screen::Setup => self.view_setup(),
             Screen::Licenses => self.view_licenses(),
-            Screen::Settings => self.shell_page(self.view_settings()),
+            Screen::Settings => self.view_settings(),
             Screen::Job => self.view_job(),
         };
         let with_conflict = if self.screen != Screen::Job && !self.job_conflicts.is_empty() {
@@ -2322,13 +3129,39 @@ impl OxizipApp {
         } else {
             page
         };
-        let inner = if self.overlay == Overlay::None {
+        let with_overlay = if self.overlay == Overlay::None {
             with_conflict
         } else {
             stack![with_conflict, self.view_overlay()]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
+        };
+        // Settings child open: keep main painted, but capture all input.
+        let inner = if self.settings_child.is_some() {
+            stack![
+                with_overlay,
+                mouse_area(
+                    container(Space::new(Length::Fill, Length::Fill))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .style(|theme: &Theme| {
+                            let mut s = iced::widget::container::Style::default();
+                            let base = theme.extended_palette().background.base.color;
+                            s.background = Some(Background::Color(Color {
+                                a: 0.35,
+                                ..base
+                            }));
+                            s
+                        })
+                )
+                .on_press(Message::SettingsModalNop)
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        } else {
+            with_overlay
         };
         self.framed_window(inner)
     }
@@ -2340,6 +3173,8 @@ impl OxizipApp {
             Message::Minimize,
             Message::Close,
         );
+        // Clip children to the rounded outer frame so resize (settings ↔ main) does not
+        // leave square content corners poking through the transparent window.
         container(
             column![caption, body]
                 .width(Length::Fill)
@@ -2348,6 +3183,7 @@ impl OxizipApp {
         .width(Length::Fill)
         .height(Length::Fill)
         .style(frame_border)
+        .clip(true)
         .into()
     }
 
@@ -2733,8 +3569,12 @@ impl OxizipApp {
 
     fn view_main(&self) -> Element<'_, Message> {
         let body = if self.archive.is_none() {
-            self.view_home()
+            if self.prefs.show_start_screen {
+                self.view_home()
             } else {
+                self.view_archive()
+            }
+        } else {
             self.view_archive()
         };
         self.shell_page(body)
@@ -3124,6 +3964,13 @@ impl OxizipApp {
                     .width(Length::Fixed(118.0)),
             );
         }
+        if self.prefs.columns.kind {
+            header = header.push(
+                text(t(self.lang, "gui.col.kind"))
+                    .size(12)
+                    .width(Length::Fixed(56.0)),
+            );
+        }
         header = header.push(Space::with_width(Length::Fixed(92.0)));
         let mut col =
             column![container(header)
@@ -3135,6 +3982,12 @@ impl OxizipApp {
                     style
                 })]
             .spacing(2);
+        if self.prefs.show_dotdot && self.tree_prefix.is_some() {
+            let up = button(text("[..]").size(12))
+                .style(rounded_text_btn)
+                .on_press(Message::SetTreePrefix(None));
+            col = col.push(container(up).padding([2, 4]).width(Length::Fill));
+        }
         for index in indices {
             if let Some(entry) = self.entries.get(*index) {
                 col = col.push(self.detail_row(*index, entry, busy));
@@ -3145,20 +3998,39 @@ impl OxizipApp {
 
     fn detail_row(&self, index: usize, entry: &EntryMeta, busy: bool) -> Element<'_, Message> {
         let selected = self.selected.contains(&index);
-            let name = if entry.is_dir {
-                format!("[DIR] {}", entry.name)
-            } else {
-                entry.name.clone()
-            };
+        let name = if entry.is_dir {
+            format!("[DIR] {}", entry.name)
+        } else {
+            entry.name.clone()
+        };
         let icon = if entry.is_dir {
-                self.icons.oxizip()
+            self.icons.oxizip()
+        } else {
+            self.icons.for_path_name(&entry.name)
+        };
+        let name_msg = if entry.is_dir {
+            let prefix = if entry.name.ends_with('/') {
+                entry.name.clone()
             } else {
-                self.icons.for_path_name(&entry.name)
+                format!("{}/", entry.name)
             };
+            Message::SetTreePrefix(Some(prefix))
+        } else {
+            Message::OpenEntry(index)
+        };
+        let name_widget: Element<'_, Message> = if self.prefs.single_click_open && !busy {
+            button(text(name).size(12))
+                .style(rounded_text_btn)
+                .on_press(name_msg)
+                .width(Length::Fill)
+                .into()
+        } else {
+            text(name).size(12).width(Length::Fill).into()
+        };
         let mut line = row![
             checkbox("", selected).on_toggle(move |_| Message::ToggleSelect(index)),
             image(icon).width(16).height(16),
-            text(name).size(12).width(Length::Fill),
+            name_widget,
         ]
         .spacing(6)
         .align_y(Alignment::Center);
@@ -3187,6 +4059,18 @@ impl OxizipApp {
                     .width(Length::Fixed(118.0)),
             );
         }
+        if self.prefs.columns.kind {
+            let kind = if entry.is_dir {
+                "DIR".to_string()
+            } else {
+                std::path::Path::new(&entry.name)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_ascii_uppercase())
+                    .unwrap_or_else(|| "—".into())
+            };
+            line = line.push(text(kind).size(12).width(Length::Fixed(56.0)));
+        }
             let open_btn = {
             let b = button(text(t(self.lang, "gui.open_entry")).size(12)).style(rounded_text_btn);
                 if busy || entry.is_dir {
@@ -3204,10 +4088,29 @@ impl OxizipApp {
             }
         };
         line = line.push(open_btn).push(del_btn);
-        container(line)
+        let show_grid = self.prefs.show_gridlines;
+        let full_row = self.prefs.full_row_select;
+        let row_body: Element<'_, Message> = if full_row {
+            mouse_area(line)
+                .on_press(Message::ToggleSelect(index))
+                .into()
+        } else {
+            line.into()
+        };
+        container(row_body)
             .padding([2, 4])
             .width(Length::Fill)
-            .style(move |_theme| row_style(selected))
+            .style(move |_theme| {
+                let mut style = row_style(selected);
+                if show_grid {
+                    style.border = Border {
+                        color: Color::from_rgb(0.82, 0.84, 0.88),
+                        width: 1.0,
+                        radius: 0.0.into(),
+                    };
+                }
+                style
+            })
             .into()
     }
 
@@ -3306,82 +4209,14 @@ impl OxizipApp {
     }
 
     fn view_settings(&self) -> Element<'_, Message> {
-        let formats: Vec<FormatLabel> = FormatId::create_choices()
-            .iter()
-            .copied()
-            .map(FormatLabel)
-            .collect();
-        let methods: Vec<MethodLabel> = MethodLabel::all().to_vec();
-        let langs = vec![LangLabel::Zh, LangLabel::En];
-        let current_lang = match self.lang {
-            Lang::ZhCn => LangLabel::Zh,
-            Lang::En => LangLabel::En,
-        };
-        let body = column![
-            text(t(self.lang, "gui.settings.title")).size(16),
-                row![
-                text(t(self.lang, "gui.lang"))
-                    .size(12)
-                    .width(Length::Fixed(140.0)),
-                pick_list(langs, Some(current_lang), Message::LangSelected).width(160),
-                ]
-                .spacing(8)
-            .align_y(Alignment::Center),
-            row![
-                text(t(self.lang, "gui.settings.default_format"))
-                    .size(12)
-                    .width(Length::Fixed(140.0)),
-                pick_list(
-                    formats,
-                    Some(FormatLabel(self.create_format)),
-                    Message::SettingsFormat,
-                )
-                .width(160),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-            row![
-                text(t(self.lang, "gui.settings.default_method"))
-                    .size(12)
-                    .width(Length::Fixed(140.0)),
-                pick_list(methods, Some(self.create_method), Message::SettingsMethod).width(160),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-            checkbox(
-                t(self.lang, "gui.settings.open_dest"),
-                self.prefs.open_dest_after_extract,
-            )
-            .on_toggle(Message::SettingsOpenDest),
-            checkbox(
-                t(self.lang, "gui.menu.view.status"),
-                self.prefs.show_status_bar
-            )
-            .on_toggle(|_| Message::MenuAction(MenuAction::ToggleStatusBar),),
-            checkbox(t(self.lang, "gui.menu.view.top"), self.prefs.always_on_top)
-                .on_toggle(|_| Message::MenuAction(MenuAction::ToggleAlwaysOnTop)),
-            row![
-                button(text(t(self.lang, "gui.settings.assoc")).size(12))
-                    .style(rounded_secondary)
-                    .on_press(Message::MenuAction(MenuAction::Associations)),
-                button(text(t(self.lang, "gui.menu.settings.passman")).size(12))
-                    .style(rounded_secondary)
-                    .on_press(Message::MenuAction(MenuAction::PasswordManager)),
-            ]
-            .spacing(8),
-            Space::with_height(Length::Fill),
-            button(text(t(self.lang, "gui.settings.back")).size(13))
-                .style(rounded_primary)
-                .on_press(Message::SettingsBack),
-        ]
-        .spacing(10)
-        .padding(16)
-        .width(Length::Fill)
-        .height(Length::Fill);
-        container(body)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        settings::view_settings(SettingsView {
+            lang: self.lang,
+            tab: self.settings_tab,
+            prefs: &self.settings_draft,
+            setup_exts: &self.settings_draft_exts,
+            status: &self.settings_status,
+        })
+        .map(Message::Settings)
     }
 
     fn view_overlay(&self) -> Element<'_, Message> {
@@ -3925,13 +4760,16 @@ async fn pick_inputs() -> Option<Vec<PathBuf>> {
         .map(|files| files.iter().map(|f| f.path().to_path_buf()).collect())
 }
 
-async fn pick_create_output(format: FormatId) -> Option<PathBuf> {
+async fn pick_create_output(format: FormatId, initial_dir: Option<PathBuf>) -> Option<PathBuf> {
     let ext = format.as_str();
     let default_name = format!("archive.{ext}");
-    rfd::AsyncFileDialog::new()
+    let mut dlg = rfd::AsyncFileDialog::new()
         .set_file_name(&default_name)
-        .add_filter(ext, &[ext])
-        .save_file()
+        .add_filter(ext, &[ext]);
+    if let Some(dir) = initial_dir {
+        dlg = dlg.set_directory(dir);
+    }
+    dlg.save_file()
         .await
         .map(|f| f.path().to_path_buf())
 }

@@ -305,6 +305,7 @@ fn write_open_association(
     icon: &Path,
     lang: Lang,
     with_user_choice: bool,
+    filter: &MenuFilter,
 ) -> Result<(), String> {
     let progid = progid_for_ext(ext);
     let (prog, _) = classes
@@ -323,12 +324,17 @@ fn write_open_association(
         .map_err(|e| format!("create progid open: {e}"))?;
     open.set_value("", &t(lang, "shell.open_with_oxizip").to_string())
         .map_err(|e| format!("set open label: {e}"))?;
-    let _ = open.set_value("Icon", &icon_registry_value(icon));
+    if filter.hide_icon {
+        let _ = open.delete_value("Icon");
+    } else {
+        let _ = open.set_value("Icon", &icon_registry_value(icon));
+    }
     let _ = open.set_value("FriendlyAppName", &APP_REG_NAME.to_string());
     let (cmd, _) = open
         .create_subkey("command")
         .map_err(|e| format!("create progid command: {e}"))?;
-    cmd.set_value("", &format!("{} \"%1\"", quote_path(gui)))
+    let open_args = open_command_args(filter);
+    cmd.set_value("", &format!("{} {open_args}", quote_path(gui)))
         .map_err(|e| format!("set progid command: {e}"))?;
 
     // Claim `.{ext}` default ProgID (Bandizip writes this under HKLM when elevated).
@@ -398,6 +404,7 @@ fn write_verb(
     key.set_value("", &label)
         .map_err(|e| format!("set label {key_path}: {e}"))?;
     let _ = key.set_value("MUIVerb", &label.to_string());
+    // Icon is set by callers that honor hide_icon via write_verb_filtered.
     let _ = key.set_value("Icon", &icon_registry_value(icon));
     let _ = key.set_value("MultiSelectModel", &multi_select.to_string());
     let (cmd_key, _) = key
@@ -407,6 +414,27 @@ fn write_verb(
     cmd_key
         .set_value("", &command)
         .map_err(|e| format!("set command {key_path}: {e}"))?;
+    Ok(())
+}
+
+fn write_verb_filtered(
+    classes: &RegKey,
+    ext: &str,
+    verb: &str,
+    label: &str,
+    exe: &Path,
+    args: &str,
+    icon: &Path,
+    multi_select: &str,
+    filter: &MenuFilter,
+) -> Result<(), String> {
+    write_verb(classes, ext, verb, label, exe, args, icon, multi_select)?;
+    if filter.hide_icon {
+        let key_path = format!("{}\\shell\\{VERB_PREFIX}.{verb}", association_key(ext));
+        if let Ok(key) = classes.open_subkey_with_flags(&key_path, KEY_SET_VALUE) {
+            let _ = key.delete_value("Icon");
+        }
+    }
     Ok(())
 }
 
@@ -439,141 +467,50 @@ fn write_compress_verb(
     Ok(())
 }
 
-fn write_archive_verbs(
-    classes: &RegKey,
-    ext: &str,
-    cli: &Path,
-    gui: &Path,
-    icon: &Path,
-    lang: Lang,
-) -> Result<(), String> {
-    // Extract → GUI progress dialog; test/checksum/repair stay on CLI.
-    write_verb(
-        classes,
-        ext,
-        "ExtractHere",
-        t(lang, "shell.extract_here"),
-        gui,
-        "--job extract --here \"%1\"",
-        icon,
-        "Document",
-    )?;
-    write_verb(
-        classes,
-        ext,
-        "ExtractSmart",
-        t(lang, "shell.extract_smart"),
-        gui,
-        "--job extract --smart \"%1\"",
-        icon,
-        "Document",
-    )?;
-    write_verb(
-        classes,
-        ext,
-        "ExtractToFolder",
-        t(lang, "shell.extract_to_folder"),
-        gui,
-        "--job extract --archive-name-dir \"%1\"",
-        icon,
-        "Document",
-    )?;
-    write_verb(
-        classes,
-        ext,
-        "Test",
-        t(lang, "shell.test"),
-        cli,
-        "test \"%1\"",
-        icon,
-        "Document",
-    )?;
-    write_verb(
-        classes,
-        ext,
-        "Checksum",
-        t(lang, "shell.checksum"),
-        cli,
-        "checksum \"%1\"",
-        icon,
-        "Single",
-    )?;
-    write_verb(
-        classes,
-        ext,
-        "Repair",
-        t(lang, "shell.repair"),
-        cli,
-        "repair \"%1\"",
-        icon,
-        "Single",
-    )?;
-    Ok(())
-}
-
-fn write_files_dirs_verbs(
-    classes: &RegKey,
-    root_name: &str,
-    // CLI for checksum; GUI for compress (progress dialog).
-    cli: &Path,
-    gui: &Path,
-    icons_dir: &Path,
-    lang: Lang,
-    with_checksum: bool,
-    path_ph: &str,
-) -> Result<(), String> {
-    let zip_icon = icon_path_for_ext(icons_dir, "zip");
-    let seven_icon = icon_path_for_ext(icons_dir, "7z");
-    let app_icon = icon_path_for_ext(icons_dir, "oxizip");
-    // Launch GUI compact job window (Bandizip-style progress), not bare CLI.
-    write_compress_verb(
-        classes,
-        root_name,
-        "CompressZip",
-        t(lang, "shell.compress_zip"),
-        gui,
-        &format!("--job create --beside -f zip \"{path_ph}\""),
-        &zip_icon,
-    )?;
-    write_compress_verb(
-        classes,
-        root_name,
-        "Compress7z",
-        t(lang, "shell.compress_7z"),
-        gui,
-        &format!("--job create --beside -f 7z \"{path_ph}\""),
-        &seven_icon,
-    )?;
-    if with_checksum {
-        write_compress_verb(
-            classes,
-            root_name,
-            "Checksum",
-            t(lang, "shell.checksum"),
-            cli,
-            &format!("checksum \"{path_ph}\""),
-            &app_icon,
-        )?;
-    }
-    Ok(())
-}
-
-fn write_all_verbs(
+fn write_all_verbs_filtered(
     classes: &RegKey,
     exe: &Path,
     gui: &Path,
     icons_dir: &Path,
     lang: Lang,
     exts: &[&str],
+    filter: &MenuFilter,
 ) -> Result<(), String> {
+    if filter.disabled {
+        for ext in exts {
+            let icon = icon_path_for_ext(icons_dir, ext);
+            write_open_association(classes, ext, gui, &icon, lang, true, filter)?;
+        }
+        return Ok(());
+    }
     for ext in exts {
         let icon = icon_path_for_ext(icons_dir, ext);
-        write_open_association(classes, ext, gui, &icon, lang, true)?;
-        write_archive_verbs(classes, ext, exe, gui, &icon, lang)?;
+        write_open_association(classes, ext, gui, &icon, lang, true, filter)?;
+        write_archive_verbs_filtered(classes, ext, exe, gui, &icon, lang, filter)?;
     }
-    write_files_dirs_verbs(classes, "*", exe, gui, icons_dir, lang, true, "%1")?;
-    write_files_dirs_verbs(classes, "Directory", exe, gui, icons_dir, lang, false, "%1")?;
-    write_files_dirs_verbs(
+    write_files_dirs_verbs_filtered(
+        classes,
+        "*",
+        exe,
+        gui,
+        icons_dir,
+        lang,
+        true,
+        "%1",
+        filter,
+    )?;
+    write_files_dirs_verbs_filtered(
+        classes,
+        "Directory",
+        exe,
+        gui,
+        icons_dir,
+        lang,
+        false,
+        "%1",
+        filter,
+    )?;
+    write_files_dirs_verbs_filtered(
         classes,
         "Directory\\Background",
         exe,
@@ -582,6 +519,7 @@ fn write_all_verbs(
         lang,
         false,
         "%V",
+        filter,
     )?;
     Ok(())
 }
@@ -609,6 +547,11 @@ fn delete_legacy_flat_verbs(classes: &RegKey, ext: &str) {
         "ExtractHere",
         "ExtractSmart",
         "ExtractToFolder",
+        "ExtractHereDel",
+        "ExtractSmartDel",
+        "ExtractToFolderDel",
+        "ExtractDialog",
+        "OpenWith",
         "Test",
         "Checksum",
         "Repair",
@@ -636,7 +579,19 @@ fn delete_all_verbs(classes: &RegKey) -> Result<(), String> {
         if let Ok(shell) =
             classes.open_subkey_with_flags(format!("{root}\\shell"), KEY_READ | KEY_WRITE)
         {
-            for verb in ["CompressZip", "Compress7z", "Checksum"] {
+            for verb in [
+                "CompressZip",
+                "Compress7z",
+                "CompressZipx",
+                "CompressTar",
+                "CompressTgz",
+                "CompressGz",
+                "CompressXz",
+                "CompressZpaq",
+                "CompressEachZip",
+                "CompressEach7z",
+                "Checksum",
+            ] {
                 let _ = shell.delete_subkey_all(format!("{VERB_PREFIX}.{verb}"));
             }
         }
@@ -792,12 +747,21 @@ pub fn install(lang: Lang, requested_exts: &[String], menus_only: bool) -> Resul
     cleanup_exe_association(&classes);
     delete_all_verbs(&classes)?;
 
+    let filter = load_menu_filter();
+
     if menus_only {
         // Context menus for every supported archive type + * / Directory compress.
-        // Default-open / UserChoice is left to the GUI association page.
+        // Default-open / UserChoice is left to the GUI association page, but
+        // ProgID `shell\open\command` must still follow double-click prefs.
         let menu_exts = archive_extensions();
-        write_menus_only(&classes, &exe, &gui, &icons_dir, lang, menu_exts)?;
-        let shellext = register_shellext_stack(&exe);
+        write_menus_only(&classes, &exe, &gui, &icons_dir, lang, menu_exts, &filter)?;
+        update_progid_open_commands(&classes, &gui, &icons_dir, lang, menu_exts, &filter)?;
+        let shellext = if filter.cascaded && !filter.disabled {
+            register_shellext_stack(&exe)
+        } else {
+            unregister_shellext_stack(&exe);
+            "shellext skipped".into()
+        };
         notify_assoc_changed();
         return Ok(format!(
             "{} (menus-only; exts={} ; cli={} ; gui={} ; {})",
@@ -811,19 +775,24 @@ pub fn install(lang: Lang, requested_exts: &[String], menus_only: bool) -> Resul
 
     let exts = resolve_install_exts(requested_exts)?;
     register_capabilities(lang, &exts)?;
-    write_all_verbs(&classes, &exe, &gui, &icons_dir, lang, &exts)?;
+    write_all_verbs_filtered(&classes, &exe, &gui, &icons_dir, lang, &exts, &filter)?;
 
     // Bandizip setup (elevated) also registers under HKLM\Software\Classes.
     if is_process_elevated() {
         if let Some(hklm) = hklm_classes_root() {
             for ext in &exts {
                 let icon = icon_path_for_ext(&icons_dir, ext);
-                let _ = write_open_association(&hklm, ext, &gui, &icon, lang, false);
+                let _ = write_open_association(&hklm, ext, &gui, &icon, lang, false, &filter);
             }
         }
     }
 
-    let shellext = register_shellext_stack(&exe);
+    let shellext = if filter.cascaded && !filter.disabled {
+        register_shellext_stack(&exe)
+    } else {
+        unregister_shellext_stack(&exe);
+        "shellext skipped".into()
+    };
     notify_assoc_changed();
     Ok(format!(
         "{} (exts={} ; cli={} ; gui={} ; icons={} ; {})",
@@ -836,6 +805,178 @@ pub fn install(lang: Lang, requested_exts: &[String], menus_only: bool) -> Resul
     ))
 }
 
+/// Optional menu filter written by the GUI (`shell_menu.json` next to prefs).
+#[derive(Debug, Clone)]
+struct MenuFilter {
+    extract_here: bool,
+    extract_smart: bool,
+    extract_to_folder: bool,
+    extract_here_del: bool,
+    extract_smart_del: bool,
+    extract_to_folder_del: bool,
+    extract_dialog: bool,
+    open_with: bool,
+    test: bool,
+    checksum: bool,
+    compress_zip: bool,
+    compress_7z: bool,
+    compress_zipx: bool,
+    compress_tar: bool,
+    compress_tgz: bool,
+    compress_gz: bool,
+    compress_xz: bool,
+    compress_zpaq: bool,
+    compress_each_zip: bool,
+    compress_each_7z: bool,
+    disabled: bool,
+    cascaded: bool,
+    hide_icon: bool,
+    delete_after_dbl_extract: bool,
+    /// `open` | `extract_smart` | `extract_to_folder`
+    double_click: String,
+}
+
+impl Default for MenuFilter {
+    fn default() -> Self {
+        Self {
+            extract_here: true,
+            extract_smart: true,
+            extract_to_folder: true,
+            extract_here_del: false,
+            extract_smart_del: false,
+            extract_to_folder_del: false,
+            extract_dialog: true,
+            open_with: true,
+            test: true,
+            checksum: true,
+            compress_zip: true,
+            compress_7z: true,
+            compress_zipx: false,
+            compress_tar: false,
+            compress_tgz: false,
+            compress_gz: false,
+            compress_xz: false,
+            compress_zpaq: false,
+            compress_each_zip: false,
+            compress_each_7z: false,
+            disabled: false,
+            cascaded: true,
+            hide_icon: false,
+            delete_after_dbl_extract: false,
+            double_click: "open".into(),
+        }
+    }
+}
+
+fn load_menu_filter() -> MenuFilter {
+    let path = std::env::var_os("APPDATA")
+        .map(std::path::PathBuf::from)
+        .map(|p| p.join("Oxizip").join("shell_menu.json"));
+    let Some(path) = path else {
+        return MenuFilter::default();
+    };
+    parse_menu_filter_file(&path)
+}
+
+fn parse_menu_filter_file(path: &std::path::Path) -> MenuFilter {
+    let Ok(bytes) = std::fs::read(path) else {
+        return MenuFilter::default();
+    };
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return MenuFilter::default();
+    };
+    let b = |key: &str, default: bool| -> bool {
+        v.get(key).and_then(|x| x.as_bool()).unwrap_or(default)
+    };
+    let double_click = v
+        .get("double_click")
+        .and_then(|x| x.as_str())
+        .unwrap_or("open")
+        .to_string();
+    MenuFilter {
+        extract_here: b("extract_here", true),
+        extract_smart: b("extract_smart", true),
+        extract_to_folder: b("extract_to_folder", true),
+        extract_here_del: b("extract_here_del", false),
+        extract_smart_del: b("extract_smart_del", false),
+        extract_to_folder_del: b("extract_to_folder_del", false),
+        extract_dialog: b("extract_dialog", true),
+        open_with: b("open_with", true),
+        test: b("test", true),
+        checksum: b("checksum", true),
+        compress_zip: b("compress_zip", true),
+        compress_7z: b("compress_7z", true),
+        compress_zipx: b("compress_zipx", false),
+        compress_tar: b("compress_tar", false),
+        compress_tgz: b("compress_tgz", false),
+        compress_gz: b("compress_gz", false),
+        compress_xz: b("compress_xz", false),
+        compress_zpaq: b("compress_zpaq", false),
+        compress_each_zip: b("compress_each_zip", false),
+        compress_each_7z: b("compress_each_7z", false),
+        disabled: b("disabled", false),
+        cascaded: b("cascaded", true),
+        hide_icon: b("hide_icon", false),
+        delete_after_dbl_extract: b("delete_after_dbl_extract", false),
+        double_click,
+    }
+}
+
+fn open_command_args(filter: &MenuFilter) -> String {
+    let mut args = match filter.double_click.as_str() {
+        "extract_smart" => "--job extract --smart \"%1\"".to_string(),
+        "extract_to_folder" => "--job extract --archive-name-dir \"%1\"".to_string(),
+        _ => "\"%1\"".to_string(),
+    };
+    if filter.delete_after_dbl_extract
+        && matches!(
+            filter.double_click.as_str(),
+            "extract_smart" | "extract_to_folder"
+        )
+    {
+        args.push_str(" --delete-archive");
+    }
+    args
+}
+
+/// Refresh existing Oxizip ProgID `shell\open\command` for double-click prefs.
+/// Does not claim `.{ext}` default or UserChoice (association page owns that).
+fn update_progid_open_commands(
+    classes: &RegKey,
+    gui: &Path,
+    icons_dir: &Path,
+    lang: Lang,
+    exts: &[&str],
+    filter: &MenuFilter,
+) -> Result<(), String> {
+    for ext in exts {
+        let progid = progid_for_ext(ext);
+        let Ok(prog) = classes.open_subkey_with_flags(&progid, KEY_READ | KEY_WRITE) else {
+            // ProgID not registered yet — skip until association install creates it.
+            continue;
+        };
+        let icon = icon_path_for_ext(icons_dir, ext);
+        let (open, _) = prog
+            .create_subkey("shell\\open")
+            .map_err(|e| format!("create {progid} open: {e}"))?;
+        open.set_value("", &t(lang, "shell.open_with_oxizip").to_string())
+            .map_err(|e| format!("set open label: {e}"))?;
+        if filter.hide_icon {
+            let _ = open.delete_value("Icon");
+        } else {
+            let _ = open.set_value("Icon", &icon_registry_value(&icon));
+        }
+        let _ = open.set_value("FriendlyAppName", &APP_REG_NAME.to_string());
+        let (cmd, _) = open
+            .create_subkey("command")
+            .map_err(|e| format!("create {progid} open command: {e}"))?;
+        let open_args = open_command_args(filter);
+        cmd.set_value("", &format!("{} {open_args}", quote_path(gui)))
+            .map_err(|e| format!("set {progid} open command: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Flat / Sparse-backed verbs without claiming default open (UserChoice).
 fn write_menus_only(
     classes: &RegKey,
@@ -844,16 +985,39 @@ fn write_menus_only(
     icons_dir: &Path,
     lang: Lang,
     exts: &[&str],
+    filter: &MenuFilter,
 ) -> Result<(), String> {
+    if filter.disabled {
+        return Ok(());
+    }
     for ext in exts {
         let icon = icon_path_for_ext(icons_dir, ext);
-        // Icons under SFA help Explorer show the right glyph next to verbs.
         let _ = write_format_icons(classes, ext, &icon);
-        write_archive_verbs(classes, ext, exe, gui, &icon, lang)?;
+        write_archive_verbs_filtered(classes, ext, exe, gui, &icon, lang, filter)?;
     }
-    write_files_dirs_verbs(classes, "*", exe, gui, icons_dir, lang, true, "%1")?;
-    write_files_dirs_verbs(classes, "Directory", exe, gui, icons_dir, lang, false, "%1")?;
-    write_files_dirs_verbs(
+    write_files_dirs_verbs_filtered(
+        classes,
+        "*",
+        exe,
+        gui,
+        icons_dir,
+        lang,
+        true,
+        "%1",
+        filter,
+    )?;
+    write_files_dirs_verbs_filtered(
+        classes,
+        "Directory",
+        exe,
+        gui,
+        icons_dir,
+        lang,
+        false,
+        "%1",
+        filter,
+    )?;
+    write_files_dirs_verbs_filtered(
         classes,
         "Directory\\Background",
         exe,
@@ -862,7 +1026,305 @@ fn write_menus_only(
         lang,
         false,
         "%V",
+        filter,
     )?;
+    Ok(())
+}
+
+fn write_archive_verbs_filtered(
+    classes: &RegKey,
+    ext: &str,
+    cli: &Path,
+    gui: &Path,
+    icon: &Path,
+    lang: Lang,
+    filter: &MenuFilter,
+) -> Result<(), String> {
+    if filter.extract_here {
+        write_verb_filtered(
+            classes,
+            ext,
+            "ExtractHere",
+            t(lang, "shell.extract_here"),
+            gui,
+            "--job extract --here \"%1\"",
+            icon,
+            "Document",
+            filter,
+        )?;
+    }
+    if filter.extract_smart {
+        write_verb_filtered(
+            classes,
+            ext,
+            "ExtractSmart",
+            t(lang, "shell.extract_smart"),
+            gui,
+            "--job extract --smart \"%1\"",
+            icon,
+            "Document",
+            filter,
+        )?;
+    }
+    if filter.extract_to_folder {
+        write_verb_filtered(
+            classes,
+            ext,
+            "ExtractToFolder",
+            t(lang, "shell.extract_to_folder"),
+            gui,
+            "--job extract --archive-name-dir \"%1\"",
+            icon,
+            "Document",
+            filter,
+        )?;
+    }
+    if filter.test {
+        write_verb_filtered(
+            classes,
+            ext,
+            "Test",
+            t(lang, "shell.test"),
+            cli,
+            "test \"%1\"",
+            icon,
+            "Document",
+            filter,
+        )?;
+    }
+    if filter.checksum {
+        write_verb_filtered(
+            classes,
+            ext,
+            "Checksum",
+            t(lang, "shell.checksum"),
+            cli,
+            "checksum \"%1\"",
+            icon,
+            "Single",
+            filter,
+        )?;
+    }
+    write_verb_filtered(
+        classes,
+        ext,
+        "Repair",
+        t(lang, "shell.repair"),
+        cli,
+        "repair \"%1\"",
+        icon,
+        "Single",
+        filter,
+    )?;
+    if filter.extract_here_del {
+        write_verb_filtered(
+            classes,
+            ext,
+            "ExtractHereDel",
+            t(lang, "shell.extract_here_del"),
+            gui,
+            "--job extract --here --delete-archive \"%1\"",
+            icon,
+            "Document",
+            filter,
+        )?;
+    }
+    if filter.extract_smart_del {
+        write_verb_filtered(
+            classes,
+            ext,
+            "ExtractSmartDel",
+            t(lang, "shell.extract_smart_del"),
+            gui,
+            "--job extract --smart --delete-archive \"%1\"",
+            icon,
+            "Document",
+            filter,
+        )?;
+    }
+    if filter.extract_to_folder_del {
+        write_verb_filtered(
+            classes,
+            ext,
+            "ExtractToFolderDel",
+            t(lang, "shell.extract_folder_del"),
+            gui,
+            "--job extract --archive-name-dir --delete-archive \"%1\"",
+            icon,
+            "Document",
+            filter,
+        )?;
+    }
+    if filter.extract_dialog {
+        write_verb_filtered(
+            classes,
+            ext,
+            "ExtractDialog",
+            t(lang, "shell.extract_dialog"),
+            gui,
+            "--job extract --dialog \"%1\"",
+            icon,
+            "Document",
+            filter,
+        )?;
+    }
+    if filter.open_with {
+        write_verb_filtered(
+            classes,
+            ext,
+            "OpenWith",
+            t(lang, "shell.open_with"),
+            gui,
+            "\"%1\"",
+            icon,
+            "Document",
+            filter,
+        )?;
+    }
+    Ok(())
+}
+
+fn write_compress_verb_filtered(
+    classes: &RegKey,
+    root_name: &str,
+    verb: &str,
+    label: &str,
+    exe: &Path,
+    args: &str,
+    icon: &Path,
+    filter: &MenuFilter,
+) -> Result<(), String> {
+    write_compress_verb(classes, root_name, verb, label, exe, args, icon)?;
+    if filter.hide_icon {
+        let key_path = format!("{root_name}\\shell\\{VERB_PREFIX}.{verb}");
+        if let Ok(key) = classes.open_subkey_with_flags(&key_path, KEY_SET_VALUE) {
+            let _ = key.delete_value("Icon");
+        }
+    }
+    Ok(())
+}
+
+fn write_files_dirs_verbs_filtered(
+    classes: &RegKey,
+    root_name: &str,
+    cli: &Path,
+    gui: &Path,
+    icons_dir: &Path,
+    lang: Lang,
+    with_checksum: bool,
+    path_ph: &str,
+    filter: &MenuFilter,
+) -> Result<(), String> {
+    let zip_icon = icon_path_for_ext(icons_dir, "zip");
+    let seven_icon = icon_path_for_ext(icons_dir, "7z");
+    let app_icon = icon_path_for_ext(icons_dir, "oxizip");
+    let compress = |enabled: bool, verb: &str, label: &str, fmt: &str, icon: &Path| -> Result<(), String> {
+        if !enabled {
+            return Ok(());
+        }
+        write_compress_verb_filtered(
+            classes,
+            root_name,
+            verb,
+            label,
+            gui,
+            &format!("--job create --beside -f {fmt} \"{path_ph}\""),
+            icon,
+            filter,
+        )
+    };
+    compress(
+        filter.compress_zip,
+        "CompressZip",
+        t(lang, "shell.compress_zip"),
+        "zip",
+        &zip_icon,
+    )?;
+    compress(
+        filter.compress_7z,
+        "Compress7z",
+        t(lang, "shell.compress_7z"),
+        "7z",
+        &seven_icon,
+    )?;
+    compress(
+        filter.compress_zipx,
+        "CompressZipx",
+        t(lang, "shell.compress_zipx"),
+        "zipx",
+        &icon_path_for_ext(icons_dir, "zipx"),
+    )?;
+    compress(
+        filter.compress_tar,
+        "CompressTar",
+        t(lang, "shell.compress_tar"),
+        "tar",
+        &icon_path_for_ext(icons_dir, "tar"),
+    )?;
+    compress(
+        filter.compress_tgz,
+        "CompressTgz",
+        t(lang, "shell.compress_tgz"),
+        "tgz",
+        &icon_path_for_ext(icons_dir, "tgz"),
+    )?;
+    compress(
+        filter.compress_gz,
+        "CompressGz",
+        t(lang, "shell.compress_gz"),
+        "gz",
+        &icon_path_for_ext(icons_dir, "gz"),
+    )?;
+    compress(
+        filter.compress_xz,
+        "CompressXz",
+        t(lang, "shell.compress_xz"),
+        "xz",
+        &icon_path_for_ext(icons_dir, "xz"),
+    )?;
+    compress(
+        filter.compress_zpaq,
+        "CompressZpaq",
+        t(lang, "shell.compress_zpaq"),
+        "zpaq",
+        &icon_path_for_ext(icons_dir, "zpaq"),
+    )?;
+    if filter.compress_each_zip {
+        write_compress_verb_filtered(
+            classes,
+            root_name,
+            "CompressEachZip",
+            t(lang, "shell.compress_each_zip"),
+            gui,
+            &format!("--job create --beside --each -f zip \"{path_ph}\""),
+            &zip_icon,
+            filter,
+        )?;
+    }
+    if filter.compress_each_7z {
+        write_compress_verb_filtered(
+            classes,
+            root_name,
+            "CompressEach7z",
+            t(lang, "shell.compress_each_7z"),
+            gui,
+            &format!("--job create --beside --each -f 7z \"{path_ph}\""),
+            &seven_icon,
+            filter,
+        )?;
+    }
+    if with_checksum && filter.checksum {
+        write_compress_verb_filtered(
+            classes,
+            root_name,
+            "Checksum",
+            t(lang, "shell.checksum"),
+            cli,
+            &format!("checksum \"{path_ph}\""),
+            &app_icon,
+            filter,
+        )?;
+    }
     Ok(())
 }
 

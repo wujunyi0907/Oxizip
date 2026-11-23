@@ -146,6 +146,7 @@ impl ArchiveReader for EggReader {
             password: opts.password.clone(),
             entries: None,
             conflict: crate::types::ConflictPolicy::Overwrite,
+            copy_zone_identifier: false,
         };
         self.extract(&extract_opts, progress, cancel)
     }

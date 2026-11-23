@@ -51,7 +51,14 @@ pub fn icon_location_for_action(action: &str) -> Result<String> {
     let dir = install_dir()?;
     let icons = dir.join("assets").join("icons");
     let stem = match action {
-        "CompressZip" | "ExtractHere" | "ExtractSmart" | "ExtractToFolder" => "zip",
+        "CompressZip"
+        | "ExtractHere"
+        | "ExtractSmart"
+        | "ExtractToFolder"
+        | "ExtractHereDel"
+        | "ExtractSmartDel"
+        | "ExtractToFolderDel"
+        | "ExtractDialog" => "zip",
         "Compress7z" => "7z",
         _ => "oxizip",
     };
@@ -133,7 +140,16 @@ pub fn run_action(action: &str, paths: &[String]) -> Result<()> {
     let args = args_for_action(action, paths);
     if matches!(
         action,
-        "CompressZip" | "Compress7z" | "ExtractHere" | "ExtractSmart" | "ExtractToFolder"
+        "CompressZip"
+            | "Compress7z"
+            | "ExtractHere"
+            | "ExtractSmart"
+            | "ExtractToFolder"
+            | "ExtractHereDel"
+            | "ExtractSmartDel"
+            | "ExtractToFolderDel"
+            | "ExtractDialog"
+            | "OpenWith"
     ) {
         run_exe(&gui_path()?, &args, false)
     } else {
@@ -158,6 +174,32 @@ pub fn args_for_action(action: &str, paths: &[String]) -> Vec<String> {
             out.push("--job".into());
             out.push("extract".into());
             out.push("--archive-name-dir".into());
+        }
+        "ExtractHereDel" => {
+            out.push("--job".into());
+            out.push("extract".into());
+            out.push("--here".into());
+            out.push("--delete-archive".into());
+        }
+        "ExtractSmartDel" => {
+            out.push("--job".into());
+            out.push("extract".into());
+            out.push("--smart".into());
+            out.push("--delete-archive".into());
+        }
+        "ExtractToFolderDel" => {
+            out.push("--job".into());
+            out.push("extract".into());
+            out.push("--archive-name-dir".into());
+            out.push("--delete-archive".into());
+        }
+        "ExtractDialog" => {
+            out.push("--job".into());
+            out.push("extract".into());
+            out.push("--dialog".into());
+        }
+        "OpenWith" => {
+            // Open archive in GUI (no --job).
         }
         "Test" => out.push("test".into()),
         "Checksum" => out.push("checksum".into()),
@@ -256,34 +298,155 @@ pub enum SelectionKind {
     Background,
 }
 
-pub fn child_actions(kind: SelectionKind) -> &'static [&'static str] {
-    match kind {
-        SelectionKind::Archives => &[
-            "ExtractHere",
-            "ExtractSmart",
-            "ExtractToFolder",
-            "Test",
-            "Checksum",
-            "Repair",
-        ],
-        SelectionKind::FilesOrDirs => &["CompressZip", "Compress7z", "Checksum"],
-        SelectionKind::Background => &["CompressZip", "Compress7z"],
+/// GUI-written `shell_menu.json` next to prefs (APPDATA\Oxizip).
+#[derive(Clone, Debug)]
+struct MenuFilter {
+    extract_here: bool,
+    extract_smart: bool,
+    extract_to_folder: bool,
+    extract_here_del: bool,
+    extract_smart_del: bool,
+    extract_to_folder_del: bool,
+    extract_dialog: bool,
+    open_with: bool,
+    test: bool,
+    checksum: bool,
+    compress_zip: bool,
+    compress_7z: bool,
+    disabled: bool,
+}
+
+impl Default for MenuFilter {
+    fn default() -> Self {
+        Self {
+            extract_here: true,
+            extract_smart: true,
+            extract_to_folder: true,
+            extract_here_del: false,
+            extract_smart_del: false,
+            extract_to_folder_del: false,
+            extract_dialog: true,
+            open_with: true,
+            test: true,
+            checksum: true,
+            compress_zip: true,
+            compress_7z: true,
+            disabled: false,
+        }
     }
+}
+
+fn load_menu_filter() -> MenuFilter {
+    let path = std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .map(|p| p.join("Oxizip").join("shell_menu.json"));
+    let Some(path) = path else {
+        return MenuFilter::default();
+    };
+    let Ok(bytes) = std::fs::read(&path) else {
+        return MenuFilter::default();
+    };
+    parse_menu_filter(&bytes)
+}
+
+fn parse_menu_filter(bytes: &[u8]) -> MenuFilter {
+    // Minimal JSON bool lookup — avoid pulling serde into the shell DLL.
+    let text = String::from_utf8_lossy(bytes);
+    let b = |key: &str, default: bool| -> bool {
+        // Match `"key": true/false` with optional whitespace.
+        let needle = format!("\"{key}\"");
+        let Some(pos) = text.find(&needle) else {
+            return default;
+        };
+        let rest = text[pos + needle.len()..].trim_start();
+        let rest = rest.strip_prefix(':').unwrap_or(rest).trim_start();
+        if rest.starts_with("true") {
+            true
+        } else if rest.starts_with("false") {
+            false
+        } else {
+            default
+        }
+    };
+    MenuFilter {
+        extract_here: b("extract_here", true),
+        extract_smart: b("extract_smart", true),
+        extract_to_folder: b("extract_to_folder", true),
+        extract_here_del: b("extract_here_del", false),
+        extract_smart_del: b("extract_smart_del", false),
+        extract_to_folder_del: b("extract_to_folder_del", false),
+        extract_dialog: b("extract_dialog", true),
+        open_with: b("open_with", true),
+        test: b("test", true),
+        checksum: b("checksum", true),
+        compress_zip: b("compress_zip", true),
+        compress_7z: b("compress_7z", true),
+        disabled: b("disabled", false),
+    }
+}
+
+fn push_if(out: &mut Vec<&'static str>, enabled: bool, action: &'static str) {
+    if enabled {
+        out.push(action);
+    }
+}
+
+pub fn child_actions(kind: SelectionKind) -> Vec<&'static str> {
+    let filter = load_menu_filter();
+    if filter.disabled {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    match kind {
+        SelectionKind::Archives => {
+            push_if(&mut out, filter.extract_here, "ExtractHere");
+            push_if(&mut out, filter.extract_smart, "ExtractSmart");
+            push_if(&mut out, filter.extract_to_folder, "ExtractToFolder");
+            push_if(&mut out, filter.extract_here_del, "ExtractHereDel");
+            push_if(&mut out, filter.extract_smart_del, "ExtractSmartDel");
+            push_if(&mut out, filter.extract_to_folder_del, "ExtractToFolderDel");
+            push_if(&mut out, filter.extract_dialog, "ExtractDialog");
+            push_if(&mut out, filter.open_with, "OpenWith");
+            push_if(&mut out, filter.test, "Test");
+            push_if(&mut out, filter.checksum, "Checksum");
+            // Repair stays available (classic registry always writes it).
+            out.push("Repair");
+        }
+        SelectionKind::FilesOrDirs => {
+            push_if(&mut out, filter.compress_zip, "CompressZip");
+            push_if(&mut out, filter.compress_7z, "Compress7z");
+            push_if(&mut out, filter.checksum, "Checksum");
+        }
+        SelectionKind::Background => {
+            push_if(&mut out, filter.compress_zip, "CompressZip");
+            push_if(&mut out, filter.compress_7z, "Compress7z");
+        }
+    }
+    out
 }
 
 /// All submenu items for Win11 Sparse parents. `EnumSubCommands` has no selection;
 /// each child's `GetState` hides inapplicable actions.
-pub fn child_actions_sparse_all() -> &'static [&'static str] {
-    &[
-        "ExtractHere",
-        "ExtractSmart",
-        "ExtractToFolder",
-        "Test",
-        "Checksum",
-        "Repair",
-        "CompressZip",
-        "Compress7z",
-    ]
+pub fn child_actions_sparse_all() -> Vec<&'static str> {
+    let filter = load_menu_filter();
+    if filter.disabled {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    push_if(&mut out, filter.extract_here, "ExtractHere");
+    push_if(&mut out, filter.extract_smart, "ExtractSmart");
+    push_if(&mut out, filter.extract_to_folder, "ExtractToFolder");
+    push_if(&mut out, filter.extract_here_del, "ExtractHereDel");
+    push_if(&mut out, filter.extract_smart_del, "ExtractSmartDel");
+    push_if(&mut out, filter.extract_to_folder_del, "ExtractToFolderDel");
+    push_if(&mut out, filter.extract_dialog, "ExtractDialog");
+    push_if(&mut out, filter.open_with, "OpenWith");
+    push_if(&mut out, filter.test, "Test");
+    push_if(&mut out, filter.checksum, "Checksum");
+    out.push("Repair");
+    push_if(&mut out, filter.compress_zip, "CompressZip");
+    push_if(&mut out, filter.compress_7z, "Compress7z");
+    out
 }
 
 pub fn title_zh_short(action: &str) -> &'static str {
@@ -292,6 +455,11 @@ pub fn title_zh_short(action: &str) -> &'static str {
         "ExtractHere" => "解压到此处",
         "ExtractSmart" => "智能解压",
         "ExtractToFolder" => "解压到归档名文件夹",
+        "ExtractHereDel" => "解压到此处并删除",
+        "ExtractSmartDel" => "智能解压并删除",
+        "ExtractToFolderDel" => "解压到归档名文件夹并删除",
+        "ExtractDialog" => "解压…",
+        "OpenWith" => "用 Oxizip 打开",
         "Test" => "测试压缩包",
         "Checksum" => "校验和信息",
         "Repair" => "修复压缩包",

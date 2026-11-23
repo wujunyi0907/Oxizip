@@ -76,12 +76,14 @@ pub fn extract(
     reader.extract(opts, progress, cancel)?;
     // Mark-of-the-Web: copy the archive's Zone.Identifier onto extracted files
     // (Windows NTFS ADS). No-op on other platforms / when ADS is absent.
-    let zone_src = if resolved.path != path {
-        path
-    } else {
-        &resolved.path
-    };
-    propagate_zone_identifier(zone_src, &opts.dest_dir)?;
+    if opts.copy_zone_identifier {
+        let zone_src = if resolved.path != path {
+            path
+        } else {
+            &resolved.path
+        };
+        propagate_zone_identifier(zone_src, &opts.dest_dir)?;
+    }
     Ok(())
 }
 

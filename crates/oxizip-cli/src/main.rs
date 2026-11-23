@@ -347,6 +347,7 @@ fn main() -> ExitCode {
                 method,
                 volume_size: None,
                 zip_crypto,
+                ..CreateOptions::default()
             };
             add_to_archive(&archive, &inputs, &opts, &progress, &cancel)
         }
@@ -549,6 +550,7 @@ fn run_create(
         method,
         volume_size,
         zip_crypto,
+        ..CreateOptions::default()
     };
     create(&out, fmt, &inputs, &opts, progress, cancel)
 }

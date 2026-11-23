@@ -9,7 +9,7 @@ use tar::Builder;
 
 use crate::traits::ArchiveWriter;
 use crate::types::{CreateOptions, FormatId};
-use crate::util::{collect_pack_files, ensure_parent};
+use crate::util::{collect_pack_files_with_opts, ensure_parent};
 
 pub struct TarWriter {
     path: PathBuf,
@@ -35,11 +35,11 @@ impl ArchiveWriter for TarWriter {
     fn add_path(
         &mut self,
         path: &Path,
-        _opts: &CreateOptions,
+        opts: &CreateOptions,
         progress: &dyn Progress,
         cancel: &CancellationToken,
     ) -> CoreResult<()> {
-        let packed = collect_pack_files(&[path], cancel)?;
+        let packed = collect_pack_files_with_opts(&[path], opts, cancel)?;
         for f in packed {
             progress.report(ProgressUpdate {
                 stage: JobStage::Create,
@@ -100,11 +100,11 @@ impl ArchiveWriter for TarGzWriter {
     fn add_path(
         &mut self,
         path: &Path,
-        _opts: &CreateOptions,
+        opts: &CreateOptions,
         progress: &dyn Progress,
         cancel: &CancellationToken,
     ) -> CoreResult<()> {
-        let packed = collect_pack_files(&[path], cancel)?;
+        let packed = collect_pack_files_with_opts(&[path], opts, cancel)?;
         for f in packed {
             progress.report(ProgressUpdate {
                 stage: JobStage::Create,

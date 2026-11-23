@@ -1,7 +1,7 @@
 //! OS helpers: trash, reveal in file manager, elevated spawn, clipboard files.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command};
 
 /// Spawn another Oxizip GUI process (same executable).
 pub fn spawn_new_window() -> Result<(), String> {
@@ -10,6 +10,42 @@ pub fn spawn_new_window() -> Result<(), String> {
         .spawn()
         .map_err(|e| e.to_string())
         .map(|_| ())
+}
+
+/// Spawn a dedicated `--settings` dialog process (Bandizip-style modal sibling).
+pub fn spawn_settings_window(tab: Option<&str>) -> Result<Child, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(exe);
+    cmd.arg("--settings");
+    if let Some(name) = tab {
+        let name = name.trim();
+        if !name.is_empty() {
+            cmd.arg("--tab").arg(name);
+        }
+    }
+    cmd.spawn().map_err(|e| e.to_string())
+}
+
+/// Enable / disable a native window (Windows HWND). Used so the main GUI stays
+/// visible but non-operable while the settings dialog process is open.
+pub fn set_native_window_enabled(raw_hwnd: u64, enabled: bool) {
+    #[cfg(windows)]
+    {
+        if raw_hwnd == 0 {
+            return;
+        }
+        #[link(name = "user32")]
+        extern "system" {
+            fn EnableWindow(hwnd: isize, enable: i32) -> i32;
+        }
+        unsafe {
+            EnableWindow(raw_hwnd as isize, if enabled { 1 } else { 0 });
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (raw_hwnd, enabled);
+    }
 }
 
 /// Spawn elevated new window (Windows UAC / Linux pkexec).

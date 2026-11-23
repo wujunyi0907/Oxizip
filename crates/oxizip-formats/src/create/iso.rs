@@ -8,7 +8,7 @@ use oxizip_core::{CancellationToken, CoreError, CoreResult, JobStage, Progress, 
 
 use crate::traits::ArchiveWriter;
 use crate::types::{CreateOptions, FormatId};
-use crate::util::{collect_pack_files, ensure_parent};
+use crate::util::{collect_pack_files_with_opts, ensure_parent};
 
 const SECTOR: usize = 2048;
 
@@ -36,11 +36,11 @@ impl ArchiveWriter for IsoWriter {
     fn add_path(
         &mut self,
         path: &Path,
-        _opts: &CreateOptions,
+        opts: &CreateOptions,
         progress: &dyn Progress,
         cancel: &CancellationToken,
     ) -> CoreResult<()> {
-        let packed = collect_pack_files(&[path], cancel)?;
+        let packed = collect_pack_files_with_opts(&[path], opts, cancel)?;
         for f in packed {
             progress.report(ProgressUpdate {
                 stage: JobStage::Create,

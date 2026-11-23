@@ -132,32 +132,56 @@ pub fn mark_setup_done() {
 }
 
 fn cli_beside_gui() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("OXIZIP_CLI") {
+        let p = PathBuf::from(p);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
     let gui = std::env::current_exe().ok()?;
     let dir = gui.parent()?;
     #[cfg(windows)]
-    let cli = dir.join("oxizip-cli.exe");
+    let names = ["oxizip-cli.exe", "oxizip.exe"];
     #[cfg(not(windows))]
-    let cli = dir.join("oxizip-cli");
-    cli.is_file().then_some(cli)
+    let names = ["oxizip-cli", "oxizip"];
+    for name in names {
+        let cli = dir.join(name);
+        // Prefer dedicated CLI binary; fall back only if it exists as separate file.
+        if cli.is_file() && cli != gui {
+            return Some(cli);
+        }
+    }
+    #[cfg(windows)]
+    {
+        let cli = dir.join("oxizip-cli.exe");
+        if cli.is_file() {
+            return Some(cli);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let cli = dir.join("oxizip-cli");
+        if cli.is_file() {
+            return Some(cli);
+        }
+    }
+    None
 }
 
-/// Run `oxizip-cli shell install` using the CLI next to this GUI binary.
-/// `exts` empty means all supported formats.
-pub fn install_associations(lang_arg: &str, exts: &[&str]) -> Result<String, String> {
+fn run_shell_cli(lang_arg: &str, extra: &[&str]) -> Result<String, String> {
     let cli = cli_beside_gui().ok_or_else(|| {
         String::from(
             "oxizip-cli not found beside oxizip; reinstall or run: oxizip-cli shell install",
         )
     })?;
-    let mut args = vec![
+    let mut args: Vec<String> = vec![
         "--lang".into(),
         lang_arg.into(),
         "shell".into(),
         "install".into(),
     ];
-    if !exts.is_empty() {
-        args.push("--ext".into());
-        args.push(exts.join(","));
+    for a in extra {
+        args.push((*a).into());
     }
     let mut cmd = Command::new(&cli);
     #[cfg(windows)]
@@ -183,10 +207,28 @@ pub fn install_associations(lang_arg: &str, exts: &[&str]) -> Result<String, Str
     }
 }
 
+/// Run `oxizip-cli shell install` using the CLI next to this GUI binary.
+/// `exts` empty means all supported formats.
+pub fn install_associations(lang_arg: &str, exts: &[&str]) -> Result<String, String> {
+    let mut extra: Vec<&str> = Vec::new();
+    let joined;
+    if !exts.is_empty() {
+        extra.push("--ext");
+        joined = exts.join(",");
+        extra.push(&joined);
+    }
+    run_shell_cli(lang_arg, &extra)
+}
+
+/// Refresh context menus only (no default-open / UserChoice).
+pub fn install_menus_only(lang_arg: &str) -> Result<String, String> {
+    run_shell_cli(lang_arg, &["--menus-only"])
+}
+
 pub fn parse_launch_args() -> (bool, Option<PathBuf>) {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // Shell job dialog owns the argv; do not treat paths as "open archive".
-    if args.iter().any(|a| a == "--job") {
+    // Shell job / settings dialogs own the argv; do not treat paths as "open archive".
+    if args.iter().any(|a| a == "--job" || a == "--settings") {
         return (false, None);
     }
     let mut force_setup = false;
@@ -205,6 +247,26 @@ pub fn parse_launch_args() -> (bool, Option<PathBuf>) {
         }
     }
     (force_setup, open_path)
+}
+
+/// `oxizip --settings [--tab assoc|shell|…]`
+pub fn parse_settings_launch() -> Option<String> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if !args.iter().any(|a| a == "--settings") {
+        return None;
+    }
+    let mut tab = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--tab" {
+            i += 1;
+            if let Some(name) = args.get(i) {
+                tab = Some(name.clone());
+            }
+        }
+        i += 1;
+    }
+    Some(tab.unwrap_or_default())
 }
 
 /// Association groups shown on the first-run / settings dialog (clean-room layout).

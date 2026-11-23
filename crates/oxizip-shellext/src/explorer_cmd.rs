@@ -150,7 +150,7 @@ impl IExplorerCommand_Impl for ExplorerCommand_Impl {
             return Ok(ECS_ENABLED.0 as u32);
         }
         let allowed = child_actions(kind);
-        if allowed.contains(&self.action.as_str()) {
+        if allowed.iter().any(|a| *a == self.action.as_str()) {
             Ok(ECS_ENABLED.0 as u32)
         } else {
             Ok(ECS_HIDDEN.0 as u32)
@@ -202,9 +202,9 @@ struct EnumCommands {
 impl EnumCommands {
     fn sparse_all(kind: SelectionKind, paths: Vec<String>) -> Self {
         let actions = if kind == SelectionKind::Background {
-            child_actions(SelectionKind::Background).to_vec()
+            child_actions(SelectionKind::Background)
         } else {
-            child_actions_sparse_all().to_vec()
+            child_actions_sparse_all()
         };
         Self {
             actions,

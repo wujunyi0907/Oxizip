@@ -49,17 +49,42 @@ fn kde_servicemenus_dir(home: &Path) -> PathBuf {
     home.join(".local/share/kio/servicemenus")
 }
 
+const NAUTILUS_SCRIPT_NAMES: &[&str] = &[
+    "Oxizip Extract Here",
+    "Oxizip Extract Smart",
+    "Oxizip Extract To Folder",
+    "Oxizip Extract Here and Delete",
+    "Oxizip Extract Smart and Delete",
+    "Oxizip Extract To Folder and Delete",
+    "Oxizip Extract to Another Folder",
+    "Oxizip Open",
+    "Oxizip Compress ZIP",
+    "Oxizip Compress 7z",
+    "Oxizip Compress ZIPX",
+    "Oxizip Compress TAR",
+    "Oxizip Compress TGZ",
+    "Oxizip Compress GZ",
+    "Oxizip Compress XZ",
+    "Oxizip Compress ZPAQ",
+    "Oxizip Compress Each ZIP",
+    "Oxizip Compress Each 7z",
+];
+
 fn marker_files(home: &Path) -> Vec<PathBuf> {
-    vec![
+    let scripts = nautilus_scripts_dir(home);
+    let mut paths = vec![
         applications_dir(home).join(OPEN_DESKTOP_ID),
         applications_dir(home).join("oxizip-extract.desktop"),
         applications_dir(home).join("oxizip-compress.desktop"),
         mime_packages_dir(home).join(MIME_PACKAGE_NAME),
-        nautilus_scripts_dir(home).join("Oxizip Extract Here"),
-        nautilus_scripts_dir(home).join("Oxizip Extract Smart"),
-        nautilus_scripts_dir(home).join("Oxizip Compress ZIP"),
         kde_servicemenus_dir(home).join("oxizip.desktop"),
-    ]
+    ];
+    paths.extend(
+        NAUTILUS_SCRIPT_NAMES
+            .iter()
+            .map(|name| scripts.join(name)),
+    );
+    paths
 }
 
 /// FreeDesktop MIME types claimed for an extension (may include Oxizip-private types).
@@ -299,43 +324,453 @@ fn shell_escape_desktop_exec(path: &Path) -> String {
     }
 }
 
-fn kde_servicemenu(gui: &Path, mimes: &[&str]) -> String {
+#[derive(Debug, Clone)]
+struct MenuFilter {
+    extract_here: bool,
+    extract_smart: bool,
+    extract_to_folder: bool,
+    extract_here_del: bool,
+    extract_smart_del: bool,
+    extract_to_folder_del: bool,
+    extract_dialog: bool,
+    open_with: bool,
+    test: bool,
+    checksum: bool,
+    compress_zip: bool,
+    compress_7z: bool,
+    compress_zipx: bool,
+    compress_tar: bool,
+    compress_tgz: bool,
+    compress_gz: bool,
+    compress_xz: bool,
+    compress_zpaq: bool,
+    compress_each_zip: bool,
+    compress_each_7z: bool,
+    disabled: bool,
+}
+
+impl Default for MenuFilter {
+    fn default() -> Self {
+        Self {
+            extract_here: true,
+            extract_smart: true,
+            extract_to_folder: true,
+            extract_here_del: false,
+            extract_smart_del: false,
+            extract_to_folder_del: false,
+            extract_dialog: true,
+            open_with: true,
+            test: true,
+            checksum: true,
+            compress_zip: true,
+            compress_7z: true,
+            compress_zipx: false,
+            compress_tar: false,
+            compress_tgz: false,
+            compress_gz: false,
+            compress_xz: false,
+            compress_zpaq: false,
+            compress_each_zip: false,
+            compress_each_7z: false,
+            disabled: false,
+        }
+    }
+}
+
+fn parse_menu_filter_file(bytes: &[u8]) -> MenuFilter {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return MenuFilter::default();
+    };
+    let b = |key: &str, default: bool| -> bool {
+        v.get(key).and_then(|x| x.as_bool()).unwrap_or(default)
+    };
+    MenuFilter {
+        extract_here: b("extract_here", true),
+        extract_smart: b("extract_smart", true),
+        extract_to_folder: b("extract_to_folder", true),
+        extract_here_del: b("extract_here_del", false),
+        extract_smart_del: b("extract_smart_del", false),
+        extract_to_folder_del: b("extract_to_folder_del", false),
+        extract_dialog: b("extract_dialog", true),
+        open_with: b("open_with", true),
+        test: b("test", true),
+        checksum: b("checksum", true),
+        compress_zip: b("compress_zip", true),
+        compress_7z: b("compress_7z", true),
+        compress_zipx: b("compress_zipx", false),
+        compress_tar: b("compress_tar", false),
+        compress_tgz: b("compress_tgz", false),
+        compress_gz: b("compress_gz", false),
+        compress_xz: b("compress_xz", false),
+        compress_zpaq: b("compress_zpaq", false),
+        compress_each_zip: b("compress_each_zip", false),
+        compress_each_7z: b("compress_each_7z", false),
+        disabled: b("disabled", false),
+    }
+}
+
+fn load_menu_filter(home: &Path) -> MenuFilter {
+    let path = config_dir(home).join("oxizip").join("shell_menu.json");
+    let Ok(bytes) = fs::read(&path) else {
+        return MenuFilter::default();
+    };
+    parse_menu_filter_file(&bytes)
+}
+
+struct KdeMenuAction {
+    id: &'static str,
+    name_en: &'static str,
+    name_zh: &'static str,
+    exec_suffix: &'static str,
+}
+
+fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
     let gui_s = shell_escape_desktop_exec(gui);
     let mut mime = mime_type_list(mimes);
     if !mime.contains("inode/directory") {
         mime.push_str("inode/directory;application/octet-stream;");
     }
-    format!(
+    let mut actions: Vec<KdeMenuAction> = Vec::new();
+    let push = |actions: &mut Vec<KdeMenuAction>, id, name_en, name_zh, exec_suffix| {
+        actions.push(KdeMenuAction {
+            id,
+            name_en,
+            name_zh,
+            exec_suffix,
+        });
+    };
+    if filter.extract_here {
+        push(
+            &mut actions,
+            "ExtractHere",
+            t(Lang::En, "shell.extract_here"),
+            t(Lang::ZhCn, "shell.extract_here"),
+            "--job extract --here %f",
+        );
+    }
+    if filter.extract_smart {
+        push(
+            &mut actions,
+            "ExtractSmart",
+            t(Lang::En, "shell.extract_smart"),
+            t(Lang::ZhCn, "shell.extract_smart"),
+            "--job extract --smart %f",
+        );
+    }
+    if filter.extract_to_folder {
+        push(
+            &mut actions,
+            "ExtractToFolder",
+            t(Lang::En, "shell.extract_to_folder"),
+            t(Lang::ZhCn, "shell.extract_to_folder"),
+            "--job extract --archive-name-dir %f",
+        );
+    }
+    if filter.extract_here_del {
+        push(
+            &mut actions,
+            "ExtractHereDel",
+            t(Lang::En, "shell.extract_here_del"),
+            t(Lang::ZhCn, "shell.extract_here_del"),
+            "--job extract --here --delete-archive %f",
+        );
+    }
+    if filter.extract_smart_del {
+        push(
+            &mut actions,
+            "ExtractSmartDel",
+            t(Lang::En, "shell.extract_smart_del"),
+            t(Lang::ZhCn, "shell.extract_smart_del"),
+            "--job extract --smart --delete-archive %f",
+        );
+    }
+    if filter.extract_to_folder_del {
+        push(
+            &mut actions,
+            "ExtractToFolderDel",
+            t(Lang::En, "shell.extract_folder_del"),
+            t(Lang::ZhCn, "shell.extract_folder_del"),
+            "--job extract --archive-name-dir --delete-archive %f",
+        );
+    }
+    if filter.extract_dialog {
+        push(
+            &mut actions,
+            "ExtractDialog",
+            t(Lang::En, "shell.extract_dialog"),
+            t(Lang::ZhCn, "shell.extract_dialog"),
+            "--job extract --dialog %f",
+        );
+    }
+    if filter.open_with {
+        push(
+            &mut actions,
+            "OpenWith",
+            t(Lang::En, "shell.open_with"),
+            t(Lang::ZhCn, "shell.open_with"),
+            "%f",
+        );
+    }
+    if filter.compress_zip {
+        push(
+            &mut actions,
+            "CompressZip",
+            t(Lang::En, "shell.compress_zip"),
+            t(Lang::ZhCn, "shell.compress_zip"),
+            "--job create --beside -f zip %F",
+        );
+    }
+    if filter.compress_7z {
+        push(
+            &mut actions,
+            "Compress7z",
+            t(Lang::En, "shell.compress_7z"),
+            t(Lang::ZhCn, "shell.compress_7z"),
+            "--job create --beside -f 7z %F",
+        );
+    }
+    if filter.compress_zipx {
+        push(
+            &mut actions,
+            "CompressZipx",
+            t(Lang::En, "shell.compress_zipx"),
+            t(Lang::ZhCn, "shell.compress_zipx"),
+            "--job create --beside -f zipx %F",
+        );
+    }
+    if filter.compress_tar {
+        push(
+            &mut actions,
+            "CompressTar",
+            t(Lang::En, "shell.compress_tar"),
+            t(Lang::ZhCn, "shell.compress_tar"),
+            "--job create --beside -f tar %F",
+        );
+    }
+    if filter.compress_tgz {
+        push(
+            &mut actions,
+            "CompressTgz",
+            t(Lang::En, "shell.compress_tgz"),
+            t(Lang::ZhCn, "shell.compress_tgz"),
+            "--job create --beside -f tgz %F",
+        );
+    }
+    if filter.compress_gz {
+        push(
+            &mut actions,
+            "CompressGz",
+            t(Lang::En, "shell.compress_gz"),
+            t(Lang::ZhCn, "shell.compress_gz"),
+            "--job create --beside -f gz %F",
+        );
+    }
+    if filter.compress_xz {
+        push(
+            &mut actions,
+            "CompressXz",
+            t(Lang::En, "shell.compress_xz"),
+            t(Lang::ZhCn, "shell.compress_xz"),
+            "--job create --beside -f xz %F",
+        );
+    }
+    if filter.compress_zpaq {
+        push(
+            &mut actions,
+            "CompressZpaq",
+            t(Lang::En, "shell.compress_zpaq"),
+            t(Lang::ZhCn, "shell.compress_zpaq"),
+            "--job create --beside -f zpaq %F",
+        );
+    }
+    if filter.compress_each_zip {
+        push(
+            &mut actions,
+            "CompressEachZip",
+            t(Lang::En, "shell.compress_each_zip"),
+            t(Lang::ZhCn, "shell.compress_each_zip"),
+            "--job create --beside --each -f zip %F",
+        );
+    }
+    if filter.compress_each_7z {
+        push(
+            &mut actions,
+            "CompressEach7z",
+            t(Lang::En, "shell.compress_each_7z"),
+            t(Lang::ZhCn, "shell.compress_each_7z"),
+            "--job create --beside --each -f 7z %F",
+        );
+    }
+    let action_ids = actions
+        .iter()
+        .map(|a| a.id)
+        .collect::<Vec<_>>()
+        .join(";");
+    let mut out = format!(
         r#"[Desktop Entry]
 Type=Service
 ServiceTypes=KonqPopupMenu/Plugin
 MimeType={mimes}
-Actions=ExtractHere;ExtractSmart;CompressZip;Compress7z;
+Actions={action_ids};
 X-KDE-Priority=TopLevel
-
-[Desktop Action ExtractHere]
-Name=Oxizip Extract Here
-Name[zh_CN]=Oxizip 解压到此处
-Exec={gui} --job extract --here %f
-
-[Desktop Action ExtractSmart]
-Name=Oxizip Extract Smart
-Name[zh_CN]=Oxizip 智能解压
-Exec={gui} --job extract --smart %f
-
-[Desktop Action CompressZip]
-Name=Oxizip Compress ZIP
-Name[zh_CN]=Oxizip 压缩为 ZIP
-Exec={gui} --job create --beside -f zip %F
-
-[Desktop Action Compress7z]
-Name=Oxizip Compress 7z
-Name[zh_CN]=Oxizip 压缩为 7z
-Exec={gui} --job create --beside -f 7z %F
 "#,
         mimes = mime,
-        gui = gui_s,
-    )
+        action_ids = action_ids,
+    );
+    for action in &actions {
+        out.push_str(&format!(
+            "\n[Desktop Action {id}]\nName={name_en}\nName[zh_CN]={name_zh}\nExec={gui} {exec_suffix}\n",
+            id = action.id,
+            name_en = action.name_en,
+            name_zh = action.name_zh,
+            gui = gui_s,
+            exec_suffix = action.exec_suffix,
+        ));
+    }
+    out
+}
+
+fn sync_nautilus_script(
+    scripts: &Path,
+    name: &str,
+    gui: &Path,
+    args: Option<&str>,
+) -> Result<(), String> {
+    let path = scripts.join(name);
+    if let Some(args) = args {
+        let body = if args.is_empty() {
+            format!(
+                "#!/bin/sh\n# Oxizip Nautilus script\nexec {} \"$@\"\n",
+                shell_quote(&gui.display().to_string()),
+            )
+        } else {
+            nautilus_script(gui, args)
+        };
+        write_file(&path, &body)?;
+    } else {
+        let _ = fs::remove_file(&path);
+    }
+    Ok(())
+}
+
+fn sync_nautilus_scripts(scripts: &Path, gui: &Path, filter: &MenuFilter) -> Result<(), String> {
+    let on = |flag: bool, args: &str| if flag && !filter.disabled { Some(args) } else { None };
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Extract Here",
+        gui,
+        on(filter.extract_here, "--job extract --here"),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Extract Smart",
+        gui,
+        on(filter.extract_smart, "--job extract --smart"),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Extract To Folder",
+        gui,
+        on(filter.extract_to_folder, "--job extract --archive-name-dir"),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Extract Here and Delete",
+        gui,
+        on(
+            filter.extract_here_del,
+            "--job extract --here --delete-archive",
+        ),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Extract Smart and Delete",
+        gui,
+        on(
+            filter.extract_smart_del,
+            "--job extract --smart --delete-archive",
+        ),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Extract To Folder and Delete",
+        gui,
+        on(
+            filter.extract_to_folder_del,
+            "--job extract --archive-name-dir --delete-archive",
+        ),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Extract to Another Folder",
+        gui,
+        on(filter.extract_dialog, "--job extract --dialog"),
+    )?;
+    sync_nautilus_script(scripts, "Oxizip Open", gui, on(filter.open_with, ""))?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Compress ZIP",
+        gui,
+        on(filter.compress_zip, "--job create --beside -f zip"),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Compress 7z",
+        gui,
+        on(filter.compress_7z, "--job create --beside -f 7z"),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Compress ZIPX",
+        gui,
+        on(filter.compress_zipx, "--job create --beside -f zipx"),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Compress TAR",
+        gui,
+        on(filter.compress_tar, "--job create --beside -f tar"),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Compress TGZ",
+        gui,
+        on(filter.compress_tgz, "--job create --beside -f tgz"),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Compress GZ",
+        gui,
+        on(filter.compress_gz, "--job create --beside -f gz"),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Compress XZ",
+        gui,
+        on(filter.compress_xz, "--job create --beside -f xz"),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Compress ZPAQ",
+        gui,
+        on(filter.compress_zpaq, "--job create --beside -f zpaq"),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Compress Each ZIP",
+        gui,
+        on(
+            filter.compress_each_zip,
+            "--job create --beside --each -f zip",
+        ),
+    )?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Compress Each 7z",
+        gui,
+        on(filter.compress_each_7z, "--job create --beside --each -f 7z"),
+    )?;
+    Ok(())
 }
 
 fn build_mime_package(exts: &[&str]) -> Option<String> {
@@ -437,6 +872,7 @@ pub fn install(lang: Lang, requested_exts: &[String], menus_only: bool) -> Resul
     let gui = current_oxizip_gui().unwrap_or_else(|_| cli.clone());
     let home = home_dir()?;
     let apps = applications_dir(&home);
+    let filter = load_menu_filter(&home);
 
     if !menus_only {
         // Clean previous default claims before rewriting the desktop + mimeapps entries.
@@ -444,14 +880,19 @@ pub fn install(lang: Lang, requested_exts: &[String], menus_only: bool) -> Resul
         write_file(&apps.join(OPEN_DESKTOP_ID), &open_desktop(&gui, &mimes))?;
     }
 
-    write_file(
-        &apps.join("oxizip-extract.desktop"),
-        &extract_desktop(&cli, &gui, &mimes),
-    )?;
-    write_file(
-        &apps.join("oxizip-compress.desktop"),
-        &compress_desktop(&gui),
-    )?;
+    if !filter.disabled {
+        write_file(
+            &apps.join("oxizip-extract.desktop"),
+            &extract_desktop(&cli, &gui, &mimes),
+        )?;
+        write_file(
+            &apps.join("oxizip-compress.desktop"),
+            &compress_desktop(&gui),
+        )?;
+    } else {
+        let _ = fs::remove_file(apps.join("oxizip-extract.desktop"));
+        let _ = fs::remove_file(apps.join("oxizip-compress.desktop"));
+    }
 
     if !menus_only {
         let mime_pkg = mime_packages_dir(&home).join(MIME_PACKAGE_NAME);
@@ -465,23 +906,15 @@ pub fn install(lang: Lang, requested_exts: &[String], menus_only: bool) -> Resul
     }
 
     let scripts = nautilus_scripts_dir(&home);
-    write_file(
-        &scripts.join("Oxizip Extract Here"),
-        &nautilus_script(&gui, "--job extract --here"),
-    )?;
-    write_file(
-        &scripts.join("Oxizip Extract Smart"),
-        &nautilus_script(&gui, "--job extract --smart"),
-    )?;
-    write_file(
-        &scripts.join("Oxizip Compress ZIP"),
-        &nautilus_script(&gui, "--job create --beside -f zip"),
-    )?;
+    let _ = fs::create_dir_all(&scripts);
+    sync_nautilus_scripts(&scripts, &gui, &filter)?;
 
-    write_file(
-        &kde_servicemenus_dir(&home).join("oxizip.desktop"),
-        &kde_servicemenu(&gui, &mimes),
-    )?;
+    let kde = kde_servicemenus_dir(&home).join("oxizip.desktop");
+    if !filter.disabled {
+        write_file(&kde, &kde_servicemenu(&gui, &mimes, &filter))?;
+    } else {
+        let _ = fs::remove_file(&kde);
+    }
 
     refresh_desktop_db(&apps);
     if !menus_only {

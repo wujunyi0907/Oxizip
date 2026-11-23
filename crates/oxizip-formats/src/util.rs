@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use oxizip_core::{CancellationToken, CoreError, CoreResult};
 use walkdir::WalkDir;
 
-use crate::types::ConflictPolicy;
+use crate::types::{ConflictPolicy, CreateOptions};
 
 /// If `path` is free, return it. Otherwise apply `policy` (skip → `None`).
 pub fn resolve_conflict_path(path: PathBuf, policy: ConflictPolicy) -> Option<PathBuf> {
@@ -51,6 +51,15 @@ pub fn collect_pack_files(
     inputs: &[&Path],
     cancel: &CancellationToken,
 ) -> CoreResult<Vec<PackFile>> {
+    collect_pack_files_with_opts(inputs, &CreateOptions::default(), cancel)
+}
+
+/// Like [`collect_pack_files`], honoring exclude / Thumbs.db options.
+pub fn collect_pack_files_with_opts(
+    inputs: &[&Path],
+    opts: &CreateOptions,
+    cancel: &CancellationToken,
+) -> CoreResult<Vec<PackFile>> {
     let mut out = Vec::new();
     for input in inputs {
         cancel.check()?;
@@ -61,6 +70,9 @@ pub fn collect_pack_files(
             ))
         })?;
         if path.is_file() {
+            if opts.should_exclude_file(&path) {
+                continue;
+            }
             let name = path
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
@@ -79,6 +91,9 @@ pub fn collect_pack_files(
             cancel.check()?;
             let p = entry.path();
             if !p.is_file() {
+                continue;
+            }
+            if opts.should_exclude_file(p) {
                 continue;
             }
             let rel = p

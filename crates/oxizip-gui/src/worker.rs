@@ -16,6 +16,33 @@ use tempfile::TempDir;
 
 use crate::Message;
 
+/// GUI extract preferences threaded into worker jobs.
+#[derive(Debug, Clone, Copy)]
+pub struct ExtractRuntimePrefs {
+    pub copy_zone_identifier: bool,
+    pub delete_on_cancel: bool,
+    pub smart_single_file_folder: bool,
+}
+
+impl Default for ExtractRuntimePrefs {
+    fn default() -> Self {
+        Self {
+            copy_zone_identifier: true,
+            delete_on_cancel: false,
+            smart_single_file_folder: false,
+        }
+    }
+}
+
+fn make_temp_dir(temp_folder: &str) -> Result<TempDir, String> {
+    if temp_folder.trim().is_empty() {
+        TempDir::new().map_err(|e| e.to_string())
+    } else {
+        std::fs::create_dir_all(temp_folder).map_err(|e| e.to_string())?;
+        TempDir::new_in(temp_folder).map_err(|e| e.to_string())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobKind {
     List,
@@ -302,6 +329,7 @@ pub fn extract_archive(
     dest: PathBuf,
     password: Option<String>,
     conflict: Option<oxizip_engine::ConflictPolicy>,
+    prefs: ExtractRuntimePrefs,
     cancel: &CancellationToken,
     slot: &ProgressSlot,
     lang: Lang,
@@ -340,9 +368,15 @@ pub fn extract_archive(
     let mut opts = ExtractOptions::to_dir(&dest);
     opts.password = password;
     opts.conflict = policy;
+    opts.copy_zone_identifier = prefs.copy_zone_identifier;
     match extract(&archive, &opts, &progress, cancel) {
         Ok(()) => JobOutcome::Extracted { dest, error: None },
-        Err(oxizip_engine::CoreError::Canceled) => JobOutcome::Canceled,
+        Err(oxizip_engine::CoreError::Canceled) => {
+            if prefs.delete_on_cancel {
+                let _ = fs::remove_dir_all(&dest);
+            }
+            JobOutcome::Canceled
+        }
         Err(err) => JobOutcome::Extracted {
             dest,
             error: Some(error_message(lang, &err)),
@@ -376,18 +410,38 @@ fn collect_conflicts(dest: &std::path::Path, entries: &[EntryMeta]) -> Vec<Strin
     out
 }
 
-/// Shell `--job extract`: resolve Here/Smart/ArchiveName dest, then extract each archive.
+fn resolve_shell_dest(
+    mode: crate::job::ExtractMode,
+    dest_override: Option<&PathBuf>,
+    archive: &std::path::Path,
+    entries: &[EntryMeta],
+    prefs: ExtractRuntimePrefs,
+) -> PathBuf {
+    use crate::job::{dest_archive_name, dest_here, dest_smart, ExtractMode};
+    if let Some(dest) = dest_override {
+        return dest.clone();
+    }
+    match mode {
+        ExtractMode::Here | ExtractMode::Dialog => dest_here(archive),
+        ExtractMode::ArchiveName => dest_archive_name(archive),
+        ExtractMode::Smart => dest_smart(archive, entries, prefs.smart_single_file_folder),
+    }
+}
+
+/// Shell `--job extract`: resolve Here/Smart/ArchiveName/Dialog dest, then extract each archive.
 /// `conflict = None` means probe first and return [`JobOutcome::NeedsConflictChoice`] if needed.
 pub fn extract_shell_job(
     archives: Vec<PathBuf>,
     mode: crate::job::ExtractMode,
+    dest_override: Option<PathBuf>,
     password: Option<String>,
     conflict: Option<oxizip_engine::ConflictPolicy>,
+    prefs: ExtractRuntimePrefs,
     cancel: &CancellationToken,
     slot: &ProgressSlot,
     lang: Lang,
 ) -> JobOutcome {
-    use crate::job::{dest_archive_name, dest_here, dest_smart, ExtractMode};
+    use crate::job::{dest_here, ExtractMode};
     use oxizip_engine::ConflictPolicy;
     use std::fs;
 
@@ -416,11 +470,8 @@ pub fn extract_shell_job(
                     };
                 }
             };
-            let dest = match mode {
-                ExtractMode::Here => dest_here(archive),
-                ExtractMode::ArchiveName => dest_archive_name(archive),
-                ExtractMode::Smart => dest_smart(archive, &entries),
-            };
+            let dest =
+                resolve_shell_dest(mode, dest_override.as_ref(), archive, &entries, prefs);
             let _ = fs::create_dir_all(&dest);
             for name in collect_conflicts(&dest, &entries) {
                 if !all_conflicts.contains(&name) {
@@ -460,20 +511,17 @@ pub fn extract_shell_job(
         let list_opts = ListOptions {
             password: password.clone(),
         };
-        let dest = match mode {
-            ExtractMode::Here => dest_here(&archive),
-            ExtractMode::ArchiveName => dest_archive_name(&archive),
-            ExtractMode::Smart => match list(&archive, &list_opts, &progress, cancel) {
-                Ok(entries) => dest_smart(&archive, &entries),
-                Err(oxizip_engine::CoreError::Canceled) => return JobOutcome::Canceled,
-                Err(err) => {
-                    return JobOutcome::Extracted {
-                        dest: dest_here(&archive),
-                        error: Some(error_message(lang, &err)),
-                    };
-                }
-            },
+        let entries = match list(&archive, &list_opts, &progress, cancel) {
+            Ok(e) => e,
+            Err(oxizip_engine::CoreError::Canceled) => return JobOutcome::Canceled,
+            Err(err) => {
+                return JobOutcome::Extracted {
+                    dest: dest_here(&archive),
+                    error: Some(error_message(lang, &err)),
+                };
+            }
         };
+        let dest = resolve_shell_dest(mode, dest_override.as_ref(), &archive, &entries, prefs);
         if let Err(err) = fs::create_dir_all(&dest) {
             return JobOutcome::Extracted {
                 dest,
@@ -483,9 +531,18 @@ pub fn extract_shell_job(
         let mut opts = ExtractOptions::to_dir(&dest);
         opts.password = password.clone();
         opts.conflict = policy;
+        opts.copy_zone_identifier = prefs.copy_zone_identifier;
         match extract(&archive, &opts, &progress, cancel) {
             Ok(()) => last_dest = dest,
-            Err(oxizip_engine::CoreError::Canceled) => return JobOutcome::Canceled,
+            Err(oxizip_engine::CoreError::Canceled) => {
+                if prefs.delete_on_cancel
+                    && !matches!(mode, ExtractMode::Here | ExtractMode::Dialog)
+                    && dest_override.is_none()
+                {
+                    let _ = fs::remove_dir_all(&dest);
+                }
+                return JobOutcome::Canceled;
+            }
             Err(err) => {
                 return JobOutcome::Extracted {
                     dest,
@@ -528,10 +585,57 @@ pub fn create_archive(
     }
 }
 
+/// Create one archive beside each input path.
+pub fn create_archive_each(
+    inputs: Vec<PathBuf>,
+    format: FormatId,
+    ext: String,
+    opts: CreateOptions,
+    cancel: &CancellationToken,
+    slot: &ProgressSlot,
+    lang: Lang,
+) -> JobOutcome {
+    use crate::job::default_create_path;
+    let mut last = PathBuf::new();
+    for input in inputs {
+        if cancel.is_canceled() {
+            return JobOutcome::Canceled;
+        }
+        let out = default_create_path(&input, &ext);
+        match create_archive(
+            out.clone(),
+            format,
+            vec![input],
+            opts.clone(),
+            cancel,
+            slot,
+            lang,
+        ) {
+            JobOutcome::Created { path, error: None, .. } => last = path,
+            JobOutcome::Canceled => return JobOutcome::Canceled,
+            JobOutcome::Created { path, error: Some(e), .. } => {
+                return JobOutcome::Created {
+                    path,
+                    format,
+                    error: Some(e),
+                };
+            }
+            other => return other,
+        }
+    }
+    JobOutcome::Created {
+        path: last,
+        format,
+        error: None,
+    }
+}
+
 pub fn open_entry(
     archive: PathBuf,
     entry: EntryMeta,
     password: Option<String>,
+    temp_folder: String,
+    copy_zone: bool,
     cancel: &CancellationToken,
     slot: &ProgressSlot,
     lang: Lang,
@@ -540,19 +644,20 @@ pub fn open_entry(
         let slot = slot.clone();
         move |u: ProgressUpdate| slot.set_from_update(&u)
     });
-    let temp = match TempDir::new() {
+    let temp = match make_temp_dir(&temp_folder) {
         Ok(t) => t,
         Err(e) => {
             return JobOutcome::Opened {
                 name: entry.name,
                 temp: None,
-                error: Some(e.to_string()),
+                error: Some(e),
             };
         }
     };
     let mut opts = ExtractOptions::to_dir(temp.path());
     opts.password = password;
     opts.entries = Some(vec![entry.name.clone()]);
+    opts.copy_zone_identifier = copy_zone;
     if let Err(err) = extract(&archive, &opts, &progress, cancel) {
         if matches!(err, oxizip_engine::CoreError::Canceled) {
             return JobOutcome::Canceled;

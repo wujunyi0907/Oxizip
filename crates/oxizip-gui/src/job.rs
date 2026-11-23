@@ -20,6 +20,8 @@ pub enum ExtractMode {
     Here,
     Smart,
     ArchiveName,
+    /// Prompt for destination folder (no dest yet).
+    Dialog,
 }
 
 #[derive(Debug, Clone)]
@@ -27,12 +29,18 @@ pub struct CreateJob {
     pub format: FormatId,
     pub out: PathBuf,
     pub inputs: Vec<PathBuf>,
+    /// Create one archive per input path (beside each).
+    pub each: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct ExtractJob {
     pub archives: Vec<PathBuf>,
     pub mode: ExtractMode,
+    /// Delete source archive(s) after successful extract.
+    pub delete_archive: bool,
+    /// When set (e.g. after folder dialog), extract all archives here.
+    pub dest_override: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -66,12 +74,18 @@ pub fn parse_job_args() -> Option<PendingJob> {
 
 fn parse_create(args: &[String]) -> Option<PendingJob> {
     let mut beside = false;
+    let mut each = false;
     let mut format = String::from("zip");
     let mut paths = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--beside" => {
+                beside = true;
+                i += 1;
+            }
+            "--each" => {
+                each = true;
                 beside = true;
                 i += 1;
             }
@@ -93,7 +107,7 @@ fn parse_create(args: &[String]) -> Option<PendingJob> {
         return None;
     }
     let fmt = FormatId::parse_create_name(&format)?;
-    let (out, inputs) = if beside {
+    let (out, inputs) = if beside || each {
         (default_create_path(&paths[0], fmt.as_str()), paths)
     } else if paths.len() >= 2 {
         let mut paths = paths;
@@ -106,25 +120,40 @@ fn parse_create(args: &[String]) -> Option<PendingJob> {
         format: fmt,
         out,
         inputs,
+        each,
     }))
 }
 
 fn parse_extract(args: &[String]) -> Option<PendingJob> {
-    let mut mode = ExtractMode::Smart;
+    let mut mode = ExtractMode::Dialog;
+    let mut mode_set = false;
+    let mut delete_archive = false;
     let mut paths = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--here" => {
                 mode = ExtractMode::Here;
+                mode_set = true;
                 i += 1;
             }
             "--smart" => {
                 mode = ExtractMode::Smart;
+                mode_set = true;
                 i += 1;
             }
             "--archive-name-dir" => {
                 mode = ExtractMode::ArchiveName;
+                mode_set = true;
+                i += 1;
+            }
+            "--dialog" => {
+                mode = ExtractMode::Dialog;
+                mode_set = true;
+                i += 1;
+            }
+            "--delete-archive" => {
+                delete_archive = true;
                 i += 1;
             }
             s if s.starts_with('-') => {
@@ -139,9 +168,12 @@ fn parse_extract(args: &[String]) -> Option<PendingJob> {
     if paths.is_empty() {
         return None;
     }
+    let _ = mode_set;
     Some(PendingJob::Extract(ExtractJob {
         archives: paths,
         mode,
+        delete_archive,
+        dest_override: None,
     }))
 }
 
@@ -190,7 +222,8 @@ pub fn dest_archive_name(archive: &Path) -> PathBuf {
 }
 
 /// One shared top-level folder → Here; otherwise ArchiveName.
-pub fn dest_smart(archive: &Path, entries: &[EntryMeta]) -> PathBuf {
+/// When `single_file_folder` is set and the archive holds a single file, use ArchiveName.
+pub fn dest_smart(archive: &Path, entries: &[EntryMeta], single_file_folder: bool) -> PathBuf {
     let tops: BTreeSet<&str> = entries
         .iter()
         .filter_map(|e| {
@@ -202,8 +235,16 @@ pub fn dest_smart(archive: &Path, entries: &[EntryMeta]) -> PathBuf {
             }
         })
         .collect();
+    let file_count = entries
+        .iter()
+        .filter(|e| !e.is_dir && !e.name.ends_with('/'))
+        .count();
     if tops.len() == 1 {
-        dest_here(archive)
+        if single_file_folder && file_count == 1 {
+            dest_archive_name(archive)
+        } else {
+            dest_here(archive)
+        }
     } else {
         dest_archive_name(archive)
     }
@@ -263,6 +304,26 @@ mod tests {
                 method: None,
             },
         ];
-        assert_eq!(dest_smart(archive, &entries), PathBuf::from("/tmp"));
+        assert_eq!(
+            dest_smart(archive, &entries, false),
+            PathBuf::from("/tmp")
+        );
+    }
+
+    #[test]
+    fn smart_single_file_uses_folder_when_enabled() {
+        let archive = Path::new("/tmp/pack.zip");
+        let entries = vec![EntryMeta {
+            name: "only.txt".into(),
+            is_dir: false,
+            uncompressed_size: None,
+            compressed_size: None,
+            modified: None,
+            method: None,
+        }];
+        assert_eq!(
+            dest_smart(archive, &entries, true),
+            PathBuf::from("/tmp/pack")
+        );
     }
 }

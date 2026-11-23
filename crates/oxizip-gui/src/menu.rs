@@ -94,6 +94,7 @@ pub enum MenuAction {
     ToggleColCompressed,
     ToggleColMethod,
     ToggleColModified,
+    ToggleColKind,
     ToggleAlwaysOnTop,
     ColorSettings,
     Repair,
@@ -765,6 +766,11 @@ fn panel_view_column<'a>(lang: Lang, ctx: &MenuCtx<'_>) -> Element<'a, Message> 
             check_label(t(lang, "gui.col.modified"), ctx.prefs.columns.modified),
             true,
             MenuAction::ToggleColModified,
+        ),
+        item_btn(
+            check_label(t(lang, "gui.col.kind"), ctx.prefs.columns.kind),
+            true,
+            MenuAction::ToggleColKind,
         ),
     ])
 }

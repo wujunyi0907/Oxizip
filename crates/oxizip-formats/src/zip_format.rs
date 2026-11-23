@@ -322,10 +322,20 @@ impl ArchiveWriter for ZipWriterBackend {
         }
 
         let root = path.clone();
+        let folder_prefix = if opts.no_root_for_single_folder {
+            String::new()
+        } else {
+            path.file_name()
+                .map(|s| format!("{}/", s.to_string_lossy()))
+                .unwrap_or_default()
+        };
         for entry in WalkDir::new(&path).into_iter().filter_map(|e| e.ok()) {
             cancel.check()?;
             let p = entry.path();
             if p.is_dir() {
+                continue;
+            }
+            if opts.should_exclude_file(p) {
                 continue;
             }
             let rel = p
@@ -333,7 +343,12 @@ impl ArchiveWriter for ZipWriterBackend {
                 .map_err(|e| CoreError::Other(e.to_string()))?
                 .to_string_lossy()
                 .replace('\\', "/");
-            self.add_file_with_name(p, &rel, opts, progress, cancel)?;
+            let name = if folder_prefix.is_empty() {
+                rel
+            } else {
+                format!("{folder_prefix}{rel}")
+            };
+            self.add_file_with_name(p, &name, opts, progress, cancel)?;
         }
         Ok(())
     }
