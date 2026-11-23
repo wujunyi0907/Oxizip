@@ -2,64 +2,125 @@
 
 [简体中文](README.md)
 
-A **clean-room** multi-format archive tool written in Rust: one shared engine, plus a CLI and a desktop UI.
+A **clean-room** multi-format archive tool in Rust: one shared engine, with both a **GUI** and a **CLI**. Targets **Windows x64** and **Linux x86_64** (**64-bit only**).
+
+| | |
+|---|---|
+| License | [AGPL-3.0-only](LICENSE) |
+| Application ID | `cn.wujunyi.oxizip` |
+| Version | See root [`Cargo.toml`](Cargo.toml) / [CHANGELOG](CHANGELOG.md) |
+| Releases | [GitHub Releases](https://github.com/wujunyi0907/Oxizip/releases) (tags must be `vX.Y.Z`) |
+
+---
 
 ## Features
 
-- **Unified engine**: list, extract, create, test, repair, and password recovery share one API used by both CLI and GUI
-- **CLI**: `clap` subcommands (`list` / `extract` / `create` / `test` / `detect` / `add` / `delete` / `rename` / `checksum` / `repair` / `recover-password` / `shell`)
-- **Desktop**: `iced`; entries open with the system default app (no in-app preview); icons live under `crates/oxizip-gui/assets/icons`
+- **Unified engine**: list, extract, create, test, repair, password recovery, and more — shared by GUI and CLI
+- **Desktop (iced)**: rounded borderless windows; entries open with the system default app (**no in-app preview**); dedicated settings window and shell job progress dialogs
+- **CLI**: `list` / `extract` / `create` / `test` / `detect` / `add` / `delete` / `rename` / `checksum` / `repair` / `recover-password` / `shell`
 - **Path safety**: zip-slip protection on extract
 - **Progress & cancel**: long jobs report progress and can be cancelled
-- **Shell integration**: `oxizip-cli shell install` (Windows cascade verbs + optional `oxizip-shellext` / Sparse; Linux desktop actions)
-- **Architecture**: **64-bit only**
+- **Shell integration**: `oxizip-cli shell install` — Windows classic flat verbs + Win11 Sparse cascade (`oxizip-shellext`); Linux `.desktop` / Nautilus / KDE
+- **Settings & associations**: file associations, context-menu toggles, extract/create prefs; menu filter written to `shell_menu.json`
+- **Editable language packs**: `locales/*.toml` next to the install or under the user config dir; restart after edits
 
-### Create (compress)
+### Format support
 
-`zip` · `7z` · `zipx` · `exe` (SFX) · `tar` · `tgz` · `lzh` · `iso` · `gz` · `xz` · `zpaq` (official sources embedded in-process)
+| | Create (compress) | Extract / list |
+|---|---|---|
+| In-tree / compliant crates | `zip` · `7z` · `zipx` · `exe` (SFX) · `tar` · `tgz` · `lzh` · `iso` · `gz` · `xz` · `zpaq` | ZIP / ZIPX / EXE(SFX) / TAR family / GZ·XZ·ZST·BZ2 / 7Z / LZH / ISO / ZPAQ / CAB / ALZ / EGG |
+| External CLI | — | **RAR** (official UnRAR, extract only) · **WIM** (wimlib-imagex, extract only) |
 
-### Extract / list
+Also: best-effort **repair** for ZIP / 7z; **password recovery** for ZIP / 7z (dictionary + optional short brute-force); checksums CRC32 / SHA-256 (Windows can write Zone.Identifier).
 
-ZIP / ZIPX / EXE(SFX) / TAR family / GZ·XZ·ZST·BZ2 / 7Z / LZH / ISO / ZPAQ / CAB / ALZ / EGG / WIM (`wimlib` CLI) / RAR (official UnRAR CLI, extract only)
+---
 
-### Other capabilities
+## Install
 
-- **Repair** (best-effort): damaged ZIP / 7z
-- **Password recovery** (ZIP / 7z): dictionary + optional short brute-force
-- **Checksums**: CRC32 / SHA-256; on Windows can write Zone.Identifier
+Prefer downloads from [Releases](https://github.com/wujunyi0907/Oxizip/releases).
 
-## Repository layout
+### Windows
 
+Artifact: `Oxizip-Setup-<version>-x64.exe` (custom iced install / uninstall UI).
+
+- Default path: `C:\Program Files\Oxizip` (UAC elevation)
+- Ships `oxizip.exe` (GUI), `oxizip-cli.exe` (CLI), format icons, plus `lib/unrar` and `lib/wimlib`
+- Post-install association wizard; uninstaller is `Uninstall.exe` in the install dir
+- Ship the Setup; do not treat a bare `oxizip.exe` as the installer
+
+Local packaging:
+
+```powershell
+.\scripts\package-windows.ps1
 ```
-crates/
-  oxizip-core/       # progress, cancel, errors, path safety
-  oxizip-formats/    # format probing and readers/writers
-  oxizip-engine/     # unified facade
-  oxizip-cli/        # command line
-  oxizip-gui/        # iced UI
-  oxizip-i18n/       # strings
-  oxizip-sfx-stub/   # SFX stub
-third_party/         # embedded sources (e.g. ZPAQ) and optional local CLI binaries (gitignore)
-samples/             # self-made test archives
+
+### Linux
+
+| Artifact | Install / uninstall |
+|---|---|
+| `Oxizip_<ver>_amd64.deb` | `sudo dpkg -i …` / `sudo apt remove oxizip` |
+| `Oxizip-<ver>-1.x86_64.rpm` | `sudo rpm -Uvh …` / `sudo rpm -e oxizip` |
+| `Oxizip-<ver>-x86_64.AppImage` | `chmod +x` then run; delete the file to remove |
+| `Oxizip-<ver>-linux-x86_64.tar.gz` | unpack the `usr/` tree |
+
+System package name is lowercase `oxizip`; distributed filenames use a capital `Oxizip` prefix. RPM keeps the NEVRA `-1` Release segment. Layout includes `/usr/bin/oxizip`, `oxizip-cli`, `oxizip.desktop`, docs, icons, and `/usr/share/oxizip/locales/`. RAR / WIM need system `unrar` and `wimlib-imagex` (Recommends on deb).
+
+Local packaging (ImageMagick required for AppImage PNG icons):
+
+```bash
+chmod +x scripts/package-linux.sh
+./scripts/package-linux.sh
 ```
 
-Dependency direction: `cli/gui → engine → formats → core` (no reverse deps).
+For offline builds set `OXIZIP_FETCH_APPIMAGE_TOOLS=0` and provide `appimagetool` / `linuxdeploy` yourself.
+
+### CI releases
+
+Push a tag **`vX.Y.Z`** (e.g. `v0.1.8`; `Cargo.toml` keeps `0.1.8` without `v`) or run [Package](.github/workflows/package.yml) manually. A GitHub Release is created **only if** Setup, deb, rpm, AppImage, and tar.gz are **all** present; any missing artifact fails the job and skips the Release. See [AGENTS.md](AGENTS.md).
+
+---
+
+## Language & fonts
+
+- CLI / GUI: **简体中文** and **English** (`--lang zh-cn|en`; switchable in the GUI)
+- Locale files: `crates/oxizip-i18n/locales/*.toml`; at runtime also merged from  
+  - `locales/` next to the executable  
+  - Linux: `/usr/share/oxizip/locales/`  
+  - User: `%APPDATA%\Oxizip\locales\` or `~/.config/oxizip/locales/`
+- Windows GUI: “Microsoft YaHei UI” by default; Release builds hide the console
+- Windows CLI: UTF-8 console code page
+- Linux GUI: install CJK fonts (e.g. `fonts-noto-cjk`)
+
+---
+
+## Runtime external tools
+
+Oxizip does **not** modify or link these tools’ sources/libraries; it only spawns them when needed.
+
+| Tool | Role | Windows lookup | Other |
+|---|---|---|---|
+| **UnRAR** | RAR extract only | `OXIZIP_UNRAR` → next to app → **`lib/unrar/UnRAR.exe`** → `PATH` | `OXIZIP_UNRAR` → system `unrar` |
+| **wimlib-imagex** | WIM extract only | `OXIZIP_WIMLIB` → next to app → **`lib/wimlib/`** → `PATH` | `OXIZIP_WIMLIB` → system `wimlib-imagex`, etc. |
+
+The Windows installer ships the official unmodified trees from [`lib/unrar/`](lib/unrar/) and [`lib/wimlib/`](lib/wimlib/) plus their license texts. Missing tools yield localizable errors.
+
+**ZPAQ** does not spawn an external exe: sources under [`lib/zpaq/`](lib/zpaq/) are built by `oxizip-formats` with `-DOXIZIP_EMBEDDED`; only the embed entry macros may change. Keep `lib/zpaq/COPYING` in releases.
+
+---
 
 ## Development
 
-Requires a Rust toolchain (`rustc` / `cargo`).
+Requires a Rust toolchain (`rustc` / `cargo`). Conventions: [AGENTS.md](AGENTS.md).
 
 ```bash
 cargo fmt
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo run -p oxizip-cli -- --help          # → oxizip-cli(.exe)
-cargo run -p oxizip-gui                    # → oxizip(.exe)
+cargo run -p oxizip-cli -- --help    # → oxizip-cli(.exe)
+cargo run -p oxizip-gui              # → oxizip(.exe)
 ```
 
-Binary names: **GUI = `oxizip`**, **CLI = `oxizip-cli`**.
-
-CLI examples:
+Binaries: **GUI = `oxizip`**, **CLI = `oxizip-cli`**.
 
 ```bash
 cargo run -p oxizip-cli -- c out.zip ./some_file
@@ -71,83 +132,32 @@ cargo run -p oxizip-cli -- repair damaged.zip -o repaired.zip
 cargo run -p oxizip-cli -- shell install
 ```
 
-Collaboration and coding conventions: [AGENTS.md](AGENTS.md). Release notes: [CHANGELOG.md](CHANGELOG.md).
+### Repository layout
 
-## UI language & fonts
-
-- CLI / GUI support **简体中文** and **English** (`--lang zh-cn|en`; switchable in the GUI).
-- Windows GUI: defaults to “Microsoft YaHei UI”; **Release** builds hide the console window.
-- Windows CLI: sets the console code page to UTF-8 to avoid mojibake.
-- Linux GUI: needs system CJK fonts (e.g. `fonts-noto-cjk`).
-
-## Packaging
-
-GitHub Actions: push a tag in the form **`vX.Y.Z`** (e.g. `v1.0.1` — the leading `v` is required; `Cargo.toml` keeps `1.0.1` without `v`) or run [Package](.github/workflows/package.yml) manually to build Windows Setup and Linux deb/rpm/AppImage. On such a tag, a GitHub Release is created **only if Setup, deb, rpm, AppImage, and tar.gz are all present**; any missing artifact fails the job and skips the Release (packaging is not run on every `main` push). See [AGENTS.md](AGENTS.md) and [CHANGELOG.md](CHANGELOG.md).
-
-### Windows (custom installer `Oxizip-Setup-<version>-x64.exe`)
-
-Clean-room iced install / uninstall UI (destination folder, license confirm, optional associations):
-
-```powershell
-.\scripts\package-windows.ps1
+```
+crates/
+  oxizip-core/       # progress, cancel, errors, path safety
+  oxizip-formats/    # format probing and readers/writers
+  oxizip-engine/     # unified facade
+  oxizip-cli/        # CLI
+  oxizip-gui/        # iced UI
+  oxizip-i18n/       # strings (locales/*.toml)
+  oxizip-setup/      # Windows install / uninstall UI
+  oxizip-sfx-stub/   # SFX stub
+  oxizip-shellext/   # Windows Explorer extension (spawns CLI only)
+lib/                 # unrar · wimlib (Windows ship) · zpaq (embed)
+packaging/           # desktop file, Sparse manifest, deb scripts, …
+samples/             # self-made test archives
+scripts/             # package-windows.ps1 · package-linux.sh
 ```
 
-Output: `dist\Oxizip-Setup-<version>-x64.exe` (version from root `Cargo.toml` `workspace.package.version`).
+Dependency direction: `cli / gui → engine → formats → core` (no reverse deps). `reference/` is local-only (gitignore) and must not enter the build.
 
-- Default install path: `C:\Program Files\Oxizip` (UAC elevation)
-- Embeds `oxizip.exe` (GUI), `oxizip-cli.exe` (CLI), and format icons
-- After install can launch the app and guide associations; uninstaller is `Uninstall.exe` in the install dir (same UI stack)
-- Ship the Setup; do not treat a bare `oxizip.exe` as the installer
-
-### Linux (`.deb` / `.rpm` / AppImage + tar.gz)
-
-On a 64-bit Linux host or container:
-
-```bash
-chmod +x scripts/package-linux.sh
-./scripts/package-linux.sh
-```
-
-| Artifact | Tooling | Install / uninstall |
-|---|---|---|
-| `dist/Oxizip_<ver>_<arch>.deb` | `dpkg-deb` | `sudo dpkg -i …` / `sudo apt remove oxizip` |
-| `dist/Oxizip-<ver>-1.<arch>.rpm` | `rpmbuild` or `fpm` | `sudo rpm -Uvh …` / `sudo rpm -e oxizip` |
-| `dist/Oxizip-<ver>-<arch>.AppImage` | `linuxdeploy` + `appimagetool` (auto-fetched by default) | `chmod +x` then run; delete the file to remove |
-| `dist/Oxizip-<ver>-linux-<arch>.tar.gz` | tar | manually unpack the `usr/` tree |
-
-Distributed filenames use a capital `Oxizip` prefix. deb/AppImage/tar/exe have no Release segment; **RPM keeps NEVRA** as `Oxizip-<ver>-1.<arch>.rpm` (`-1` is the Release build iteration). The system package name remains lowercase `oxizip` for `apt`/`rpm`.
-
-Layout: `/usr/bin/oxizip`, `/usr/bin/oxizip-cli`, `/usr/share/applications/oxizip.desktop`, docs and icons (PNG from ICO when ImageMagick is available; **AppImage needs a PNG icon**). Missing tools skip that format. For offline builds set `OXIZIP_FETCH_APPIMAGE_TOOLS=0` and put `appimagetool` / `linuxdeploy` on `PATH`.
-
-## Runtime external tools
-
-Oxizip does **not** modify or link these tools’ sources/libraries; it only spawns them via `Command` when needed.
-
-### UnRAR (RAR extract only)
-
-| Platform | Lookup order |
-|---|---|
-| Windows | `OXIZIP_UNRAR` → next to the app → **`lib/unrar/UnRAR.exe`** → `PATH` |
-| Other | `OXIZIP_UNRAR` → system `unrar` |
-
-Missing tool → localizable error. The Windows installer ships the official unmodified 64-bit CLI and its license from repo [`lib/unrar/`](lib/unrar/).
-
-### wimlib (WIM extract only)
-
-| Platform | Lookup order |
-|---|---|
-| Windows | `OXIZIP_WIMLIB` → next to the app → **`lib/wimlib/wimlib-imagex.exe`** → `PATH` |
-| Other | `OXIZIP_WIMLIB` → system `wimlib-imagex` / `wimdir`+`wimextract` |
-
-The Windows installer also ships [`lib/wimlib/`](lib/wimlib/) (`wimlib-imagex.exe` + `libwim-15.dll`; spawn only, no link).
-
-### ZPAQ (embedded in-process)
-
-No external `zpaq.exe`. Sources under `lib/zpaq/` are built by `oxizip-formats` `build.rs` with `-DOXIZIP_EMBEDDED`; only the embed entry macros may be changed. Keep `lib/zpaq/COPYING` in releases.
+---
 
 ## License
 
-Oxizip is released under the **GNU Affero General Public License v3.0 only (AGPL-3.0-only)**; see [LICENSE](LICENSE). The table below lists licenses of major dependencies / external tools and does not change Oxizip’s AGPL obligations. Full transitive deps: `Cargo.lock` and crate metadata; the GUI “Licenses” page also shows a summary.
+Oxizip is released under the **GNU Affero General Public License v3.0 only (AGPL-3.0-only)**; see [LICENSE](LICENSE). The tables below list licenses of major dependencies / external tools and do not change Oxizip’s AGPL obligations. Full transitive deps: `Cargo.lock` and crate metadata; the GUI “Licenses” page also shows a summary.
 
 ### Embedded / linked
 
@@ -170,13 +180,13 @@ Oxizip is released under the **GNU Affero General Public License v3.0 only (AGPL
 
 ### Not part of the build
 
-- Local materials under `reference/` (gitignore, not built)
-- Local temporary `*.exe` / SDK under `third_party/unrar/` and `third_party/wimlib/` (gitignore; DLLs are not linked)
-- Canonical tree: [`lib/`](lib/) — `unrar/`, `wimlib/` (installer → `<install>\lib\…`), `zpaq/` (build embed only)
+- Local materials under `reference/` (gitignore)
+- Temporary binaries / SDK under `third_party/unrar/` and `third_party/wimlib/` (gitignore; DLLs are not linked)
+- Canonical tree: [`lib/`](lib/) — `unrar/`, `wimlib/`, `zpaq/`
 
 ### Pre-release checklist
 
-1. Ship `LICENSE` (AGPL-3.0); if you offer a modified version as a network service, provide corresponding complete source per AGPL
-2. Keep `lib/zpaq/COPYING`
-3. Keep UnRAR / wimlib license texts under `lib/unrar/` and `lib/wimlib/`; wimlib is GPLv3+, sources at [wimlib.net](https://wimlib.net/downloads/)
-4. Do not distribute `ark*.dll` or unauthorized proprietary libraries
+1. Ship `LICENSE` (AGPL-3.0); if you offer a modified version as a network service, provide corresponding complete source per AGPL  
+2. Keep `lib/zpaq/COPYING`  
+3. Keep UnRAR / wimlib license texts under `lib/unrar/` and `lib/wimlib/`; wimlib sources at [wimlib.net](https://wimlib.net/downloads/)  
+4. Do not distribute `ark*.dll` or unauthorized proprietary libraries  
