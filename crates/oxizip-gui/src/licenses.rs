@@ -11,13 +11,29 @@ pub enum ComponentKind {
 
 impl ComponentKind {
     pub fn label(self, lang: Lang) -> &'static str {
-        match (lang, self) {
-            (Lang::ZhCn, Self::SelfProject) => "本项目",
-            (Lang::En, Self::SelfProject) => "This project",
-            (Lang::ZhCn, Self::Embedded) => "嵌入 / 链接",
-            (Lang::En, Self::Embedded) => "Embedded / linked",
-            (Lang::ZhCn, Self::ExternalCli) => "外部 CLI",
-            (Lang::En, Self::ExternalCli) => "External CLI",
+        let zh = lang == Lang::ZhCn;
+        match self {
+            Self::SelfProject => {
+                if zh {
+                    "本项目"
+                } else {
+                    "This project"
+                }
+            }
+            Self::Embedded => {
+                if zh {
+                    "嵌入 / 链接"
+                } else {
+                    "Embedded / linked"
+                }
+            }
+            Self::ExternalCli => {
+                if zh {
+                    "外部 CLI"
+                } else {
+                    "External CLI"
+                }
+            }
         }
     }
 }
@@ -35,16 +51,18 @@ pub struct ComponentInfo {
 
 impl ComponentInfo {
     pub fn purpose(self, lang: Lang) -> &'static str {
-        match lang {
-            Lang::ZhCn => self.purpose_zh,
-            Lang::En => self.purpose_en,
+        if lang == Lang::ZhCn {
+            self.purpose_zh
+        } else {
+            self.purpose_en
         }
     }
 
     pub fn note(self, lang: Lang) -> &'static str {
-        match lang {
-            Lang::ZhCn => self.note_zh,
-            Lang::En => self.note_en,
+        if lang == Lang::ZhCn {
+            self.note_zh
+        } else {
+            self.note_en
         }
     }
 }

@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- i18n：`locales/*.toml` 随安装分发；用户可增改语言文件，重启后生效（亦支持 %APPDATA%\Oxizip\locales）
 - 关联页：安装器 `--setup` 不再无视 `setup_done`；已完成/跳过或已是默认打开则进主界面
 - Win11 Sparse 右键：补齐「解压并删除 / 解压对话框 / 用 Oxizip 打开」等项，并按 `shell_menu.json` 过滤显示
 - 设置：主界面再拉起独立 `--settings` 进程；主窗保持可见但禁用（半透明遮罩），设置关闭后恢复

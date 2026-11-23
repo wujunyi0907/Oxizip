@@ -72,6 +72,12 @@ Get-ChildItem "crates\oxizip-gui\assets\icons\*.ico" |
     Where-Object { $excludeIcons -notcontains $_.Name } |
     ForEach-Object { Copy-Item $_.FullName (Join-Path $payloadStage "assets\icons") }
 
+# Editable language packs (users may add/edit *.toml and restart Oxizip).
+$localesStage = Join-Path $payloadStage "locales"
+New-Item -ItemType Directory -Force -Path $localesStage | Out-Null
+Copy-Item "crates\oxizip-i18n\locales\*" $localesStage -Force
+Write-Host "    bundled locales → locales\"
+
 # Official UnRAR / wimlib CLIs under repo `lib/<name>/` → `<app>\lib\<name>\`.
 # `lib/zpaq` is source only (embedded at build time); do not ship it in the installer.
 $libSrc = Join-Path $PWD "lib"

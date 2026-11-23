@@ -58,6 +58,7 @@ mkdir -p \
   "$PKG_ROOT/usr/bin" \
   "$PKG_ROOT/usr/share/applications" \
   "$PKG_ROOT/usr/share/doc/oxizip" \
+  "$PKG_ROOT/usr/share/oxizip/locales" \
   "$PKG_ROOT/usr/share/pixmaps" \
   "$PKG_ROOT/usr/share/icons/hicolor"
 
@@ -66,6 +67,12 @@ install -m 755 target/release/oxizip-cli "$PKG_ROOT/usr/bin/oxizip-cli"
 install -m 644 packaging/oxizip.desktop "$PKG_ROOT/usr/share/applications/oxizip.desktop"
 install -m 644 LICENSE "$PKG_ROOT/usr/share/doc/oxizip/copyright"
 install -m 644 README.md "$PKG_ROOT/usr/share/doc/oxizip/README.md"
+# Editable language packs (add/edit *.toml, restart Oxizip).
+mkdir -p "$PKG_ROOT/usr/share/oxizip/locales"
+install -m 644 crates/oxizip-i18n/locales/*.toml "$PKG_ROOT/usr/share/oxizip/locales/"
+if [[ -f crates/oxizip-i18n/locales/README.txt ]]; then
+  install -m 644 crates/oxizip-i18n/locales/README.txt "$PKG_ROOT/usr/share/oxizip/locales/"
+fi
 
 # Optional: rasterize ICO → hicolor / pixmaps (best-effort).
 install_icons() {

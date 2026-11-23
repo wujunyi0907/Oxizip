@@ -373,18 +373,11 @@ impl Prefs {
     }
 
     pub fn lang_enum(&self) -> Lang {
-        if self.lang.eq_ignore_ascii_case("en") {
-            Lang::En
-        } else {
-            Lang::ZhCn
-        }
+        Lang::parse(&self.lang).unwrap_or_default()
     }
 
     pub fn set_lang(&mut self, lang: Lang) {
-        self.lang = match lang {
-            Lang::ZhCn => "zh-CN".into(),
-            Lang::En => "en".into(),
-        };
+        self.lang = lang.code().into();
     }
 
     pub fn push_recent(&mut self, path: &Path) {

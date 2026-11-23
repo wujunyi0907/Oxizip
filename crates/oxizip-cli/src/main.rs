@@ -200,10 +200,7 @@ enum ShellCmd {
 }
 
 fn parse_lang(s: &str) -> Lang {
-    match s.to_ascii_lowercase().as_str() {
-        "en" | "en-us" | "english" => Lang::En,
-        _ => Lang::ZhCn,
-    }
+    Lang::parse(s).unwrap_or_default()
 }
 
 fn map_exit(err: &CoreError) -> ExitCode {
@@ -229,6 +226,7 @@ fn parse_method(method: Option<String>) -> Result<Option<MethodId>, String> {
 
 fn main() -> ExitCode {
     enable_utf8_console();
+    oxizip_i18n::init();
 
     let cli = Cli::parse();
     let lang = parse_lang(&cli.lang);

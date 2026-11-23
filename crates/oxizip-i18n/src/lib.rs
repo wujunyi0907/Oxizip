@@ -1,820 +1,336 @@
-//! Minimal bilingual message table (zh-CN / en).
+//! User-facing strings for Oxizip.
+//!
+//! Language packs are plain TOML files. At startup the catalog is built from:
+//! 1. Embedded defaults (built from `locales/*.toml` in this crate)
+//! 2. Install / portable folder: `<exe_dir>/locales/`
+//! 3. System share (Linux): `/usr/share/oxizip/locales/`
+//! 4. User overrides: `%APPDATA%\Oxizip\locales\` or `~/.config/oxizip/locales/`
+//! 5. Optional `OXIZIP_LOCALES` directory (highest priority for that layer order —
+//!    applied last so it wins)
+//!
+//! Later files with the same `code` replace earlier ones; new `code`s are added.
+//! Restart the app after adding or editing language files.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use oxizip_core::{CoreError, ErrorCode};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Lang {
-    #[default]
-    ZhCn,
-    En,
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/locales_generated.rs"));
+}
+
+use generated::LOCALES;
+
+/// Active UI / CLI language (identity = locale `code` from the TOML file).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Lang {
+    code: &'static str,
+}
+
+impl Default for Lang {
+    fn default() -> Self {
+        Self::ZhCn
+    }
+}
+
+struct RuntimeLocale {
+    code: &'static str,
+    cli: &'static str,
+    native: &'static str,
+    messages: BTreeMap<&'static str, &'static str>,
+}
+
+static CATALOG: OnceLock<Vec<RuntimeLocale>> = OnceLock::new();
+
+/// Load / merge language packs. Safe to call multiple times; only the first call
+/// builds the catalog (restart the process to pick up file changes).
+pub fn init() {
+    let _ = catalog();
+}
+
+fn catalog() -> &'static [RuntimeLocale] {
+    CATALOG.get_or_init(build_catalog).as_slice()
+}
+
+fn build_catalog() -> Vec<RuntimeLocale> {
+    // code → locale (BTreeMap keeps a stable menu order by code).
+    let mut by_code: BTreeMap<&'static str, RuntimeLocale> = BTreeMap::new();
+
+    for loc in LOCALES {
+        insert_locale(
+            &mut by_code,
+            loc.code,
+            loc.cli,
+            loc.native,
+            loc.messages.iter().copied(),
+        );
+    }
+
+    for dir in locale_search_dirs() {
+        merge_dir(&mut by_code, &dir);
+    }
+
+    by_code.into_values().collect()
+}
+
+fn insert_locale(
+    map: &mut BTreeMap<&'static str, RuntimeLocale>,
+    code: &'static str,
+    cli: &'static str,
+    native: &'static str,
+    messages: impl IntoIterator<Item = (&'static str, &'static str)>,
+) {
+    let mut msgs = BTreeMap::new();
+    for (k, v) in messages {
+        msgs.insert(k, v);
+    }
+    map.insert(
+        code,
+        RuntimeLocale {
+            code,
+            cli,
+            native,
+            messages: msgs,
+        },
+    );
+}
+
+fn merge_dir(map: &mut BTreeMap<&'static str, RuntimeLocale>, dir: &Path) {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut files: Vec<PathBuf> = rd
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("toml"))
+        })
+        .collect();
+    files.sort();
+    for path in files {
+        if let Some(parsed) = parse_locale_file(&path) {
+            insert_locale(
+                map,
+                parsed.code,
+                parsed.cli,
+                parsed.native,
+                parsed.messages,
+            );
+        }
+    }
+}
+
+struct ParsedLocale {
+    code: &'static str,
+    cli: &'static str,
+    native: &'static str,
+    messages: Vec<(&'static str, &'static str)>,
+}
+
+fn parse_locale_file(path: &Path) -> Option<ParsedLocale> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let value: toml::Value = text.parse().ok()?;
+    let table = value.as_table()?;
+    let code = intern(table.get("code")?.as_str()?.to_string());
+    let cli = table
+        .get("cli")
+        .and_then(|v| v.as_str())
+        .map(|s| intern(s.to_string()))
+        .unwrap_or(code);
+    let native = intern(table.get("native")?.as_str()?.to_string());
+    let messages_table = table.get("messages")?.as_table()?;
+    let mut messages = Vec::with_capacity(messages_table.len());
+    for (k, v) in messages_table {
+        let s = v.as_str()?;
+        messages.push((intern(k.clone()), intern(s.to_string())));
+    }
+    if messages.is_empty() {
+        return None;
+    }
+    Some(ParsedLocale {
+        code,
+        cli,
+        native,
+        messages,
+    })
+}
+
+fn intern(s: String) -> &'static str {
+    Box::leak(s.into_boxed_str())
+}
+
+/// Directories scanned after embedded defaults (later wins on same `code`).
+fn locale_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    // Dev tree: crates/oxizip-i18n/locales (debug builds only).
+    #[cfg(debug_assertions)]
+    {
+        dirs.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("locales"));
+    }
+
+    if let Some(exe) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    {
+        dirs.push(exe.join("locales"));
+        // AppImage / FHS: <prefix>/bin/oxizip → <prefix>/share/oxizip/locales
+        if let Some(prefix) = exe.parent() {
+            dirs.push(prefix.join("share").join("oxizip").join("locales"));
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        dirs.push(PathBuf::from("/usr/share/oxizip/locales"));
+        dirs.push(PathBuf::from("/usr/local/share/oxizip/locales"));
+    }
+
+    if let Some(user) = user_locales_dir() {
+        dirs.push(user);
+    }
+
+    if let Ok(extra) = std::env::var("OXIZIP_LOCALES") {
+        let p = PathBuf::from(extra);
+        if p.is_dir() {
+            dirs.push(p);
+        }
+    }
+
+    dirs
+}
+
+/// Ensure the user `locales` folder exists and has a short README so end users
+/// know where to drop new `*.toml` packs without editing Program Files.
+pub fn ensure_user_locales_scaffold() {
+    let Some(dir) = user_locales_dir() else {
+        return;
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    let readme = dir.join("README.txt");
+    if readme.is_file() {
+        return;
+    }
+    if let Some(src) = install_locales_dir().map(|d| d.join("README.txt")) {
+        if src.is_file() {
+            let _ = std::fs::copy(src, &readme);
+            return;
+        }
+    }
+    let _ = std::fs::write(
+        &readme,
+        "Put additional Oxizip language *.toml files in this folder, then restart Oxizip.\n\
+         Copy en.toml / zh-CN.toml from the install locales folder as a template.\n",
+    );
+}
+
+/// Writable user locale folder (created on demand by callers if desired).
+pub fn user_locales_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let appdata = std::env::var_os("APPDATA")?;
+        Some(PathBuf::from(appdata).join("Oxizip").join("locales"))
+    }
+    #[cfg(not(windows))]
+    {
+        let home = std::env::var_os("HOME")?;
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(home).join(".config"));
+        Some(base.join("oxizip").join("locales"))
+    }
+}
+
+/// Install / portable locales next to the GUI/CLI binary.
+pub fn install_locales_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    Some(exe.parent()?.join("locales"))
+}
+
+impl Lang {
+    /// Built-in aliases for call sites that still name Chinese / English directly.
+    #[allow(non_upper_case_globals)]
+    pub const ZhCn: Lang = Lang { code: "zh-CN" };
+    #[allow(non_upper_case_globals)]
+    pub const En: Lang = Lang { code: "en" };
+
+    /// Every loaded locale (embedded + on-disk), ordered by `code`.
+    pub fn all() -> impl Iterator<Item = Lang> {
+        catalog().iter().map(|l| Lang { code: l.code })
+    }
+
+    /// Canonical prefs code (`zh-CN`, `en`, …).
+    pub fn code(self) -> &'static str {
+        self.meta().map(|m| m.code).unwrap_or(self.code)
+    }
+
+    /// CLI `--lang` token (`zh-cn`, `en`, …).
+    pub fn cli_code(self) -> &'static str {
+        self.meta().map(|m| m.cli).unwrap_or(self.code)
+    }
+
+    /// Native label for language menus.
+    pub fn native_name(self) -> &'static str {
+        self.meta().map(|m| m.native).unwrap_or(self.code)
+    }
+
+    /// Parse prefs / CLI / MIME lang tags (case-insensitive). Unknown → `None`.
+    pub fn parse(s: &str) -> Option<Lang> {
+        let s = s.trim();
+        if s.is_empty() {
+            return None;
+        }
+        for loc in catalog() {
+            if eq_tag(s, loc.code) || eq_tag(s, loc.cli) {
+                return Some(Lang { code: loc.code });
+            }
+        }
+        if eq_tag(s, "zh") || eq_tag(s, "zh-hans") || eq_tag(s, "chinese") {
+            return catalog()
+                .iter()
+                .find(|l| eq_tag(l.code, "zh-CN"))
+                .map(|l| Lang { code: l.code });
+        }
+        if eq_tag(s, "english") || eq_tag(s, "en-us") || eq_tag(s, "en-gb") {
+            return catalog()
+                .iter()
+                .find(|l| eq_tag(l.code, "en"))
+                .map(|l| Lang { code: l.code });
+        }
+        None
+    }
+
+    fn meta(self) -> Option<&'static RuntimeLocale> {
+        catalog()
+            .iter()
+            .find(|l| eq_tag(l.code, self.code) || eq_tag(l.cli, self.code))
+    }
+
+    fn lookup_in(self, key: &str) -> Option<&'static str> {
+        self.meta()?.messages.get(key).copied()
+    }
+}
+
+fn eq_tag(a: &str, b: &str) -> bool {
+    a.eq_ignore_ascii_case(b)
+}
+
+fn fallback_lang() -> Lang {
+    Lang::parse("en")
+        .or_else(|| Lang::parse("zh-CN"))
+        .or_else(|| catalog().first().map(|l| Lang { code: l.code }))
+        .unwrap_or(Lang::En)
 }
 
 fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
-    Some(match (lang, key) {
-        (_, "app.name") => "Oxizip",
-        (Lang::ZhCn, "cli.done") => "完成",
-        (Lang::En, "cli.done") => "Done",
-        (Lang::ZhCn, "cli.canceled") => "已取消",
-        (Lang::En, "cli.canceled") => "Canceled",
-        (Lang::ZhCn, "error.io") => "读写错误",
-        (Lang::En, "error.io") => "I/O error",
-        (Lang::ZhCn, "error.canceled") => "操作已取消",
-        (Lang::En, "error.canceled") => "Operation canceled",
-        (Lang::ZhCn, "error.path_unsafe") => "不安全的归档路径",
-        (Lang::En, "error.path_unsafe") => "Unsafe archive path",
-        (Lang::ZhCn, "error.unsupported_format") => "不支持的格式",
-        (Lang::En, "error.unsupported_format") => "Unsupported format",
-        (Lang::ZhCn, "error.not_an_archive") => "不是有效的压缩包",
-        (Lang::En, "error.not_an_archive") => "Not a valid archive",
-        (Lang::ZhCn, "error.password_required") => "需要密码",
-        (Lang::En, "error.password_required") => "Password required",
-        (Lang::ZhCn, "error.invalid_password") => "密码错误",
-        (Lang::En, "error.invalid_password") => "Invalid password",
-        (Lang::ZhCn, "error.unrar_missing") => {
-            "未找到 UnRAR：Windows 请放置官方 UnRAR.exe；其他系统请安装 unrar"
-        }
-        (Lang::En, "error.unrar_missing") => {
-            "UnRAR not found: place official UnRAR.exe on Windows, or install system unrar elsewhere"
-        }
-        (Lang::ZhCn, "error.unrar_failed") => "UnRAR 执行失败",
-        (Lang::En, "error.unrar_failed") => "UnRAR failed",
-        (Lang::ZhCn, "error.wimlib_missing") => {
-            "未找到 wimlib-imagex：请安装 wimlib（Windows 可放置 wimlib-imagex.exe）"
-        }
-        (Lang::En, "error.wimlib_missing") => {
-            "wimlib-imagex not found: install wimlib, or place wimlib-imagex.exe on Windows"
-        }
-        (Lang::ZhCn, "error.wimlib_failed") => "wimlib 执行失败",
-        (Lang::En, "error.wimlib_failed") => "wimlib failed",
-        (Lang::ZhCn, "error.entry_not_found") => "未找到条目",
-        (Lang::En, "error.entry_not_found") => "Entry not found",
-        (Lang::ZhCn, "error.other") => "发生错误",
-        (Lang::En, "error.other") => "An error occurred",
-
-        (Lang::ZhCn, "gui.open_archive") => "打开",
-        (Lang::En, "gui.open_archive") => "Open",
-        (Lang::ZhCn, "gui.home.open") => "打开压缩文件",
-        (Lang::En, "gui.home.open") => "Open archive",
-        (Lang::ZhCn, "gui.home.create") => "新建压缩文件",
-        (Lang::En, "gui.home.create") => "New archive",
-        (Lang::ZhCn, "gui.home.hint") => "打开后可解压、测试与编辑条目",
-        (Lang::En, "gui.home.hint") => "After opening, extract, test, or edit entries",
-        (Lang::ZhCn, "gui.home.menu.file") => "文件(F)",
-        (Lang::En, "gui.home.menu.file") => "File(F)",
-        (Lang::ZhCn, "gui.home.menu.edit") => "编辑(E)",
-        (Lang::En, "gui.home.menu.edit") => "Edit(E)",
-        (Lang::ZhCn, "gui.home.menu.search") => "查找(I)",
-        (Lang::En, "gui.home.menu.search") => "Search(I)",
-        (Lang::ZhCn, "gui.home.menu.settings") => "设置(O)",
-        (Lang::En, "gui.home.menu.settings") => "Settings(O)",
-        (Lang::ZhCn, "gui.home.menu.settings.assoc") => "文件关联…",
-        (Lang::En, "gui.home.menu.settings.assoc") => "Associations…",
-        (Lang::ZhCn, "gui.home.menu.settings.lang") => "语言",
-        (Lang::En, "gui.home.menu.settings.lang") => "Language",
-        (Lang::ZhCn, "gui.home.menu.help.licenses") => "开源协议…",
-        (Lang::En, "gui.home.menu.help.licenses") => "Licenses…",
-        (Lang::ZhCn, "gui.home.menu.view") => "视图(V)",
-        (Lang::En, "gui.home.menu.view") => "View(V)",
-        (Lang::ZhCn, "gui.home.menu.tools") => "工具(T)",
-        (Lang::En, "gui.home.menu.tools") => "Tools(T)",
-        (Lang::ZhCn, "gui.home.menu.help") => "帮助(H)",
-        (Lang::En, "gui.home.menu.help") => "Help(H)",
-        (Lang::ZhCn, "gui.close_archive") => "关闭",
-        (Lang::En, "gui.close_archive") => "Close",
-        (Lang::ZhCn, "gui.extract") => "解压到…",
-        (Lang::En, "gui.extract") => "Extract…",
-        (Lang::ZhCn, "gui.extract_here") => "解压到此处",
-        (Lang::En, "gui.extract_here") => "Extract Here",
-        (Lang::ZhCn, "gui.extract_smart") => "智能解压",
-        (Lang::En, "gui.extract_smart") => "Extract Smart",
-        (Lang::ZhCn, "gui.test") => "测试",
-        (Lang::En, "gui.test") => "Test",
-        (Lang::ZhCn, "gui.add") => "添加…",
-        (Lang::En, "gui.add") => "Add…",
-        (Lang::ZhCn, "gui.delete_entry") => "删除",
-        (Lang::En, "gui.delete_entry") => "Delete",
-        (Lang::ZhCn, "gui.create") => "压缩…",
-        (Lang::En, "gui.create") => "Compress…",
-        (Lang::ZhCn, "gui.cancel") => "取消",
-        (Lang::En, "gui.cancel") => "Cancel",
-        (Lang::ZhCn, "gui.open_entry") => "打开",
-        (Lang::En, "gui.open_entry") => "Open",
-        (Lang::ZhCn, "gui.format") => "格式",
-        (Lang::En, "gui.format") => "Format",
-        (Lang::ZhCn, "gui.method") => "方法",
-        (Lang::En, "gui.method") => "Method",
-        (Lang::ZhCn, "gui.password") => "密码",
-        (Lang::En, "gui.password") => "Password",
-        (Lang::ZhCn, "gui.lang") => "语言",
-        (Lang::En, "gui.lang") => "Language",
-        (Lang::ZhCn, "gui.placeholder") => "选择打开或新建压缩文件",
-        (Lang::En, "gui.placeholder") => "Open an archive or create a new one",
-        (Lang::ZhCn, "gui.col.name") => "名称",
-        (Lang::En, "gui.col.name") => "Name",
-        (Lang::ZhCn, "gui.col.size") => "大小",
-        (Lang::En, "gui.col.size") => "Size",
-        (Lang::ZhCn, "gui.col.method") => "方法",
-        (Lang::En, "gui.col.method") => "Method",
-        (Lang::ZhCn, "gui.col.action") => "操作",
-        (Lang::En, "gui.col.action") => "Action",
-        (Lang::ZhCn, "gui.busy.list") => "正在列出…",
-        (Lang::En, "gui.busy.list") => "Listing…",
-        (Lang::ZhCn, "gui.busy.extract") => "正在解压",
-        (Lang::En, "gui.busy.extract") => "Extracting",
-        (Lang::ZhCn, "gui.busy.create") => "正在压缩",
-        (Lang::En, "gui.busy.create") => "Compressing",
-        (Lang::ZhCn, "gui.job.stop") => "停止",
-        (Lang::En, "gui.job.stop") => "Stop",
-        (Lang::ZhCn, "gui.job.close") => "关闭",
-        (Lang::En, "gui.job.close") => "Close",
-        (Lang::ZhCn, "gui.job.close_when_done") => "完成后关闭",
-        (Lang::En, "gui.job.close_when_done") => "Close when finished",
-        (Lang::ZhCn, "gui.job.open_folder") => "完成后打开目录",
-        (Lang::En, "gui.job.open_folder") => "Open folder when finished",
-        (Lang::ZhCn, "gui.job.failed") => "压缩失败",
-        (Lang::En, "gui.job.failed") => "Compression failed",
-        (Lang::ZhCn, "gui.job.extract_failed") => "解压失败",
-        (Lang::En, "gui.job.extract_failed") => "Extraction failed",
-        (Lang::ZhCn, "gui.job.conflict_title") => "目标已存在同名文件",
-        (Lang::En, "gui.job.conflict_title") => "Files already exist",
-        (Lang::ZhCn, "gui.job.conflict_body") => "以下文件将被覆盖或改名：",
-        (Lang::En, "gui.job.conflict_body") => "These files already exist: ",
-        (Lang::ZhCn, "gui.job.conflict_overwrite") => "覆盖",
-        (Lang::En, "gui.job.conflict_overwrite") => "Overwrite",
-        (Lang::ZhCn, "gui.job.conflict_rename") => "自动改名",
-        (Lang::En, "gui.job.conflict_rename") => "Auto rename",
-        (Lang::ZhCn, "gui.job.conflict_cancel") => "取消",
-        (Lang::En, "gui.job.conflict_cancel") => "Cancel",
-        (Lang::ZhCn, "gui.busy.open") => "正在打开条目…",
-        (Lang::En, "gui.busy.open") => "Opening entry…",
-        (Lang::ZhCn, "gui.busy.test") => "正在测试…",
-        (Lang::En, "gui.busy.test") => "Testing…",
-        (Lang::ZhCn, "gui.busy.add") => "正在添加…",
-        (Lang::En, "gui.busy.add") => "Adding…",
-        (Lang::ZhCn, "gui.busy.delete") => "正在删除…",
-        (Lang::En, "gui.busy.delete") => "Deleting…",
-        (Lang::ZhCn, "gui.status.tested") => "测试通过",
-        (Lang::En, "gui.status.tested") => "Test OK",
-        (Lang::ZhCn, "gui.status.edited") => "已更新归档",
-        (Lang::En, "gui.status.edited") => "Archive updated",
-        (Lang::ZhCn, "gui.status.ready") => "就绪",
-        (Lang::En, "gui.status.ready") => "Ready",
-        (Lang::ZhCn, "gui.status.opened") => "已打开",
-        (Lang::En, "gui.status.opened") => "Opened",
-        (Lang::ZhCn, "gui.status.extracted") => "解压完成",
-        (Lang::En, "gui.status.extracted") => "Extracted",
-        (Lang::ZhCn, "gui.status.created") => "压缩完成",
-        (Lang::En, "gui.status.created") => "Created",
-        (Lang::ZhCn, "gui.status.canceled") => "已取消",
-        (Lang::En, "gui.status.canceled") => "Canceled",
-        (Lang::ZhCn, "gui.err.need_archive") => "请先打开压缩包",
-        (Lang::En, "gui.err.need_archive") => "Open an archive first",
-        (Lang::ZhCn, "gui.err.need_inputs") => "未选择要压缩的文件",
-        (Lang::En, "gui.err.need_inputs") => "No files selected to compress",
-        (Lang::ZhCn, "gui.err.dir_open") => "目录请使用解压",
-        (Lang::En, "gui.err.dir_open") => "Use Extract for directories",
-        (Lang::ZhCn, "gui.err.system_open") => "无法用系统程序打开",
-        (Lang::En, "gui.err.system_open") => "Could not open with system app",
-        (Lang::ZhCn, "gui.method.auto") => "默认",
-        (Lang::En, "gui.method.auto") => "Default",
-        (Lang::ZhCn, "gui.entries") => "项",
-        (Lang::En, "gui.entries") => "items",
-        (Lang::ZhCn, "gui.licenses") => "开源组件",
-        (Lang::En, "gui.licenses") => "Licenses",
-        (Lang::ZhCn, "gui.licenses.title") => "依赖组件与协议",
-        (Lang::En, "gui.licenses.title") => "Dependencies & licenses",
-        (Lang::ZhCn, "gui.licenses.back") => "返回",
-        (Lang::En, "gui.licenses.back") => "Back",
-        (Lang::ZhCn, "gui.licenses.filter") => "分类",
-        (Lang::En, "gui.licenses.filter") => "Filter",
-        (Lang::ZhCn, "gui.licenses.filter_all") => "全部",
-        (Lang::En, "gui.licenses.filter_all") => "All",
-        (Lang::ZhCn, "gui.licenses.intro") => {
-            "以下为 Oxizip 主要依赖与运行时工具的许可证摘要；完整说明见仓库 README.md。Oxizip 本体为 AGPL-3.0-only。"
-        }
-        (Lang::En, "gui.licenses.intro") => {
-            "Summary of major dependencies and runtime tools. Full notes are in README.md. Oxizip itself is AGPL-3.0-only."
-        }
-        (Lang::ZhCn, "gui.licenses.col.kind") => "类别",
-        (Lang::En, "gui.licenses.col.kind") => "Kind",
-        (Lang::ZhCn, "gui.licenses.col.name") => "组件",
-        (Lang::En, "gui.licenses.col.name") => "Component",
-        (Lang::ZhCn, "gui.licenses.col.license") => "协议",
-        (Lang::En, "gui.licenses.col.license") => "License",
-        (Lang::ZhCn, "gui.licenses.col.purpose") => "用途",
-        (Lang::En, "gui.licenses.col.purpose") => "Purpose",
-        (Lang::ZhCn, "gui.licenses.col.note") => "说明",
-        (Lang::En, "gui.licenses.col.note") => "Notes",
-        (Lang::ZhCn, "gui.licenses.footer") => {
-            "传递依赖未全部列出；捆绑 UnRAR / wimlib 时须另遵守其许可。"
-        }
-        (Lang::En, "gui.licenses.footer") => {
-            "Transitive crates are not fully listed; bundling UnRAR/wimlib requires their terms."
-        },
-
-        (Lang::ZhCn, "shell.open_with_oxizip") => "用 Oxizip 打开",
-        (Lang::En, "shell.open_with_oxizip") => "Open with Oxizip",
-        // File type description (Explorer Properties); `{ext}` → e.g. 7z → "7z 压缩文件"
-        (Lang::ZhCn, "shell.assoc_type") => "{ext} 压缩文件",
-        (Lang::En, "shell.assoc_type") => "Compressed File ({ext})",
-        (Lang::ZhCn, "shell.app_desc") => "Oxizip 是一款干净室实现的压缩文件管理器。",
-        (Lang::En, "shell.app_desc") => "Oxizip is a clean-room archive manager.",
-        (Lang::ZhCn, "gui.setup.title") => "将文件扩展名关联至 Oxizip",
-        (Lang::En, "gui.setup.title") => "Associate file extensions with Oxizip",
-        (Lang::ZhCn, "gui.setup.intro") => "将 Oxizip 设为下列扩展名的默认打开程序。",
-        (Lang::En, "gui.setup.intro") => {
-            "Set Oxizip as the default opener for the formats below."
-        }
-        (Lang::ZhCn, "gui.setup.group.archive") => "压缩包文件",
-        (Lang::En, "gui.setup.group.archive") => "Archive files",
-        (Lang::ZhCn, "gui.setup.group.unix") => "UNIX",
-        (Lang::En, "gui.setup.group.unix") => "UNIX",
-        (Lang::ZhCn, "gui.setup.group.other") => "其它",
-        (Lang::En, "gui.setup.group.other") => "Others",
-        (Lang::ZhCn, "gui.setup.group.disk") => "磁盘映像",
-        (Lang::En, "gui.setup.group.disk") => "Disk images",
-        (Lang::ZhCn, "gui.setup.select_all") => "全选",
-        (Lang::En, "gui.setup.select_all") => "Select All",
-        (Lang::ZhCn, "gui.setup.clear_all") => "取消全选",
-        (Lang::En, "gui.setup.clear_all") => "Deselect All",
-        (Lang::ZhCn, "gui.setup.apply") => "确定",
-        (Lang::En, "gui.setup.apply") => "OK",
-        (Lang::ZhCn, "gui.setup.skip") => "暂时跳过",
-        (Lang::En, "gui.setup.skip") => "Skip for now",
-        (Lang::ZhCn, "gui.setup.none") => "请至少选择一种格式，或点击暂时跳过",
-        (Lang::En, "gui.setup.none") => "Select at least one format, or skip for now",
-        (Lang::ZhCn, "gui.setup.ok") => "已完成文件关联",
-        (Lang::En, "gui.setup.ok") => "File associations installed",
-        (Lang::ZhCn, "gui.setup.failed") => "文件关联失败",
-        (Lang::En, "gui.setup.failed") => "Failed to install associations",
-        (Lang::ZhCn, "gui.setup.menu") => "文件关联…",
-        (Lang::En, "gui.setup.menu") => "Associations…",
-        // Win11 Sparse cascade parent; classic flat verbs keep "Oxizip …" prefix.
-        (Lang::ZhCn, "shell.menu_parent") => "Oxizip",
-        (Lang::En, "shell.menu_parent") => "Oxizip",
-        (Lang::ZhCn, "shell.extract_here") => "Oxizip 解压到此处",
-        (Lang::En, "shell.extract_here") => "Oxizip Extract Here",
-        (Lang::ZhCn, "shell.extract_smart") => "Oxizip 智能解压",
-        (Lang::En, "shell.extract_smart") => "Oxizip Extract Here (Smart)",
-        (Lang::ZhCn, "shell.extract_to_folder") => "Oxizip 解压到归档名文件夹",
-        (Lang::En, "shell.extract_to_folder") => "Oxizip Extract to Archive Folder",
-        (Lang::ZhCn, "shell.test") => "Oxizip 测试压缩包",
-        (Lang::En, "shell.test") => "Oxizip Test Archive",
-        (Lang::ZhCn, "shell.checksum") => "Oxizip 校验和信息",
-        (Lang::En, "shell.checksum") => "Oxizip Checksum Information",
-        (Lang::ZhCn, "shell.repair") => "Oxizip 修复压缩包",
-        (Lang::En, "shell.repair") => "Oxizip Repair Archive",
-        (Lang::ZhCn, "shell.compress_zip") => "Oxizip 压缩为 ZIP",
-        (Lang::En, "shell.compress_zip") => "Oxizip Compress to ZIP",
-        (Lang::ZhCn, "shell.compress_7z") => "Oxizip 压缩为 7z",
-        (Lang::En, "shell.compress_7z") => "Oxizip Compress to 7z",
-        (Lang::ZhCn, "shell.extract_here_del") => "Oxizip 解压到此处并删除",
-        (Lang::En, "shell.extract_here_del") => "Oxizip Extract Here and Delete",
-        (Lang::ZhCn, "shell.extract_smart_del") => "Oxizip 智能解压并删除",
-        (Lang::En, "shell.extract_smart_del") => "Oxizip Extract Here (Smart) and Delete",
-        (Lang::ZhCn, "shell.extract_folder_del") => "Oxizip 解压到归档名文件夹并删除",
-        (Lang::En, "shell.extract_folder_del") => "Oxizip Extract to Archive Folder and Delete",
-        (Lang::ZhCn, "shell.extract_dialog") => "Oxizip 解压到其他文件夹…",
-        (Lang::En, "shell.extract_dialog") => "Oxizip Extract to Another Folder…",
-        (Lang::ZhCn, "shell.open_with") => "Oxizip 使用 Oxizip 打开",
-        (Lang::En, "shell.open_with") => "Oxizip Open with Oxizip",
-        (Lang::ZhCn, "shell.compress_zipx") => "Oxizip 压缩为 ZIPX",
-        (Lang::En, "shell.compress_zipx") => "Oxizip Compress to ZIPX",
-        (Lang::ZhCn, "shell.compress_tar") => "Oxizip 压缩为 TAR",
-        (Lang::En, "shell.compress_tar") => "Oxizip Compress to TAR",
-        (Lang::ZhCn, "shell.compress_tgz") => "Oxizip 压缩为 TGZ",
-        (Lang::En, "shell.compress_tgz") => "Oxizip Compress to TGZ",
-        (Lang::ZhCn, "shell.compress_gz") => "Oxizip 压缩为 GZ",
-        (Lang::En, "shell.compress_gz") => "Oxizip Compress to GZ",
-        (Lang::ZhCn, "shell.compress_xz") => "Oxizip 压缩为 XZ",
-        (Lang::En, "shell.compress_xz") => "Oxizip Compress to XZ",
-        (Lang::ZhCn, "shell.compress_zpaq") => "Oxizip 压缩为 ZPAQ",
-        (Lang::En, "shell.compress_zpaq") => "Oxizip Compress to ZPAQ",
-        (Lang::ZhCn, "shell.compress_each_zip") => "Oxizip 分别压缩为 ZIP",
-        (Lang::En, "shell.compress_each_zip") => "Oxizip Compress Each to ZIP",
-        (Lang::ZhCn, "shell.compress_each_7z") => "Oxizip 分别压缩为 7z",
-        (Lang::En, "shell.compress_each_7z") => "Oxizip Compress Each to 7z",
-        // Short labels for Win11 Sparse submenu children (no repeated "Oxizip").
-        (Lang::ZhCn, "shell.extract_here_short") => "解压到此处",
-        (Lang::En, "shell.extract_here_short") => "Extract Here",
-        (Lang::ZhCn, "shell.extract_smart_short") => "智能解压",
-        (Lang::En, "shell.extract_smart_short") => "Extract Here (Smart)",
-        (Lang::ZhCn, "shell.extract_to_folder_short") => "解压到归档名文件夹",
-        (Lang::En, "shell.extract_to_folder_short") => "Extract to Archive Folder",
-        (Lang::ZhCn, "shell.test_short") => "测试压缩包",
-        (Lang::En, "shell.test_short") => "Test Archive",
-        (Lang::ZhCn, "shell.checksum_short") => "校验和信息",
-        (Lang::En, "shell.checksum_short") => "Checksum Information",
-        (Lang::ZhCn, "shell.repair_short") => "修复压缩包",
-        (Lang::En, "shell.repair_short") => "Repair Archive",
-        (Lang::ZhCn, "shell.compress_zip_short") => "压缩为 ZIP",
-        (Lang::En, "shell.compress_zip_short") => "Compress to ZIP",
-        (Lang::ZhCn, "shell.compress_7z_short") => "压缩为 7z",
-        (Lang::En, "shell.compress_7z_short") => "Compress to 7z",
-        (Lang::ZhCn, "shell.desktop_extract") => "Oxizip 解压",
-        (Lang::En, "shell.desktop_extract") => "Oxizip Extract",
-        (Lang::ZhCn, "shell.desktop_compress") => "Oxizip 压缩",
-        (Lang::En, "shell.desktop_compress") => "Oxizip Compress",
-        (Lang::ZhCn, "shell.install_ok") => "已安装当前用户的文件管理器集成",
-        (Lang::En, "shell.install_ok") => "Installed per-user file manager integration",
-        (Lang::ZhCn, "shell.uninstall_ok") => "已移除 Oxizip 文件管理器集成",
-        (Lang::En, "shell.uninstall_ok") => "Removed Oxizip file manager integration",
-        (Lang::ZhCn, "shell.status_installed") => "文件管理器集成：已安装",
-        (Lang::En, "shell.status_installed") => "Shell integration: installed",
-        (Lang::ZhCn, "shell.status_missing") => "文件管理器集成：未安装",
-        (Lang::En, "shell.status_missing") => "Shell integration: not installed",
-
-        (Lang::ZhCn, "gui.col.compressed") => "压缩后",
-        (Lang::En, "gui.col.compressed") => "Packed",
-        (Lang::ZhCn, "gui.col.modified") => "修改时间",
-        (Lang::En, "gui.col.modified") => "Modified",
-
-        (Lang::ZhCn, "gui.menu.file.open") => "打开…",
-        (Lang::En, "gui.menu.file.open") => "Open…",
-        (Lang::ZhCn, "gui.menu.file.recent") => "最近使用的文件",
-        (Lang::En, "gui.menu.file.recent") => "Recent files",
-        (Lang::ZhCn, "gui.menu.file.recent_empty") => "（无）",
-        (Lang::En, "gui.menu.file.recent_empty") => "(empty)",
-        (Lang::ZhCn, "gui.menu.file.recent_clear") => "清除最近列表",
-        (Lang::En, "gui.menu.file.recent_clear") => "Clear recent",
-        (Lang::ZhCn, "gui.menu.file.close") => "关闭",
-        (Lang::En, "gui.menu.file.close") => "Close",
-        (Lang::ZhCn, "gui.menu.file.new") => "新建压缩文件…",
-        (Lang::En, "gui.menu.file.new") => "New archive…",
-        (Lang::ZhCn, "gui.menu.file.new_window") => "新建窗口",
-        (Lang::En, "gui.menu.file.new_window") => "New window",
-        (Lang::ZhCn, "gui.menu.file.new_window_admin") => "以管理员身份新建窗口",
-        (Lang::En, "gui.menu.file.new_window_admin") => "New window as administrator",
-        (Lang::ZhCn, "gui.menu.file.save_as") => "另存为…",
-        (Lang::En, "gui.menu.file.save_as") => "Save as…",
-        (Lang::ZhCn, "gui.menu.file.delete") => "删除（回收站）",
-        (Lang::En, "gui.menu.file.delete") => "Delete (recycle bin)",
-        (Lang::ZhCn, "gui.menu.file.delete_perm") => "永久删除",
-        (Lang::En, "gui.menu.file.delete_perm") => "Delete permanently",
-        (Lang::ZhCn, "gui.menu.file.open_folder") => "打开所在文件夹",
-        (Lang::En, "gui.menu.file.open_folder") => "Open containing folder",
-        (Lang::ZhCn, "gui.menu.file.test") => "测试压缩包",
-        (Lang::En, "gui.menu.file.test") => "Test archive",
-        (Lang::ZhCn, "gui.menu.file.extract") => "解压",
-        (Lang::En, "gui.menu.file.extract") => "Extract",
-        (Lang::ZhCn, "gui.menu.file.exit") => "退出",
-        (Lang::En, "gui.menu.file.exit") => "Exit",
-
-        (Lang::ZhCn, "gui.menu.edit.rename") => "重命名…",
-        (Lang::En, "gui.menu.edit.rename") => "Rename…",
-        (Lang::ZhCn, "gui.menu.edit.add") => "添加文件…",
-        (Lang::En, "gui.menu.edit.add") => "Add files…",
-        (Lang::ZhCn, "gui.menu.edit.delete") => "删除所选条目",
-        (Lang::En, "gui.menu.edit.delete") => "Delete selected",
-        (Lang::ZhCn, "gui.menu.edit.comment") => "编辑注释…",
-        (Lang::En, "gui.menu.edit.comment") => "Edit comment…",
-        (Lang::ZhCn, "gui.menu.edit.copy_files") => "复制文件到剪贴板",
-        (Lang::En, "gui.menu.edit.copy_files") => "Copy files to clipboard",
-        (Lang::ZhCn, "gui.menu.edit.paste_files") => "从剪贴板粘贴文件",
-        (Lang::En, "gui.menu.edit.paste_files") => "Paste files from clipboard",
-        (Lang::ZhCn, "gui.menu.edit.copy_paths") => "复制完整路径",
-        (Lang::En, "gui.menu.edit.copy_paths") => "Copy full paths",
-
-        (Lang::ZhCn, "gui.menu.find.files") => "在压缩包中查找…",
-        (Lang::En, "gui.menu.find.files") => "Find in archive…",
-        (Lang::ZhCn, "gui.menu.settings.page") => "设置…",
-        (Lang::En, "gui.menu.settings.page") => "Settings…",
-        (Lang::ZhCn, "gui.menu.settings.passman") => "密码管理…",
-        (Lang::En, "gui.menu.settings.passman") => "Password manager…",
-
-        (Lang::ZhCn, "gui.menu.view.start") => "起始页",
-        (Lang::En, "gui.menu.view.start") => "Start screen",
-        (Lang::ZhCn, "gui.menu.view.tree") => "文件夹树",
-        (Lang::En, "gui.menu.view.tree") => "Folder tree",
-        (Lang::ZhCn, "gui.menu.view.comment") => "注释窗格",
-        (Lang::En, "gui.menu.view.comment") => "Comment pane",
-        (Lang::ZhCn, "gui.menu.view.status") => "状态栏",
-        (Lang::En, "gui.menu.view.status") => "Status bar",
-        (Lang::ZhCn, "gui.menu.view.toolbar") => "工具栏",
-        (Lang::En, "gui.menu.view.toolbar") => "Toolbar",
-        (Lang::ZhCn, "gui.menu.view.toolbar_pick") => "自定义工具栏…",
-        (Lang::En, "gui.menu.view.toolbar_pick") => "Customize toolbar…",
-        (Lang::ZhCn, "gui.menu.view.list") => "列表方式",
-        (Lang::En, "gui.menu.view.list") => "List mode",
-        (Lang::ZhCn, "gui.menu.view.column") => "列",
-        (Lang::En, "gui.menu.view.column") => "Columns",
-        (Lang::ZhCn, "gui.menu.view.top") => "总在最前",
-        (Lang::En, "gui.menu.view.top") => "Always on top",
-        (Lang::ZhCn, "gui.menu.view.color") => "配色…",
-        (Lang::En, "gui.menu.view.color") => "Color…",
-        (Lang::ZhCn, "gui.menu.view.toolbar_large") => "大图标",
-        (Lang::En, "gui.menu.view.toolbar_large") => "Large",
-        (Lang::ZhCn, "gui.menu.view.toolbar_small") => "小图标",
-        (Lang::En, "gui.menu.view.toolbar_small") => "Small",
-        (Lang::ZhCn, "gui.menu.view.toolbar_hide") => "隐藏",
-        (Lang::En, "gui.menu.view.toolbar_hide") => "Hidden",
-        (Lang::ZhCn, "gui.menu.view.list_icons") => "图标",
-        (Lang::En, "gui.menu.view.list_icons") => "Icons",
-        (Lang::ZhCn, "gui.menu.view.list_list") => "列表",
-        (Lang::En, "gui.menu.view.list_list") => "List",
-        (Lang::ZhCn, "gui.menu.view.list_details") => "详细信息",
-        (Lang::En, "gui.menu.view.list_details") => "Details",
-        (Lang::ZhCn, "gui.menu.view.list_large") => "大图标",
-        (Lang::En, "gui.menu.view.list_large") => "Large icons",
-
-        (Lang::ZhCn, "gui.menu.tools.repair") => "修复压缩包…",
-        (Lang::En, "gui.menu.tools.repair") => "Repair archive…",
-        (Lang::ZhCn, "gui.menu.tools.recover") => "恢复密码…",
-        (Lang::En, "gui.menu.tools.recover") => "Recover password…",
-        (Lang::ZhCn, "gui.menu.tools.checksum") => "校验和",
-        (Lang::En, "gui.menu.tools.checksum") => "Checksum",
-        (Lang::ZhCn, "gui.menu.help.about") => "关于 Oxizip",
-        (Lang::En, "gui.menu.help.about") => "About Oxizip",
-        (Lang::ZhCn, "gui.menu.help.page") => "打开说明",
-        (Lang::En, "gui.menu.help.page") => "Open help",
-        (Lang::ZhCn, "gui.menu.help.folder") => "打开安装目录",
-        (Lang::En, "gui.menu.help.folder") => "Open install folder",
-
-        (Lang::ZhCn, "gui.busy.rename") => "正在重命名…",
-        (Lang::En, "gui.busy.rename") => "Renaming…",
-        (Lang::ZhCn, "gui.busy.repair") => "正在修复…",
-        (Lang::En, "gui.busy.repair") => "Repairing…",
-        (Lang::ZhCn, "gui.busy.checksum") => "正在计算校验和…",
-        (Lang::En, "gui.busy.checksum") => "Computing checksum…",
-        (Lang::ZhCn, "gui.busy.recover") => "正在恢复密码…",
-        (Lang::En, "gui.busy.recover") => "Recovering password…",
-        (Lang::ZhCn, "gui.busy.comment") => "正在写入注释…",
-        (Lang::En, "gui.busy.comment") => "Writing comment…",
-        (Lang::ZhCn, "gui.busy.copy") => "正在准备剪贴板…",
-        (Lang::En, "gui.busy.copy") => "Preparing clipboard…",
-
-        (Lang::ZhCn, "gui.status.renamed") => "已重命名",
-        (Lang::En, "gui.status.renamed") => "Renamed",
-        (Lang::ZhCn, "gui.status.repaired") => "已修复",
-        (Lang::En, "gui.status.repaired") => "Repaired",
-        (Lang::ZhCn, "gui.status.comment") => "已更新注释",
-        (Lang::En, "gui.status.comment") => "Comment updated",
-        (Lang::ZhCn, "gui.status.copied") => "已复制到剪贴板",
-        (Lang::En, "gui.status.copied") => "Copied to clipboard",
-        (Lang::ZhCn, "gui.status.saved_as") => "已另存为",
-        (Lang::En, "gui.status.saved_as") => "Saved as",
-        (Lang::ZhCn, "gui.status.deleted_archive") => "已删除压缩包",
-        (Lang::En, "gui.status.deleted_archive") => "Archive deleted",
-        (Lang::ZhCn, "gui.status.checksum") => "校验和已计算",
-        (Lang::En, "gui.status.checksum") => "Checksum ready",
-        (Lang::ZhCn, "gui.status.recovered") => "已恢复密码",
-        (Lang::En, "gui.status.recovered") => "Password recovered",
-
-        (Lang::ZhCn, "gui.err.need_selection") => "请先选择条目",
-        (Lang::En, "gui.err.need_selection") => "Select an entry first",
-        (Lang::ZhCn, "gui.err.one_selection") => "请只选择一个条目",
-        (Lang::En, "gui.err.one_selection") => "Select exactly one entry",
-        (Lang::ZhCn, "gui.err.clipboard") => "剪贴板操作失败",
-        (Lang::En, "gui.err.clipboard") => "Clipboard operation failed",
-        (Lang::ZhCn, "gui.err.clipboard_empty") => "没有可复制的文件",
-        (Lang::En, "gui.err.clipboard_empty") => "No files to copy",
-        (Lang::ZhCn, "gui.err.checksum_empty") => "没有可计算校验和的文件",
-        (Lang::En, "gui.err.checksum_empty") => "No files to checksum",
-        (Lang::ZhCn, "gui.err.shell") => "系统操作失败",
-        (Lang::En, "gui.err.shell") => "System operation failed",
-        (Lang::ZhCn, "gui.err.readme") => "未找到说明文件",
-        (Lang::En, "gui.err.readme") => "Help file was not found",
-        (Lang::ZhCn, "gui.err.rename_empty") => "名称不能为空",
-        (Lang::En, "gui.err.rename_empty") => "Name cannot be empty",
-        (Lang::ZhCn, "gui.err.same_path") => "目标与源相同",
-        (Lang::En, "gui.err.same_path") => "Destination is the same as the source",
-
-        (Lang::ZhCn, "gui.dialog.ok") => "确定",
-        (Lang::En, "gui.dialog.ok") => "OK",
-        (Lang::ZhCn, "gui.dialog.cancel") => "取消",
-        (Lang::En, "gui.dialog.cancel") => "Cancel",
-        (Lang::ZhCn, "gui.dialog.close") => "关闭",
-        (Lang::En, "gui.dialog.close") => "Close",
-        (Lang::ZhCn, "gui.about.title") => "关于 Oxizip",
-        (Lang::En, "gui.about.title") => "About Oxizip",
-        (Lang::ZhCn, "gui.about.body") => {
-            "Oxizip 是干净室实现的压缩文件管理器（AGPL-3.0-only）。解压经引擎完成，条目用系统默认程序打开。"
-        }
-        (Lang::En, "gui.about.body") => {
-            "Oxizip is a clean-room archive manager (AGPL-3.0-only). Extraction goes through the engine; entries open in the system default app."
-        },
-        (Lang::ZhCn, "gui.comment.title") => "压缩包注释",
-        (Lang::En, "gui.comment.title") => "Archive comment",
-        (Lang::ZhCn, "gui.comment.save") => "保存注释",
-        (Lang::En, "gui.comment.save") => "Save comment",
-        (Lang::ZhCn, "gui.comment.empty") => "（无注释）",
-        (Lang::En, "gui.comment.empty") => "(no comment)",
-        (Lang::ZhCn, "gui.rename.title") => "重命名条目",
-        (Lang::En, "gui.rename.title") => "Rename entry",
-        (Lang::ZhCn, "gui.rename.name") => "新名称",
-        (Lang::En, "gui.rename.name") => "New name",
-        (Lang::ZhCn, "gui.passman.title") => "密码管理",
-        (Lang::En, "gui.passman.title") => "Password manager",
-        (Lang::ZhCn, "gui.passman.add") => "添加",
-        (Lang::En, "gui.passman.add") => "Add",
-        (Lang::ZhCn, "gui.passman.empty") => "尚未保存密码",
-        (Lang::En, "gui.passman.empty") => "No saved passwords",
-        (Lang::ZhCn, "gui.passman.use") => "使用",
-        (Lang::En, "gui.passman.use") => "Use",
-        (Lang::ZhCn, "gui.passman.remove") => "移除",
-        (Lang::En, "gui.passman.remove") => "Remove",
-        (Lang::ZhCn, "gui.passman.hint") => "密码保存在本机配置中，仅用于打开与编辑压缩包。",
-        (Lang::En, "gui.passman.hint") => "Passwords are stored in local settings and used to open or edit archives.",
-        (Lang::ZhCn, "gui.recover.title") => "恢复密码",
-        (Lang::En, "gui.recover.title") => "Recover password",
-        (Lang::ZhCn, "gui.recover.wordlist") => "字典文件",
-        (Lang::En, "gui.recover.wordlist") => "Wordlist",
-        (Lang::ZhCn, "gui.recover.browse") => "浏览…",
-        (Lang::En, "gui.recover.browse") => "Browse…",
-        (Lang::ZhCn, "gui.recover.maxlen") => "穷举最大长度",
-        (Lang::En, "gui.recover.maxlen") => "Max brute-force length",
-        (Lang::ZhCn, "gui.recover.start") => "开始恢复",
-        (Lang::En, "gui.recover.start") => "Start",
-        (Lang::ZhCn, "gui.recover.hint") => "先尝试字典，再按默认字符集做短穷举。仅支持 ZIP / 7z。",
-        (Lang::En, "gui.recover.hint") => "Tries the wordlist, then a short brute force. ZIP and 7z only.",
-        (Lang::ZhCn, "gui.checksum.title") => "校验和",
-        (Lang::En, "gui.checksum.title") => "Checksum",
-        (Lang::ZhCn, "gui.find.title") => "查找",
-        (Lang::En, "gui.find.title") => "Find",
-        (Lang::ZhCn, "gui.find.hint") => "按名称过滤当前列表",
-        (Lang::En, "gui.find.hint") => "Filter the current list by name",
-        (Lang::ZhCn, "gui.find.apply") => "应用",
-        (Lang::En, "gui.find.apply") => "Apply",
-        (Lang::ZhCn, "gui.find.clear") => "清除",
-        (Lang::En, "gui.find.clear") => "Clear",
-        (Lang::ZhCn, "gui.settings.title") => "设置",
-        (Lang::En, "gui.settings.title") => "Settings",
-        (Lang::ZhCn, "gui.settings.back") => "返回",
-        (Lang::En, "gui.settings.back") => "Back",
-        (Lang::ZhCn, "gui.settings.ok") => "确定",
-        (Lang::En, "gui.settings.ok") => "OK",
-        (Lang::ZhCn, "gui.settings.reset") => "重置为默认",
-        (Lang::En, "gui.settings.reset") => "Reset defaults",
-        (Lang::ZhCn, "gui.settings.default_format") => "默认新建格式",
-        (Lang::En, "gui.settings.default_format") => "Default new format",
-        (Lang::ZhCn, "gui.settings.default_method") => "默认压缩方法",
-        (Lang::En, "gui.settings.default_method") => "Default method",
-        (Lang::ZhCn, "gui.settings.open_dest") => "解压完成后打开目标文件夹",
-        (Lang::En, "gui.settings.open_dest") => "Open the destination folder after extract",
-        (Lang::ZhCn, "gui.settings.assoc") => "文件关联…",
-        (Lang::En, "gui.settings.assoc") => "Associations…",
-        (Lang::ZhCn, "gui.settings.tab.general") => "常规",
-        (Lang::En, "gui.settings.tab.general") => "General",
-        (Lang::ZhCn, "gui.settings.tab.assoc") => "文件关联",
-        (Lang::En, "gui.settings.tab.assoc") => "Associations",
-        (Lang::ZhCn, "gui.settings.tab.shell") => "上下文菜单",
-        (Lang::En, "gui.settings.tab.shell") => "Context menu",
-        (Lang::ZhCn, "gui.settings.tab.extract") => "解压",
-        (Lang::En, "gui.settings.tab.extract") => "Extract",
-        (Lang::ZhCn, "gui.settings.tab.archive") => "压缩",
-        (Lang::En, "gui.settings.tab.archive") => "Compress",
-        (Lang::ZhCn, "gui.settings.tab.viewer") => "查看",
-        (Lang::En, "gui.settings.tab.viewer") => "View",
-        (Lang::ZhCn, "gui.settings.tab.security") => "安全",
-        (Lang::En, "gui.settings.tab.security") => "Security",
-        (Lang::ZhCn, "gui.settings.tab.advanced") => "高级",
-        (Lang::En, "gui.settings.tab.advanced") => "Advanced",
-        (Lang::ZhCn, "gui.settings.tab.lang") => "语言",
-        (Lang::En, "gui.settings.tab.lang") => "Language",
-        (Lang::ZhCn, "gui.settings.general.heading") => "常规设置",
-        (Lang::En, "gui.settings.general.heading") => "General",
-        (Lang::ZhCn, "gui.settings.general.esc") => "使用 Esc 键退出",
-        (Lang::En, "gui.settings.general.esc") => "ESC key exits the window",
-        (Lang::ZhCn, "gui.settings.general.dotdot") => "在压缩包中显示 [..] 文件夹",
-        (Lang::En, "gui.settings.general.dotdot") => "Show [..] folder in archives",
-        (Lang::ZhCn, "gui.settings.general.grid") => "详细信息视图显示网格线",
-        (Lang::En, "gui.settings.general.grid") => "Show gridlines in details view",
-        (Lang::ZhCn, "gui.settings.general.full_row") => "整行选择",
-        (Lang::En, "gui.settings.general.full_row") => "Full row select",
-        (Lang::ZhCn, "gui.settings.general.single_click") => "单击打开项目",
-        (Lang::En, "gui.settings.general.single_click") => "Single-click to open an item",
-        (Lang::ZhCn, "gui.settings.general.test_modify") => "添加/删除/重命名后测试压缩包",
-        (Lang::En, "gui.settings.general.test_modify") => {
-            "Test archive after add/delete/rename"
-        },
-        (Lang::ZhCn, "gui.settings.assoc.heading") => "扩展名关联",
-        (Lang::En, "gui.settings.assoc.heading") => "Extension association",
-        (Lang::ZhCn, "gui.settings.assoc.intro") => "勾选后点击应用，将 Oxizip 设为这些格式的默认打开程序。",
-        (Lang::ZhCn, "gui.settings.assoc.intro_ok") => "勾选扩展名，点击「确定」后应用为默认打开程序。",
-        (Lang::En, "gui.settings.assoc.intro_ok") => {
-            "Select extensions, then press OK to set Oxizip as the default opener."
-        },
-        (Lang::En, "gui.settings.assoc.intro") => {
-            "Select formats and Apply to set Oxizip as the default opener."
-        },
-        (Lang::ZhCn, "gui.settings.assoc.apply") => "应用所选",
-        (Lang::En, "gui.settings.assoc.apply") => "Apply selected",
-        (Lang::ZhCn, "gui.settings.assoc.all") => "关联全部默认格式",
-        (Lang::En, "gui.settings.assoc.all") => "Associate all defaults",
-        (Lang::ZhCn, "gui.settings.shell.heading") => "上下文菜单",
-        (Lang::En, "gui.settings.shell.heading") => "Context menu",
-        (Lang::ZhCn, "gui.settings.shell.note") => {
-            "不做应用内预览。应用后将重新注册资源管理器菜单（可能需要管理员权限）。"
-        },
-        (Lang::En, "gui.settings.shell.note") => {
-            "No in-app preview. Apply re-registers Explorer menus (may need elevation)."
-        },
-        (Lang::ZhCn, "gui.settings.shell.note_ok") => {
-            "不做应用内预览。点击「确定」后重新注册资源管理器菜单（可能需要管理员权限）。"
-        },
-        (Lang::En, "gui.settings.shell.note_ok") => {
-            "No in-app preview. Press OK to re-register Explorer menus (may need elevation)."
-        },
-        (Lang::ZhCn, "gui.settings.shell.dbl") => "双击动作",
-        (Lang::En, "gui.settings.shell.dbl") => "Double-click action",
-        (Lang::ZhCn, "gui.settings.shell.dbl.open") => "用 Oxizip 打开",
-        (Lang::En, "gui.settings.shell.dbl.open") => "Open with Oxizip",
-        (Lang::ZhCn, "gui.settings.shell.dbl.smart") => "智能解压到此处",
-        (Lang::En, "gui.settings.shell.dbl.smart") => "Extract Here (Smart)",
-        (Lang::ZhCn, "gui.settings.shell.dbl.folder") => "解压到归档名文件夹",
-        (Lang::En, "gui.settings.shell.dbl.folder") => "Extract to archive-name folder",
-        (Lang::ZhCn, "gui.settings.shell.dbl.delete") => "双击解压后删除压缩包",
-        (Lang::En, "gui.settings.shell.dbl.delete") => "Delete archive after double-click extract",
-        (Lang::ZhCn, "gui.settings.shell.extract") => "解压菜单",
-        (Lang::En, "gui.settings.shell.extract") => "Extraction menu",
-        (Lang::ZhCn, "gui.settings.shell.extract_here") => "解压到此处",
-        (Lang::En, "gui.settings.shell.extract_here") => "Extract Here",
-        (Lang::ZhCn, "gui.settings.shell.extract_smart") => "智能解压",
-        (Lang::En, "gui.settings.shell.extract_smart") => "Extract Here (Smart)",
-        (Lang::ZhCn, "gui.settings.shell.extract_folder") => "解压到归档名文件夹",
-        (Lang::En, "gui.settings.shell.extract_folder") => "Extract to archive-name folder",
-        (Lang::ZhCn, "gui.settings.shell.extract_here_del") => "解压到此处并删除",
-        (Lang::En, "gui.settings.shell.extract_here_del") => "Extract Here and delete",
-        (Lang::ZhCn, "gui.settings.shell.extract_smart_del") => "智能解压并删除",
-        (Lang::En, "gui.settings.shell.extract_smart_del") => "Extract Here (Smart) and delete",
-        (Lang::ZhCn, "gui.settings.shell.extract_folder_del") => "解压到归档名文件夹并删除",
-        (Lang::En, "gui.settings.shell.extract_folder_del") => {
-            "Extract to archive-name folder and delete"
-        },
-        (Lang::ZhCn, "gui.settings.shell.extract_dialog") => "解压到其他文件夹…",
-        (Lang::En, "gui.settings.shell.extract_dialog") => "Extract to another folder…",
-        (Lang::ZhCn, "gui.settings.shell.open_with") => "使用 Oxizip 打开",
-        (Lang::En, "gui.settings.shell.open_with") => "Open with Oxizip",
-        (Lang::ZhCn, "gui.settings.shell.test") => "测试压缩包",
-        (Lang::En, "gui.settings.shell.test") => "Test archive",
-        (Lang::ZhCn, "gui.settings.shell.checksum") => "校验和信息",
-        (Lang::En, "gui.settings.shell.checksum") => "Checksum",
-        (Lang::ZhCn, "gui.settings.shell.compress") => "压缩菜单",
-        (Lang::En, "gui.settings.shell.compress") => "Compression menu",
-        (Lang::ZhCn, "gui.settings.shell.zip") => "压缩为 ZIP",
-        (Lang::En, "gui.settings.shell.zip") => "Compress to ZIP",
-        (Lang::ZhCn, "gui.settings.shell.sevenz") => "压缩为 7z",
-        (Lang::En, "gui.settings.shell.sevenz") => "Compress to 7z",
-        (Lang::ZhCn, "gui.settings.shell.zipx") => "压缩为 ZIPX",
-        (Lang::En, "gui.settings.shell.zipx") => "Compress to ZIPX",
-        (Lang::ZhCn, "gui.settings.shell.tar") => "压缩为 TAR",
-        (Lang::En, "gui.settings.shell.tar") => "Compress to TAR",
-        (Lang::ZhCn, "gui.settings.shell.tgz") => "压缩为 TGZ",
-        (Lang::En, "gui.settings.shell.tgz") => "Compress to TGZ",
-        (Lang::ZhCn, "gui.settings.shell.gz") => "压缩为 GZ",
-        (Lang::En, "gui.settings.shell.gz") => "Compress to GZ",
-        (Lang::ZhCn, "gui.settings.shell.xz") => "压缩为 XZ",
-        (Lang::En, "gui.settings.shell.xz") => "Compress to XZ",
-        (Lang::ZhCn, "gui.settings.shell.zpaq") => "压缩为 ZPAQ",
-        (Lang::En, "gui.settings.shell.zpaq") => "Compress to ZPAQ",
-        (Lang::ZhCn, "gui.settings.shell.each_zip") => "分别压缩为 ZIP",
-        (Lang::En, "gui.settings.shell.each_zip") => "Compress each to ZIP",
-        (Lang::ZhCn, "gui.settings.shell.each_7z") => "分别压缩为 7z",
-        (Lang::En, "gui.settings.shell.each_7z") => "Compress each to 7z",
-        (Lang::ZhCn, "gui.settings.shell.other") => "其它",
-        (Lang::En, "gui.settings.shell.other") => "Other",
-        (Lang::ZhCn, "gui.settings.shell.cascade") => "Win11 现代菜单级联（Sparse）",
-        (Lang::En, "gui.settings.shell.cascade") => "Win11 modern cascade (Sparse)",
-        (Lang::ZhCn, "gui.settings.shell.disable") => "禁用上下文菜单",
-        (Lang::En, "gui.settings.shell.disable") => "Disable context menus",
-        (Lang::ZhCn, "gui.settings.shell.hide_icon") => "隐藏菜单图标",
-        (Lang::En, "gui.settings.shell.hide_icon") => "Hide menu icons",
-        (Lang::ZhCn, "gui.settings.shell.apply") => "应用菜单设置",
-        (Lang::En, "gui.settings.shell.apply") => "Apply menu settings",
-        (Lang::ZhCn, "gui.settings.extract.heading") => "解压设置",
-        (Lang::En, "gui.settings.extract.heading") => "Extract",
-        (Lang::ZhCn, "gui.settings.extract.keep_job") => "解压完成后不关闭进度窗口",
-        (Lang::En, "gui.settings.extract.keep_job") => "Keep progress window after extract",
-        (Lang::ZhCn, "gui.settings.extract.enter_root") => "仅有一个根文件夹时直接进入",
-        (Lang::En, "gui.settings.extract.enter_root") => "Enter the only root folder automatically",
-        (Lang::ZhCn, "gui.settings.extract.smart_single") => "智能解压时单文件放入新文件夹",
-        (Lang::En, "gui.settings.extract.smart_single") => {
-            "Smart extract: put a single file into a new folder"
-        },
-        (Lang::ZhCn, "gui.settings.extract.parallel") => "对支持的格式使用并行解压",
-        (Lang::En, "gui.settings.extract.parallel") => "Parallel extract when supported",
-        (Lang::ZhCn, "gui.settings.archive.heading") => "压缩设置",
-        (Lang::En, "gui.settings.archive.heading") => "Compress",
-        (Lang::ZhCn, "gui.settings.archive.utf8") => "ZIP 使用 Unicode 文件名 (UTF-8)",
-        (Lang::En, "gui.settings.archive.utf8") => "Use Unicode names in ZIP (UTF-8)",
-        (Lang::ZhCn, "gui.settings.archive.thumbs") => "压缩时排除 Thumbs.db",
-        (Lang::En, "gui.settings.archive.thumbs") => "Exclude Thumbs.db when archiving",
-        (Lang::ZhCn, "gui.settings.archive.test_after") => "压缩后测试压缩包",
-        (Lang::En, "gui.settings.archive.test_after") => "Test archive after compression",
-        (Lang::ZhCn, "gui.settings.archive.no_root") => "仅压缩一个文件夹时不创建根目录",
-        (Lang::En, "gui.settings.archive.no_root") => {
-            "Do not create a root folder when compressing one folder"
-        },
-        (Lang::ZhCn, "gui.settings.archive.keep_job") => "压缩完成后不关闭进度窗口",
-        (Lang::En, "gui.settings.archive.keep_job") => "Keep progress window after compress",
-        (Lang::ZhCn, "gui.settings.archive.level") => "压缩级别",
-        (Lang::En, "gui.settings.archive.level") => "Compression level",
-        (Lang::ZhCn, "gui.settings.archive.use_last") => "新建压缩包使用上次文件夹",
-        (Lang::En, "gui.settings.archive.use_last") => "Use last folder for New Archive",
-        (Lang::ZhCn, "gui.settings.archive.default_folder") => "新建压缩包默认文件夹",
-        (Lang::En, "gui.settings.archive.default_folder") => "Default folder for New Archive",
-        (Lang::ZhCn, "gui.settings.archive.default_folder_ph") => "默认目录路径",
-        (Lang::En, "gui.settings.archive.default_folder_ph") => "Default directory path",
-        (Lang::ZhCn, "gui.settings.archive.exclude") => "压缩时排除的文件（分号分隔，如 *.tmp）",
-        (Lang::En, "gui.settings.archive.exclude") => {
-            "Exclude when archiving (semicolon-separated, e.g. *.tmp)"
-        },
-        (Lang::ZhCn, "gui.settings.archive.exclude_ph") => "*.tmp;desktop.ini",
-        (Lang::En, "gui.settings.archive.exclude_ph") => "*.tmp;desktop.ini",
-        (Lang::ZhCn, "gui.settings.viewer.heading") => "查看",
-        (Lang::En, "gui.settings.viewer.heading") => "View",
-        (Lang::ZhCn, "gui.settings.viewer.preview_note") => "Oxizip 不做应用内预览；打开条目使用系统默认程序。",
-        (Lang::En, "gui.settings.viewer.preview_note") => {
-            "Oxizip has no in-app preview; entries open with the system default app."
-        },
-        (Lang::ZhCn, "gui.settings.viewer.columns") => "列设置",
-        (Lang::En, "gui.settings.viewer.columns") => "Columns",
-        (Lang::ZhCn, "gui.settings.viewer.col.size") => "原始大小",
-        (Lang::En, "gui.settings.viewer.col.size") => "Original size",
-        (Lang::ZhCn, "gui.settings.viewer.col.compressed") => "压缩后大小",
-        (Lang::En, "gui.settings.viewer.col.compressed") => "Compressed size",
-        (Lang::ZhCn, "gui.settings.viewer.col.method") => "压缩方法",
-        (Lang::En, "gui.settings.viewer.col.method") => "Method",
-        (Lang::ZhCn, "gui.settings.viewer.col.modified") => "修改日期",
-        (Lang::En, "gui.settings.viewer.col.modified") => "Date modified",
-        (Lang::ZhCn, "gui.settings.viewer.col.kind") => "文件类型",
-        (Lang::En, "gui.settings.viewer.col.kind") => "File type",
-        (Lang::ZhCn, "gui.col.kind") => "类型",
-        (Lang::En, "gui.col.kind") => "Type",
-        (Lang::ZhCn, "gui.settings.viewer.accent") => "主题色",
-        (Lang::En, "gui.settings.viewer.accent") => "Accent color",
-        (Lang::ZhCn, "gui.settings.security.heading") => "安全设置",
-        (Lang::En, "gui.settings.security.heading") => "Security",
-        (Lang::ZhCn, "gui.settings.security.zone") => "解压时复制 Zone.Identifier（Windows）",
-        (Lang::En, "gui.settings.security.zone") => "Copy Zone.Identifier on extract (Windows)",
-        (Lang::ZhCn, "gui.settings.security.amsi") => "解压前恶意文件检查（计划中）",
-        (Lang::En, "gui.settings.security.amsi") => "Malware check before extract (planned)",
-        (Lang::ZhCn, "gui.settings.security.amsi_note") => "当前版本尚未接入 AMSI；勾选仅作偏好保留。",
-        (Lang::En, "gui.settings.security.amsi_note") => {
-            "AMSI is not wired yet; the preference is stored for a later release."
-        },
-        (Lang::ZhCn, "gui.settings.advanced.heading") => "高级设置",
-        (Lang::En, "gui.settings.advanced.heading") => "Advanced",
-        (Lang::ZhCn, "gui.settings.advanced.recent") => "显示最近打开的文件",
-        (Lang::En, "gui.settings.advanced.recent") => "Show recent files",
-        (Lang::ZhCn, "gui.settings.advanced.long_path") => "处理超过 260 字符的长路径",
-        (Lang::En, "gui.settings.advanced.long_path") => "Handle long paths over 260 characters",
-        (Lang::ZhCn, "gui.settings.advanced.del_cancel") => "取消解压时删除已写出的文件",
-        (Lang::En, "gui.settings.advanced.del_cancel") => {
-            "Delete written files when cancelling extract"
-        },
-        (Lang::ZhCn, "gui.settings.advanced.title_path") => "在标题栏显示完整路径",
-        (Lang::En, "gui.settings.advanced.title_path") => "Show full path in the title bar",
-        (Lang::ZhCn, "gui.settings.advanced.expand_tree") => "自动展开文件夹树",
-        (Lang::En, "gui.settings.advanced.expand_tree") => "Expand folder tree automatically",
-        (Lang::ZhCn, "gui.settings.advanced.trash") => "删除压缩包时移到回收站",
-        (Lang::En, "gui.settings.advanced.trash") => "Move deleted archives to the Recycle Bin",
-        (Lang::ZhCn, "gui.settings.advanced.start_screen") => "启动时显示起始页",
-        (Lang::En, "gui.settings.advanced.start_screen") => "Show start screen on launch",
-        (Lang::ZhCn, "gui.settings.advanced.temp_asap") => "打开条目后尽快删除临时文件",
-        (Lang::En, "gui.settings.advanced.temp_asap") => {
-            "Delete temporary files soon after opening an entry"
-        },
-        (Lang::ZhCn, "gui.settings.advanced.temp") => "临时文件夹（留空则使用系统默认）",
-        (Lang::En, "gui.settings.advanced.temp") => "Temp folder (empty = system default)",
-        (Lang::ZhCn, "gui.settings.advanced.temp_ph") => "临时目录路径",
-        (Lang::En, "gui.settings.advanced.temp_ph") => "Temp directory path",
-        (Lang::ZhCn, "gui.settings.advanced.export") => "导出设置…",
-        (Lang::En, "gui.settings.advanced.export") => "Export settings…",
-        (Lang::ZhCn, "gui.settings.advanced.import") => "导入设置…",
-        (Lang::En, "gui.settings.advanced.import") => "Import settings…",
-        (Lang::ZhCn, "gui.settings.advanced.clear_recent") => "清除最近文件",
-        (Lang::En, "gui.settings.advanced.clear_recent") => "Clear recent files",
-        (Lang::ZhCn, "gui.settings.lang.heading") => "语言设置",
-        (Lang::En, "gui.settings.lang.heading") => "Language",
-        (Lang::ZhCn, "gui.settings.status.reset") => "已恢复默认设置",
-        (Lang::En, "gui.settings.status.reset") => "Defaults restored",
-        (Lang::ZhCn, "gui.settings.status.assoc_ok") => "文件关联已更新",
-        (Lang::En, "gui.settings.status.assoc_ok") => "Associations updated",
-        (Lang::ZhCn, "gui.settings.status.shell_ok") => "上下文菜单已更新",
-        (Lang::En, "gui.settings.status.shell_ok") => "Context menus updated",
-        (Lang::ZhCn, "gui.settings.status.export_ok") => "设置已导出",
-        (Lang::En, "gui.settings.status.export_ok") => "Settings exported",
-        (Lang::ZhCn, "gui.settings.status.import_ok") => "设置已导入",
-        (Lang::En, "gui.settings.status.import_ok") => "Settings imported",
-        (Lang::ZhCn, "gui.toolbar.title") => "自定义工具栏",
-        (Lang::En, "gui.toolbar.title") => "Customize toolbar",
-        (Lang::ZhCn, "gui.color.title") => "配色",
-        (Lang::En, "gui.color.title") => "Color",
-        (Lang::ZhCn, "gui.color.brand") => "品牌蓝",
-        (Lang::En, "gui.color.brand") => "Brand blue",
-        (Lang::ZhCn, "gui.color.navy") => "深蓝",
-        (Lang::En, "gui.color.navy") => "Deep navy",
-        (Lang::ZhCn, "gui.color.teal") => "青绿",
-        (Lang::En, "gui.color.teal") => "Teal",
-        (Lang::ZhCn, "gui.tree.all") => "全部",
-        (Lang::En, "gui.tree.all") => "All",
-        (Lang::ZhCn, "gui.delete.confirm") => "确定删除当前压缩包？",
-        (Lang::En, "gui.delete.confirm") => "Delete the current archive?",
-        (Lang::ZhCn, "gui.delete.confirm_perm") => "永久删除后无法从回收站恢复。",
-        (Lang::En, "gui.delete.confirm_perm") => "Permanent delete cannot be undone from the recycle bin.",
-        _ => return None,
-    })
+    lang.lookup_in(key)
+        .or_else(|| Lang::En.lookup_in(key))
+        .or_else(|| Lang::ZhCn.lookup_in(key))
+        .or_else(|| fallback_lang().lookup_in(key))
 }
 
 /// Translate a known key. Unknown keys fall back to the key string (owned).

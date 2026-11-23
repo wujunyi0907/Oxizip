@@ -76,8 +76,7 @@ pub enum MenuAction {
     CopyFullPaths,
     Find,
     ShowSettings,
-    LangZh,
-    LangEn,
+    SetLang(oxizip_i18n::Lang),
     StartScreen,
     ToggleTree,
     ToggleComment,
@@ -378,10 +377,11 @@ pub fn view_dropdown<'a>(popup: MenuPopup, ctx: &MenuCtx<'_>) -> Element<'a, Mes
 
         MenuPopup::Settings | MenuPopup::SettingsLang => {
             let child = if popup == MenuPopup::SettingsLang {
-                Some(panel(vec![
-                    item_btn("中文".into(), true, MenuAction::LangZh),
-                    item_btn("English".into(), true, MenuAction::LangEn),
-                ]))
+                Some(panel(
+                    oxizip_i18n::Lang::all()
+                        .map(|l| item_btn(l.native_name().into(), true, MenuAction::SetLang(l)))
+                        .collect(),
+                ))
             } else {
                 None
             };

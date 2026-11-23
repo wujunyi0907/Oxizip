@@ -143,6 +143,8 @@ fn center_on_monitor(size: Size, monitor: Size) -> Point {
 }
 
 fn main() -> iced::Result {
+    oxizip_i18n::init();
+    oxizip_i18n::ensure_user_locales_scaffold();
     let job_mode = job::parse_job_args().is_some();
     let settings_mode = setup::parse_settings_launch().is_some();
     let mut window = iced::window::Settings {
@@ -629,10 +631,7 @@ impl OxizipApp {
                 self.last_error = Some(t(self.lang, "gui.setup.none").to_string());
                 return Task::none();
             }
-            let lang_arg = match self.lang {
-                Lang::ZhCn => "zh-cn",
-                Lang::En => "en",
-            };
+            let lang_arg = self.lang.cli_code();
             match setup::install_associations(lang_arg, &selected) {
                 Ok(msg) => {
                     self.status = format!("{} — {msg}", t(self.lang, "gui.setup.ok"));
@@ -650,10 +649,7 @@ impl OxizipApp {
     }
 
     fn lang_arg(&self) -> &'static str {
-        match self.lang {
-            Lang::ZhCn => "zh-cn",
-            Lang::En => "en",
-        }
+        self.lang.cli_code()
     }
 
     fn save_prefs(&mut self) {
@@ -1735,11 +1731,11 @@ impl OxizipApp {
                 if self.screen == Screen::Job {
                     self.apply_shell_job_outcome(outcome)
                 } else {
-                    self.progress_fraction = 0.0;
+                self.progress_fraction = 0.0;
                     self.progress_file_fraction = 0.0;
-                    self.progress_detail.clear();
-                    self.apply_outcome(outcome)
-                }
+                self.progress_detail.clear();
+                self.apply_outcome(outcome)
+            }
             }
             Message::HideLicenses => {
                 self.screen = Screen::Main;
@@ -2273,9 +2269,9 @@ impl OxizipApp {
                             worker::test_archive_job(path, password, cancel, progress, lang)
                         })
                     } else {
-                        self.start_list(path)
-                    }
+                    self.start_list(path)
                 }
+            }
             }
             JobOutcome::Opened { name, temp, error } => {
                 if let Some(err) = error {
@@ -2310,7 +2306,7 @@ impl OxizipApp {
                     if let Some(open_path) = self.pending_open.take() {
                         self.start_list(open_path)
                     } else {
-                        Task::none()
+                    Task::none()
                     }
                 }
             }
@@ -2326,8 +2322,8 @@ impl OxizipApp {
                         self.pending_open = Some(path.clone());
                         self.start_test()
                     } else {
-                        self.start_list(path)
-                    }
+                    self.start_list(path)
+                }
                 }
             }
             JobOutcome::Renamed { path, error } => {
@@ -2647,8 +2643,7 @@ impl OxizipApp {
                 Task::none()
             }
             MenuAction::ShowSettings => self.open_settings_modal(None),
-            MenuAction::LangZh => self.set_lang(Lang::ZhCn),
-            MenuAction::LangEn => self.set_lang(Lang::En),
+            MenuAction::SetLang(lang) => self.set_lang(lang),
             MenuAction::StartScreen => {
                 if self.is_busy() {
                     return Task::none();
@@ -3395,7 +3390,7 @@ impl OxizipApp {
                 .as_ref()
                 .map(|p| p.display().to_string())
                 .unwrap_or_default()
-        } else {
+            } else {
             // Show basename for long paths (Bandizip-style).
             Path::new(&self.progress_detail)
                 .file_name()
@@ -3427,18 +3422,18 @@ impl OxizipApp {
 
         let err: Element<'_, Message> = if let Some(err) = &self.last_error {
             text(err.clone()).size(11).into()
-        } else {
+            } else {
             Space::with_height(0).into()
         };
 
         let stop_label = if self.job_finished {
             t(self.lang, "gui.job.close")
-        } else {
+            } else {
             t(self.lang, "gui.job.stop")
         };
         let stop_msg = if self.is_busy() {
             Message::CancelClicked
-        } else {
+            } else {
             Message::Close
         };
 
@@ -3998,16 +3993,16 @@ impl OxizipApp {
 
     fn detail_row(&self, index: usize, entry: &EntryMeta, busy: bool) -> Element<'_, Message> {
         let selected = self.selected.contains(&index);
-        let name = if entry.is_dir {
-            format!("[DIR] {}", entry.name)
-        } else {
-            entry.name.clone()
-        };
+            let name = if entry.is_dir {
+                format!("[DIR] {}", entry.name)
+            } else {
+                entry.name.clone()
+            };
         let icon = if entry.is_dir {
-            self.icons.oxizip()
-        } else {
-            self.icons.for_path_name(&entry.name)
-        };
+                self.icons.oxizip()
+            } else {
+                self.icons.for_path_name(&entry.name)
+            };
         let name_msg = if entry.is_dir {
             let prefix = if entry.name.ends_with('/') {
                 entry.name.clone()
