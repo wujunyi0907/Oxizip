@@ -35,5 +35,5 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Ole",
 ] }
 
-[build-dependencies]
+[target.'cfg(windows)'.build-dependencies]
 winresource = { workspace = true }

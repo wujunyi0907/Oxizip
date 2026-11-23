@@ -446,6 +446,10 @@ pub fn prefs_path() -> PathBuf {
     }
     #[cfg(not(windows))]
     {
+        // Honor XDG_CONFIG_HOME so prefs / shell_menu.json match CLI + i18n.
+        if let Ok(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+            return PathBuf::from(xdg).join("oxizip").join("prefs.json");
+        }
         if let Ok(home) = std::env::var("HOME") {
             return PathBuf::from(home)
                 .join(".config")

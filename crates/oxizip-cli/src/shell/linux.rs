@@ -58,6 +58,8 @@ const NAUTILUS_SCRIPT_NAMES: &[&str] = &[
     "Oxizip Extract To Folder and Delete",
     "Oxizip Extract to Another Folder",
     "Oxizip Open",
+    "Oxizip Test",
+    "Oxizip Checksum",
     "Oxizip Compress ZIP",
     "Oxizip Compress 7z",
     "Oxizip Compress ZIPX",
@@ -202,9 +204,81 @@ NoDisplay=false
     )
 }
 
-fn extract_desktop(cli: &Path, gui: &Path, mimes: &[&str]) -> String {
+fn extract_desktop(cli: &Path, gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
     let cli_s = shell_escape_desktop_exec(cli);
     let gui_s = shell_escape_desktop_exec(gui);
+    let mut actions = Vec::new();
+    let mut body = String::new();
+    let push = |actions: &mut Vec<&str>, body: &mut String, id: &str, block: String| {
+        actions.push(id);
+        body.push('\n');
+        body.push_str(&block);
+    };
+    if filter.extract_here {
+        push(
+            &mut actions,
+            &mut body,
+            "ExtractHere",
+            format!(
+                "[Desktop Action ExtractHere]\nName={}\nName[zh_CN]={}\nExec={gui} --job extract --here %f\n",
+                t(Lang::En, "shell.extract_here"),
+                t(Lang::ZhCn, "shell.extract_here"),
+                gui = gui_s,
+            ),
+        );
+    }
+    if filter.extract_smart {
+        push(
+            &mut actions,
+            &mut body,
+            "ExtractSmart",
+            format!(
+                "[Desktop Action ExtractSmart]\nName={}\nName[zh_CN]={}\nExec={gui} --job extract --smart %f\n",
+                t(Lang::En, "shell.extract_smart"),
+                t(Lang::ZhCn, "shell.extract_smart"),
+                gui = gui_s,
+            ),
+        );
+    }
+    if filter.extract_to_folder {
+        push(
+            &mut actions,
+            &mut body,
+            "ExtractToFolder",
+            format!(
+                "[Desktop Action ExtractToFolder]\nName={}\nName[zh_CN]={}\nExec={gui} --job extract --archive-name-dir %f\n",
+                t(Lang::En, "shell.extract_to_folder"),
+                t(Lang::ZhCn, "shell.extract_to_folder"),
+                gui = gui_s,
+            ),
+        );
+    }
+    if filter.test {
+        push(
+            &mut actions,
+            &mut body,
+            "Test",
+            format!(
+                "[Desktop Action Test]\nName={}\nName[zh_CN]={}\nExec={cli} test %f\n",
+                t(Lang::En, "shell.test"),
+                t(Lang::ZhCn, "shell.test"),
+                cli = cli_s,
+            ),
+        );
+    }
+    if filter.checksum {
+        push(
+            &mut actions,
+            &mut body,
+            "Checksum",
+            format!(
+                "[Desktop Action Checksum]\nName={}\nName[zh_CN]={}\nExec={cli} checksum %f\n",
+                t(Lang::En, "shell.checksum"),
+                t(Lang::ZhCn, "shell.checksum"),
+                cli = cli_s,
+            ),
+        );
+    }
     format!(
         r#"[Desktop Entry]
 Type=Application
@@ -218,53 +292,59 @@ Terminal=false
 NoDisplay=true
 Categories=Utility;Archiving;Compression;
 MimeType={mimes}
-Actions=ExtractHere;ExtractSmart;ExtractToFolder;Test;Checksum;
-
-[Desktop Action ExtractHere]
-Name={here_en}
-Name[zh_CN]={here_zh}
-Exec={gui} --job extract --here %f
-
-[Desktop Action ExtractSmart]
-Name={smart_en}
-Name[zh_CN]={smart_zh}
-Exec={gui} --job extract --smart %f
-
-[Desktop Action ExtractToFolder]
-Name={folder_en}
-Name[zh_CN]={folder_zh}
-Exec={gui} --job extract --archive-name-dir %f
-
-[Desktop Action Test]
-Name={test_en}
-Name[zh_CN]={test_zh}
-Exec={cli} test %f
-
-[Desktop Action Checksum]
-Name={sum_en}
-Name[zh_CN]={sum_zh}
-Exec={cli} checksum %f
-"#,
+Actions={action_ids};
+{body}"#,
         name_en = t(Lang::En, "shell.desktop_extract"),
         name_zh = t(Lang::ZhCn, "shell.desktop_extract"),
-        here_en = t(Lang::En, "shell.extract_here"),
-        here_zh = t(Lang::ZhCn, "shell.extract_here"),
-        smart_en = t(Lang::En, "shell.extract_smart"),
-        smart_zh = t(Lang::ZhCn, "shell.extract_smart"),
-        folder_en = t(Lang::En, "shell.extract_to_folder"),
-        folder_zh = t(Lang::ZhCn, "shell.extract_to_folder"),
-        test_en = t(Lang::En, "shell.test"),
-        test_zh = t(Lang::ZhCn, "shell.test"),
-        sum_en = t(Lang::En, "shell.checksum"),
-        sum_zh = t(Lang::ZhCn, "shell.checksum"),
-        cli = cli_s,
         gui = gui_s,
         mimes = mime_type_list(mimes),
+        action_ids = actions.join(";"),
+        body = body,
     )
 }
 
-fn compress_desktop(gui: &Path) -> String {
+fn compress_desktop(gui: &Path, filter: &MenuFilter) -> String {
     let exe_s = shell_escape_desktop_exec(gui);
+    let mut actions = Vec::new();
+    let mut body = String::new();
+    let push = |actions: &mut Vec<&str>, body: &mut String, id: &str, block: String| {
+        actions.push(id);
+        body.push('\n');
+        body.push_str(&block);
+    };
+    if filter.compress_zip {
+        push(
+            &mut actions,
+            &mut body,
+            "CompressZip",
+            format!(
+                "[Desktop Action CompressZip]\nName={}\nName[zh_CN]={}\nExec={exe} --job create --beside -f zip %F\n",
+                t(Lang::En, "shell.compress_zip"),
+                t(Lang::ZhCn, "shell.compress_zip"),
+                exe = exe_s,
+            ),
+        );
+    }
+    if filter.compress_7z {
+        push(
+            &mut actions,
+            &mut body,
+            "Compress7z",
+            format!(
+                "[Desktop Action Compress7z]\nName={}\nName[zh_CN]={}\nExec={exe} --job create --beside -f 7z %F\n",
+                t(Lang::En, "shell.compress_7z"),
+                t(Lang::ZhCn, "shell.compress_7z"),
+                exe = exe_s,
+            ),
+        );
+    }
+    let default_exec = if filter.compress_zip {
+        format!("{exe} --job create --beside -f zip %F", exe = exe_s)
+    } else if filter.compress_7z {
+        format!("{exe} --job create --beside -f 7z %F", exe = exe_s)
+    } else {
+        format!("{exe} --job create --beside -f zip %F", exe = exe_s)
+    };
     format!(
         r#"[Desktop Entry]
 Type=Application
@@ -272,31 +352,19 @@ Version=1.0
 Name={name_en}
 Name[zh_CN]={name_zh}
 Comment=Compress with Oxizip
-Exec={exe} --job create --beside -f zip %F
+Exec={default_exec}
 Icon=package-x-generic
 Terminal=false
 NoDisplay=true
 Categories=Utility;Archiving;Compression;
 MimeType=application/octet-stream;inode/directory;
-Actions=CompressZip;Compress7z;
-
-[Desktop Action CompressZip]
-Name={zip_en}
-Name[zh_CN]={zip_zh}
-Exec={exe} --job create --beside -f zip %F
-
-[Desktop Action Compress7z]
-Name={z7_en}
-Name[zh_CN]={z7_zh}
-Exec={exe} --job create --beside -f 7z %F
-"#,
+Actions={action_ids};
+{body}"#,
         name_en = t(Lang::En, "shell.desktop_compress"),
         name_zh = t(Lang::ZhCn, "shell.desktop_compress"),
-        zip_en = t(Lang::En, "shell.compress_zip"),
-        zip_zh = t(Lang::ZhCn, "shell.compress_zip"),
-        z7_en = t(Lang::En, "shell.compress_7z"),
-        z7_zh = t(Lang::ZhCn, "shell.compress_7z"),
-        exe = exe_s,
+        default_exec = default_exec,
+        action_ids = actions.join(";"),
+        body = body,
     )
 }
 
@@ -421,22 +489,29 @@ struct KdeMenuAction {
     id: &'static str,
     name_en: &'static str,
     name_zh: &'static str,
-    exec_suffix: &'static str,
+    /// Full `Exec=` value (binary + args).
+    exec: String,
 }
 
-fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
+fn kde_servicemenu(cli: &Path, gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
     let gui_s = shell_escape_desktop_exec(gui);
+    let cli_s = shell_escape_desktop_exec(cli);
     let mut mime = mime_type_list(mimes);
     if !mime.contains("inode/directory") {
         mime.push_str("inode/directory;application/octet-stream;");
     }
     let mut actions: Vec<KdeMenuAction> = Vec::new();
-    let push = |actions: &mut Vec<KdeMenuAction>, id, name_en, name_zh, exec_suffix| {
+    let push = |actions: &mut Vec<KdeMenuAction>,
+                id,
+                name_en,
+                name_zh,
+                exe: &str,
+                exec_suffix: &str| {
         actions.push(KdeMenuAction {
             id,
             name_en,
             name_zh,
-            exec_suffix,
+            exec: format!("{exe} {exec_suffix}"),
         });
     };
     if filter.extract_here {
@@ -445,6 +520,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "ExtractHere",
             t(Lang::En, "shell.extract_here"),
             t(Lang::ZhCn, "shell.extract_here"),
+            &gui_s,
             "--job extract --here %f",
         );
     }
@@ -454,6 +530,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "ExtractSmart",
             t(Lang::En, "shell.extract_smart"),
             t(Lang::ZhCn, "shell.extract_smart"),
+            &gui_s,
             "--job extract --smart %f",
         );
     }
@@ -463,6 +540,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "ExtractToFolder",
             t(Lang::En, "shell.extract_to_folder"),
             t(Lang::ZhCn, "shell.extract_to_folder"),
+            &gui_s,
             "--job extract --archive-name-dir %f",
         );
     }
@@ -472,6 +550,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "ExtractHereDel",
             t(Lang::En, "shell.extract_here_del"),
             t(Lang::ZhCn, "shell.extract_here_del"),
+            &gui_s,
             "--job extract --here --delete-archive %f",
         );
     }
@@ -481,6 +560,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "ExtractSmartDel",
             t(Lang::En, "shell.extract_smart_del"),
             t(Lang::ZhCn, "shell.extract_smart_del"),
+            &gui_s,
             "--job extract --smart --delete-archive %f",
         );
     }
@@ -490,6 +570,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "ExtractToFolderDel",
             t(Lang::En, "shell.extract_folder_del"),
             t(Lang::ZhCn, "shell.extract_folder_del"),
+            &gui_s,
             "--job extract --archive-name-dir --delete-archive %f",
         );
     }
@@ -499,6 +580,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "ExtractDialog",
             t(Lang::En, "shell.extract_dialog"),
             t(Lang::ZhCn, "shell.extract_dialog"),
+            &gui_s,
             "--job extract --dialog %f",
         );
     }
@@ -508,7 +590,28 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "OpenWith",
             t(Lang::En, "shell.open_with"),
             t(Lang::ZhCn, "shell.open_with"),
+            &gui_s,
             "%f",
+        );
+    }
+    if filter.test {
+        push(
+            &mut actions,
+            "Test",
+            t(Lang::En, "shell.test"),
+            t(Lang::ZhCn, "shell.test"),
+            &cli_s,
+            "test %f",
+        );
+    }
+    if filter.checksum {
+        push(
+            &mut actions,
+            "Checksum",
+            t(Lang::En, "shell.checksum"),
+            t(Lang::ZhCn, "shell.checksum"),
+            &cli_s,
+            "checksum %f",
         );
     }
     if filter.compress_zip {
@@ -517,6 +620,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "CompressZip",
             t(Lang::En, "shell.compress_zip"),
             t(Lang::ZhCn, "shell.compress_zip"),
+            &gui_s,
             "--job create --beside -f zip %F",
         );
     }
@@ -526,6 +630,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "Compress7z",
             t(Lang::En, "shell.compress_7z"),
             t(Lang::ZhCn, "shell.compress_7z"),
+            &gui_s,
             "--job create --beside -f 7z %F",
         );
     }
@@ -535,6 +640,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "CompressZipx",
             t(Lang::En, "shell.compress_zipx"),
             t(Lang::ZhCn, "shell.compress_zipx"),
+            &gui_s,
             "--job create --beside -f zipx %F",
         );
     }
@@ -544,6 +650,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "CompressTar",
             t(Lang::En, "shell.compress_tar"),
             t(Lang::ZhCn, "shell.compress_tar"),
+            &gui_s,
             "--job create --beside -f tar %F",
         );
     }
@@ -553,6 +660,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "CompressTgz",
             t(Lang::En, "shell.compress_tgz"),
             t(Lang::ZhCn, "shell.compress_tgz"),
+            &gui_s,
             "--job create --beside -f tgz %F",
         );
     }
@@ -562,6 +670,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "CompressGz",
             t(Lang::En, "shell.compress_gz"),
             t(Lang::ZhCn, "shell.compress_gz"),
+            &gui_s,
             "--job create --beside -f gz %F",
         );
     }
@@ -571,6 +680,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "CompressXz",
             t(Lang::En, "shell.compress_xz"),
             t(Lang::ZhCn, "shell.compress_xz"),
+            &gui_s,
             "--job create --beside -f xz %F",
         );
     }
@@ -580,6 +690,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "CompressZpaq",
             t(Lang::En, "shell.compress_zpaq"),
             t(Lang::ZhCn, "shell.compress_zpaq"),
+            &gui_s,
             "--job create --beside -f zpaq %F",
         );
     }
@@ -589,6 +700,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "CompressEachZip",
             t(Lang::En, "shell.compress_each_zip"),
             t(Lang::ZhCn, "shell.compress_each_zip"),
+            &gui_s,
             "--job create --beside --each -f zip %F",
         );
     }
@@ -598,6 +710,7 @@ fn kde_servicemenu(gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
             "CompressEach7z",
             t(Lang::En, "shell.compress_each_7z"),
             t(Lang::ZhCn, "shell.compress_each_7z"),
+            &gui_s,
             "--job create --beside --each -f 7z %F",
         );
     }
@@ -619,12 +732,11 @@ X-KDE-Priority=TopLevel
     );
     for action in &actions {
         out.push_str(&format!(
-            "\n[Desktop Action {id}]\nName={name_en}\nName[zh_CN]={name_zh}\nExec={gui} {exec_suffix}\n",
+            "\n[Desktop Action {id}]\nName={name_en}\nName[zh_CN]={name_zh}\nExec={exec}\n",
             id = action.id,
             name_en = action.name_en,
             name_zh = action.name_zh,
-            gui = gui_s,
-            exec_suffix = action.exec_suffix,
+            exec = action.exec,
         ));
     }
     out
@@ -653,7 +765,12 @@ fn sync_nautilus_script(
     Ok(())
 }
 
-fn sync_nautilus_scripts(scripts: &Path, gui: &Path, filter: &MenuFilter) -> Result<(), String> {
+fn sync_nautilus_scripts(
+    scripts: &Path,
+    gui: &Path,
+    cli: &Path,
+    filter: &MenuFilter,
+) -> Result<(), String> {
     let on = |flag: bool, args: &'static str| -> Option<&'static str> {
         if flag && !filter.disabled {
             Some(args)
@@ -713,6 +830,13 @@ fn sync_nautilus_scripts(scripts: &Path, gui: &Path, filter: &MenuFilter) -> Res
         on(filter.extract_dialog, "--job extract --dialog"),
     )?;
     sync_nautilus_script(scripts, "Oxizip Open", gui, on(filter.open_with, ""))?;
+    sync_nautilus_script(scripts, "Oxizip Test", cli, on(filter.test, "test"))?;
+    sync_nautilus_script(
+        scripts,
+        "Oxizip Checksum",
+        cli,
+        on(filter.checksum, "checksum"),
+    )?;
     sync_nautilus_script(
         scripts,
         "Oxizip Compress ZIP",
@@ -889,11 +1013,11 @@ pub fn install(lang: Lang, requested_exts: &[String], menus_only: bool) -> Resul
     if !filter.disabled {
         write_file(
             &apps.join("oxizip-extract.desktop"),
-            &extract_desktop(&cli, &gui, &mimes),
+            &extract_desktop(&cli, &gui, &mimes, &filter),
         )?;
         write_file(
             &apps.join("oxizip-compress.desktop"),
-            &compress_desktop(&gui),
+            &compress_desktop(&gui, &filter),
         )?;
     } else {
         let _ = fs::remove_file(apps.join("oxizip-extract.desktop"));
@@ -913,11 +1037,11 @@ pub fn install(lang: Lang, requested_exts: &[String], menus_only: bool) -> Resul
 
     let scripts = nautilus_scripts_dir(&home);
     let _ = fs::create_dir_all(&scripts);
-    sync_nautilus_scripts(&scripts, &gui, &filter)?;
+    sync_nautilus_scripts(&scripts, &gui, &cli, &filter)?;
 
     let kde = kde_servicemenus_dir(&home).join("oxizip.desktop");
     if !filter.disabled {
-        write_file(&kde, &kde_servicemenu(&gui, &mimes, &filter))?;
+        write_file(&kde, &kde_servicemenu(&cli, &gui, &mimes, &filter))?;
     } else {
         let _ = fs::remove_file(&kde);
     }

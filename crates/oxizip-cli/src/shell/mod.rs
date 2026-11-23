@@ -166,6 +166,7 @@ pub fn default_install_extensions() -> Vec<&'static str> {
 }
 
 /// Wipe path for uninstall / re-apply (includes optional disk images).
+#[cfg(windows)]
 pub fn assoc_cleanup_extensions() -> Vec<&'static str> {
     archive_extensions().to_vec()
 }

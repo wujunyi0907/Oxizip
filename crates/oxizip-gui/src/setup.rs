@@ -22,11 +22,10 @@ fn legacy_config_dir() -> Option<PathBuf> {
     #[cfg(not(windows))]
     {
         let home = std::env::var_os("HOME")?;
-        Some(
-            PathBuf::from(home)
-                .join(".config")
-                .join("cn.wujunyi.oxizip"),
-        )
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(home).join(".config"));
+        Some(base.join("cn.wujunyi.oxizip"))
     }
 }
 
