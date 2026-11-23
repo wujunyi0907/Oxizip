@@ -10,6 +10,7 @@
 
 ### Fixed
 
+- Linux：修复 Nautilus 脚本过滤闭包生命周期导致 oxizip-cli 编译失败
 - i18n：`locales/*.toml` 随安装分发；用户可增改语言文件，重启后生效（亦支持 %APPDATA%\Oxizip\locales）
 - 关联页：安装器 `--setup` 不再无视 `setup_done`；已完成/跳过或已是默认打开则进主界面
 - Win11 Sparse 右键：补齐「解压并删除 / 解压对话框 / 用 Oxizip 打开」等项，并按 `shell_menu.json` 过滤显示

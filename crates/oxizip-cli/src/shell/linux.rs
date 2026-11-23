@@ -654,7 +654,13 @@ fn sync_nautilus_script(
 }
 
 fn sync_nautilus_scripts(scripts: &Path, gui: &Path, filter: &MenuFilter) -> Result<(), String> {
-    let on = |flag: bool, args: &str| if flag && !filter.disabled { Some(args) } else { None };
+    let on = |flag: bool, args: &'static str| -> Option<&'static str> {
+        if flag && !filter.disabled {
+            Some(args)
+        } else {
+            None
+        }
+    };
     sync_nautilus_script(
         scripts,
         "Oxizip Extract Here",
