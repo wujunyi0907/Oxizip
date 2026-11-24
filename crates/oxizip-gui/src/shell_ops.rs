@@ -1,7 +1,7 @@
 //! OS helpers: trash, reveal in file manager, elevated spawn, clipboard files.
 
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::Command;
 
 /// Spawn another Oxizip GUI process (same executable).
 pub fn spawn_new_window() -> Result<(), String> {
@@ -12,22 +12,8 @@ pub fn spawn_new_window() -> Result<(), String> {
         .map(|_| ())
 }
 
-/// Spawn a dedicated `--settings` dialog process (modal sibling).
-pub fn spawn_settings_window(tab: Option<&str>) -> Result<Child, String> {
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let mut cmd = Command::new(exe);
-    cmd.arg("--settings");
-    if let Some(name) = tab {
-        let name = name.trim();
-        if !name.is_empty() {
-            cmd.arg("--tab").arg(name);
-        }
-    }
-    cmd.spawn().map_err(|e| e.to_string())
-}
-
 /// Enable / disable a native window (Windows HWND). Used so the main GUI stays
-/// visible but non-operable while the settings dialog process is open.
+/// visible but non-operable while the settings dialog is open.
 pub fn set_native_window_enabled(raw_hwnd: u64, enabled: bool) {
     #[cfg(windows)]
     {

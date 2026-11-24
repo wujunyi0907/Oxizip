@@ -55,18 +55,6 @@ impl SettingsTab {
             _ => None,
         }
     }
-
-    pub fn cli_name(self) -> &'static str {
-        match self {
-            Self::General => "general",
-            Self::Assoc => "assoc",
-            Self::Shell => "shell",
-            Self::Extract => "extract",
-            Self::Archive => "archive",
-            Self::Viewer => "viewer",
-            Self::Advanced => "advanced",
-        }
-    }
 }
 
 /// Messages produced by the settings UI (forwarded into the app `Message`).

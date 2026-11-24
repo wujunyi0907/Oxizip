@@ -156,18 +156,22 @@ fn main() -> iced::Result {
         resizable: false,
         decorations: false,
         transparent: true,
+        exit_on_close_request: false,
         // `Centered` is unreliable on Windows; compute from monitor size.
         position: window::Position::SpecificWith(center_on_monitor),
         ..Default::default()
     };
     window.icon = icons::window_icon();
 
-    iced::application(OxizipApp::title, OxizipApp::update, OxizipApp::view)
-        .subscription(OxizipApp::subscription)
-        .default_font(ui_font())
-        .theme(OxizipApp::theme)
-        .window(window)
-        .run_with(OxizipApp::new)
+    iced::daemon(
+        OxizipApp::window_title,
+        OxizipApp::update,
+        OxizipApp::window_view,
+    )
+    .subscription(OxizipApp::subscription)
+    .default_font(ui_font())
+    .theme(|app, _| app.theme())
+    .run_with(move || OxizipApp::new(window))
 }
 
 #[cfg(windows)]
@@ -410,13 +414,11 @@ struct OxizipApp {
     /// Draft prefs edited in the settings dialog; committed only on OK.
     settings_draft: Prefs,
     settings_draft_exts: BTreeMap<&'static str, bool>,
-    /// Reload prefs.json while a spawned settings dialog may still be open.
-    prefs_watch_until: Option<std::time::Instant>,
     prefs_mtime: Option<std::time::SystemTime>,
     /// Native HWND of the main iced window (for modal disable).
     main_hwnd: Option<u64>,
-    /// Child `--settings` process; main stays visible but non-operable.
-    settings_child: Option<std::process::Child>,
+    /// Settings window in this process; the main window remains modal-blocked.
+    settings_window: Option<window::Id>,
 }
 
 impl Default for OxizipApp {
@@ -472,10 +474,9 @@ impl Default for OxizipApp {
             settings_mode: false,
             settings_draft: Prefs::default(),
             settings_draft_exts: setup::default_assoc_selection(),
-            prefs_watch_until: None,
             prefs_mtime: None,
             main_hwnd: None,
-            settings_child: None,
+            settings_window: None,
         }
     }
 }
@@ -547,7 +548,15 @@ enum Message {
     JobConflictCancel,
     WindowId(Option<window::Id>),
     RawWindowId(u64),
-    /// Click on the modal blocker while settings child is open (ignored).
+    SettingsWindowOpened(window::Id),
+    SettingsRawWindowId(u64),
+    WindowCloseRequested(window::Id),
+    WindowClosed(window::Id),
+    Escape(window::Id),
+    SettingsTitleDrag,
+    SettingsMinimize,
+    SettingsClose,
+    /// Click on the modal blocker while settings is open (ignored).
     SettingsModalNop,
     TitleDrag,
     Minimize,
@@ -555,7 +564,7 @@ enum Message {
 }
 
 impl OxizipApp {
-    fn new() -> (Self, Task<Message>) {
+    fn new(window_settings: window::Settings) -> (Self, Task<Message>) {
         let pending_job = job::parse_job_args();
         let settings_tab_arg = setup::parse_settings_launch();
         let settings_mode = settings_tab_arg.is_some();
@@ -573,7 +582,6 @@ impl OxizipApp {
         let lang = prefs.lang_enum();
         let create_format = prefs.default_format_id();
         let create_method = method_label_from_prefs(&prefs);
-        let always_on_top = prefs.always_on_top && !settings_mode;
         let settings_tab = settings_tab_arg
             .as_deref()
             .and_then(SettingsTab::parse_cli)
@@ -583,6 +591,7 @@ impl OxizipApp {
         let prefs_mtime = std::fs::metadata(prefs::prefs_path())
             .and_then(|m| m.modified())
             .ok();
+        let (_, open_window) = window::open(window_settings);
         let mut app = Self {
             lang,
             ui_theme: theme::build(prefs.theme_mode, prefs.color_accent),
@@ -609,13 +618,8 @@ impl OxizipApp {
         } else {
             Task::none()
         };
-        let top_task = if always_on_top {
-            apply_window_level(true)
-        } else {
-            Task::none()
-        };
-        let boot = window::get_oldest().map(Message::WindowId);
-        (app, Task::batch([boot, job_task, open_task, top_task]))
+        let boot = open_window.map(|id| Message::WindowId(Some(id)));
+        (app, Task::batch([boot, job_task, open_task]))
     }
 
     fn take_pending_open_task(&mut self) -> Task<Message> {
@@ -705,11 +709,12 @@ impl OxizipApp {
             return Task::none();
         }
         self.set_settings_status(t(self.lang, "gui.settings.status.assoc_ok"));
-        if self.settings_mode {
-            // Standalone `--settings` process: close after apply.
-            return self.window_id.map(window::close).unwrap_or_else(Task::none);
-        }
-        self.leave_settings()
+        let level = if self.settings_mode {
+            Task::none()
+        } else {
+            apply_window_level_to(self.window_id, self.prefs.always_on_top)
+        };
+        Task::batch([self.leave_settings(), level])
     }
 
     fn open_settings_modal(&mut self, tab: Option<&str>) -> Task<Message> {
@@ -729,64 +734,66 @@ impl OxizipApp {
             self.screen = Screen::Settings;
             return Task::none();
         }
-        // Main window: spawn a sibling `--settings` process and disable this HWND.
-        if self.settings_child.is_some() {
-            return Task::none();
+        if let Some(id) = self.settings_window {
+            return window::gain_focus(id);
         }
         self.menu_popup = MenuPopup::None;
-        let tab_name = tab
+        self.settings_tab = tab
             .and_then(SettingsTab::parse_cli)
-            .map(SettingsTab::cli_name);
-        match shell_ops::spawn_settings_window(tab_name) {
-            Ok(child) => {
-                self.settings_child = Some(child);
-                if let Some(hwnd) = self.main_hwnd {
-                    shell_ops::set_native_window_enabled(hwnd, false);
-                }
-                self.prefs_watch_until =
-                    Some(std::time::Instant::now() + Duration::from_secs(3600));
-            }
-            Err(e) => {
-                self.last_error = Some(format!("{}: {e}", t(self.lang, "gui.setup.failed")));
-            }
+            .unwrap_or(SettingsTab::General);
+        self.settings_draft = self.prefs.clone();
+        self.settings_draft_exts = self.setup_exts.clone();
+        if self.settings_draft_exts.is_empty() {
+            self.settings_draft_exts = setup::default_assoc_selection();
         }
-        Task::none()
+        self.settings_status.clear();
+        self.last_error = None;
+        let settings = window::Settings {
+            size: SETTINGS_WINDOW_SIZE,
+            resizable: false,
+            decorations: false,
+            transparent: true,
+            exit_on_close_request: false,
+            level: if self.prefs.always_on_top {
+                window::Level::AlwaysOnTop
+            } else {
+                window::Level::Normal
+            },
+            position: window::Position::SpecificWith(center_on_monitor),
+            icon: icons::window_icon(),
+            ..Default::default()
+        };
+        let (id, task) = window::open(settings);
+        self.settings_window = Some(id);
+        if let Some(hwnd) = self.main_hwnd {
+            shell_ops::set_native_window_enabled(hwnd, false);
+        }
+        task.map(Message::SettingsWindowOpened)
     }
 
     fn leave_settings(&mut self) -> Task<Message> {
         if self.settings_mode {
             return self.window_id.map(window::close).unwrap_or_else(Task::none);
         }
-        // In-process Settings screen is no longer used from main; keep as safety.
+        if let Some(id) = self.settings_window.take() {
+            if let Some(hwnd) = self.main_hwnd {
+                shell_ops::set_native_window_enabled(hwnd, true);
+            }
+            self.settings_status.clear();
+            return Task::batch([
+                window::close(id),
+                self.window_id
+                    .map(window::gain_focus)
+                    .unwrap_or_else(Task::none),
+            ]);
+        }
         self.screen = Screen::Main;
         self.settings_status.clear();
         Task::none()
     }
 
-    fn finish_settings_child(&mut self) -> Task<Message> {
-        if let Some(mut child) = self.settings_child.take() {
-            let _ = child.try_wait();
-        }
-        if let Some(hwnd) = self.main_hwnd {
-            shell_ops::set_native_window_enabled(hwnd, true);
-        }
-        self.prefs_watch_until = None;
-        self.maybe_reload_prefs_from_disk()
-    }
-
-    fn poll_settings_child(&mut self) -> Task<Message> {
-        let Some(child) = self.settings_child.as_mut() else {
-            return Task::none();
-        };
-        match child.try_wait() {
-            Ok(Some(_)) => self.finish_settings_child(),
-            Ok(None) => Task::none(),
-            Err(_) => self.finish_settings_child(),
-        }
-    }
-
     fn maybe_reload_prefs_from_disk(&mut self) -> Task<Message> {
-        if self.settings_mode || self.settings_child.is_some() {
+        if self.settings_mode || self.settings_window.is_some() {
             return Task::none();
         }
         let path = prefs::prefs_path();
@@ -1293,27 +1300,28 @@ impl OxizipApp {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let need_tick = self.busy.is_some()
-            || self.settings_child.is_some()
-            || self
-                .prefs_watch_until
-                .is_some_and(|until| std::time::Instant::now() < until);
+        let need_tick = self.busy.is_some();
         let tick = if need_tick {
             iced::time::every(Duration::from_millis(100)).map(|_| Message::Tick)
         } else {
             Subscription::none()
         };
-        let esc = if self.prefs.esc_to_exit || self.settings_mode {
-            iced::keyboard::on_key_press(|key, _mods| match key {
-                iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
-                    Some(Message::Close)
-                }
-                _ => None,
-            })
-        } else {
-            Subscription::none()
-        };
-        Subscription::batch([tick, esc])
+        let esc = iced::event::listen_with(|event, status, id| match (event, status) {
+            (
+                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                    ..
+                }),
+                iced::event::Status::Ignored,
+            ) => Some(Message::Escape(id)),
+            _ => None,
+        });
+        Subscription::batch([
+            tick,
+            esc,
+            window::close_requests().map(Message::WindowCloseRequested),
+            window::close_events().map(Message::WindowClosed),
+        ])
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -1330,26 +1338,78 @@ impl OxizipApp {
                 } else {
                     Task::none()
                 };
-                Task::batch([round, close])
+                let top = if self.prefs.always_on_top && !self.settings_mode {
+                    apply_window_level_to(id, true)
+                } else {
+                    Task::none()
+                };
+                Task::batch([round, close, top])
             }
             Message::RawWindowId(raw) => {
                 self.main_hwnd = Some(raw);
                 apply_native_window_rounding(raw);
-                // Settings child may have started before HWND was known.
-                if self.settings_child.is_some() {
+                if self.settings_window.is_some() {
                     shell_ops::set_native_window_enabled(raw, false);
                 }
                 Task::none()
             }
+            Message::SettingsWindowOpened(id) => {
+                if self.settings_window == Some(id) {
+                    window::get_raw_id::<Message>(id).map(Message::SettingsRawWindowId)
+                } else {
+                    window::close(id)
+                }
+            }
+            Message::SettingsRawWindowId(raw) => {
+                apply_native_window_rounding(raw);
+                Task::none()
+            }
+            Message::WindowCloseRequested(id) => {
+                if self.settings_window == Some(id) {
+                    self.leave_settings()
+                } else if self.window_id == Some(id) {
+                    self.update(Message::Close)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::WindowClosed(id) => {
+                if self.window_id == Some(id) {
+                    iced::exit()
+                } else {
+                    Task::none()
+                }
+            }
+            Message::Escape(id) => {
+                if self.settings_window == Some(id) {
+                    self.leave_settings()
+                } else if self.window_id == Some(id)
+                    && self.settings_window.is_none()
+                    && (self.settings_mode || self.prefs.esc_to_exit)
+                {
+                    self.update(Message::Close)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::SettingsTitleDrag => self
+                .settings_window
+                .map(window::drag)
+                .unwrap_or_else(Task::none),
+            Message::SettingsMinimize => self
+                .settings_window
+                .map(|id| window::minimize(id, true))
+                .unwrap_or_else(Task::none),
+            Message::SettingsClose => self.leave_settings(),
             Message::SettingsModalNop => Task::none(),
             Message::TitleDrag => {
-                if self.settings_child.is_some() {
+                if self.settings_window.is_some() {
                     return Task::none();
                 }
                 self.window_id.map(window::drag).unwrap_or_else(Task::none)
             }
             Message::Minimize => {
-                if self.settings_child.is_some() {
+                if self.settings_window.is_some() {
                     return Task::none();
                 }
                 self.window_id
@@ -1357,7 +1417,7 @@ impl OxizipApp {
                     .unwrap_or_else(Task::none)
             }
             Message::Close => {
-                if self.settings_child.is_some() {
+                if self.settings_window.is_some() {
                     // Modal settings open: ignore main close.
                     return Task::none();
                 }
@@ -1713,15 +1773,7 @@ impl OxizipApp {
                     self.progress_file_fraction = snap.file_fraction;
                     self.progress_detail = snap.detail;
                 }
-                let settings_done = self.poll_settings_child();
-                if self
-                    .prefs_watch_until
-                    .is_some_and(|until| std::time::Instant::now() >= until)
-                    && self.settings_child.is_none()
-                {
-                    self.prefs_watch_until = None;
-                }
-                Task::batch([settings_done, self.maybe_reload_prefs_from_disk()])
+                self.maybe_reload_prefs_from_disk()
             }
             Message::JobFinished(outcome) => {
                 self.busy = None;
@@ -3121,7 +3173,28 @@ impl OxizipApp {
         )
     }
 
-    fn view(&self) -> Element<'_, Message> {
+    fn window_title(&self, id: window::Id) -> String {
+        if self.settings_window == Some(id) {
+            format!(
+                "{} - {}",
+                t(self.lang, "gui.settings.title"),
+                t(self.lang, "app.name")
+            )
+        } else {
+            self.title()
+        }
+    }
+
+    fn window_view(&self, id: window::Id) -> Element<'_, Message> {
+        if self.settings_window == Some(id) {
+            return self.framed_window_for(
+                self.view_settings(),
+                self.window_title(id),
+                Message::SettingsTitleDrag,
+                Message::SettingsMinimize,
+                Message::SettingsClose,
+            );
+        }
         let page = match self.screen {
             Screen::Main => self.view_main(),
             Screen::Setup => self.view_setup(),
@@ -3145,8 +3218,7 @@ impl OxizipApp {
                 .height(Length::Fill)
                 .into()
         };
-        // Settings child open: keep main painted, but capture all input.
-        let inner = if self.settings_child.is_some() {
+        let inner = if self.settings_window.is_some() {
             stack![
                 with_overlay,
                 mouse_area(
@@ -3163,17 +3235,33 @@ impl OxizipApp {
         } else {
             with_overlay
         };
-        self.framed_window(inner)
+        let frame = self.framed_window(inner);
+        if self.settings_window.is_some() {
+            frame.map(|_| Message::SettingsModalNop)
+        } else {
+            frame
+        }
     }
 
     fn framed_window<'a>(&'a self, body: Element<'a, Message>) -> Element<'a, Message> {
-        let caption = caption_bar(
+        self.framed_window_for(
+            body,
             self.title(),
-            self.icons.oxizip(),
             Message::TitleDrag,
             Message::Minimize,
             Message::Close,
-        );
+        )
+    }
+
+    fn framed_window_for<'a>(
+        &'a self,
+        body: Element<'a, Message>,
+        title: String,
+        drag: Message,
+        minimize: Message,
+        close: Message,
+    ) -> Element<'a, Message> {
+        let caption = caption_bar(title, self.icons.oxizip(), drag, minimize, close);
         // Clip children to the rounded outer frame so resize (settings ↔ main) does not
         // leave square content corners poking through the transparent window.
         container(
@@ -5248,6 +5336,54 @@ fn apply_window_level(on_top: bool) -> Task<Message> {
         Some(id) => window::change_level(id, level),
         None => Task::none(),
     })
+}
+
+fn apply_window_level_to(id: Option<window::Id>, on_top: bool) -> Task<Message> {
+    let level = if on_top {
+        window::Level::AlwaysOnTop
+    } else {
+        window::Level::Normal
+    };
+    id.map(|id| window::change_level(id, level))
+        .unwrap_or_else(Task::none)
+}
+
+#[cfg(test)]
+mod settings_window_tests {
+    use super::*;
+
+    #[test]
+    fn cancel_discards_draft_and_reopening_uses_current_preferences() {
+        let mut app = OxizipApp::default();
+        let original = app.prefs.show_gridlines;
+        drop(app.open_settings_modal(Some("assoc")));
+        assert_eq!(app.settings_tab, SettingsTab::Assoc);
+        assert!(app.settings_window.is_some());
+        drop(app.handle_settings(SettingsMsg::ShowGrid(!original)));
+        assert_eq!(app.prefs.show_gridlines, original);
+        let id = app.settings_window.unwrap();
+        drop(app.update(Message::Escape(id)));
+        assert!(app.settings_window.is_none());
+        drop(app.open_settings_modal(None));
+        assert_eq!(app.settings_draft.show_gridlines, original);
+    }
+
+    #[test]
+    fn modal_reuses_window_and_ignores_main_close() {
+        let mut app = OxizipApp::default();
+        let main = window::Id::unique();
+        app.window_id = Some(main);
+        drop(app.open_settings_modal(None));
+        let settings = app.settings_window.unwrap();
+        drop(app.open_settings_modal(Some("assoc")));
+        assert_eq!(app.settings_window, Some(settings));
+        assert_eq!(app.settings_tab, SettingsTab::General);
+        drop(app.update(Message::WindowCloseRequested(main)));
+        assert_eq!(app.settings_window, Some(settings));
+        drop(app.update(Message::WindowCloseRequested(settings)));
+        assert!(app.settings_window.is_none());
+        assert_eq!(app.window_id, Some(main));
+    }
 }
 
 fn entry_visible(entry: &EntryMeta, prefix: Option<&str>, filter: &str) -> bool {
