@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-11-24
+
+### Added
+
+- GUI：支持跟随系统、浅色和深色主题，以及多种强调色
+
+### Changed
+
+- 优化主界面、设置页、菜单、进度窗及安装和卸载界面的视觉与交互
+- 设置窗口改为在主进程内打开，避免启动独立进程造成的延迟
+- 更新 Linux 文件关联与文件管理器菜单，遵循 XDG 用户配置路径
+
+### Fixed
+
+- 设置确认无更改时不再重复修改文件关联和右键菜单；系统集成更新移至后台
+- Linux 打包警告及文件关联和菜单选项的兼容问题
+
 ## [0.1.8] - 2026-11-23
 
 ### Fixed
@@ -151,7 +168,8 @@
 - 二进制命名：GUI = `oxizip`，CLI = `oxizip-cli`
 - 应用 ID：`cn.wujunyi.oxizip`
 
-[Unreleased]: https://github.com/wujunyi0907/Oxizip/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/wujunyi0907/Oxizip/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.9
 [0.1.8]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.8
 [0.1.7]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.7
 [0.1.6]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.6
