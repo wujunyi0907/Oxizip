@@ -65,6 +65,7 @@ pub enum SettingsMsg {
     /// Commit draft and close the settings window.
     Ok,
     ExtToggled(&'static str, bool),
+    ApplySelectedAssoc,
     ToggleSelectAllAssoc,
     SelectAllAssocDefaults,
     DoubleClick(DoubleClickAction),

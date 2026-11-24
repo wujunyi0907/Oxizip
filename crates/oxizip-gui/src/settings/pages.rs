@@ -22,6 +22,8 @@ pub struct SettingsView<'a> {
     pub prefs: &'a Prefs,
     pub setup_exts: &'a std::collections::BTreeMap<&'static str, bool>,
     pub status: &'a str,
+    pub error: Option<&'a str>,
+    pub applying: bool,
 }
 
 type El<'a> = Element<'a, SettingsMsg>;
@@ -154,7 +156,7 @@ pub fn view_settings(state: SettingsView<'_>) -> Element<'_, SettingsMsg> {
         },
     );
 
-    let content: El<'_> = match state.tab {
+    let page_content: El<'_> = match state.tab {
         SettingsTab::General => page_general(lang, state.prefs),
         SettingsTab::Assoc => page_assoc(lang, state.setup_exts),
         SettingsTab::Shell => page_shell(lang, &state.prefs.shell),
@@ -162,6 +164,14 @@ pub fn view_settings(state: SettingsView<'_>) -> Element<'_, SettingsMsg> {
         SettingsTab::Archive => page_archive(lang, state.prefs),
         SettingsTab::Viewer => page_viewer(lang, state.prefs),
         SettingsTab::Advanced => page_advanced(lang, state.prefs),
+    };
+
+    let content: El<'_> = if let Some(error) = state.error {
+        column![text(error).size(12), page_content]
+            .spacing(10)
+            .into()
+    } else {
+        page_content
     };
 
     let footer = column![
@@ -172,7 +182,7 @@ pub fn view_settings(state: SettingsView<'_>) -> Element<'_, SettingsMsg> {
             button(text(t(lang, "gui.settings.reset")).size(12))
                 .padding([8, 14])
                 .style(theme::btn_secondary)
-                .on_press(SettingsMsg::Reset),
+                .on_press_maybe((!state.applying).then_some(SettingsMsg::Reset)),
             text(if state.status.is_empty() {
                 " "
             } else {
@@ -185,7 +195,7 @@ pub fn view_settings(state: SettingsView<'_>) -> Element<'_, SettingsMsg> {
             button(text(t(lang, "gui.settings.ok")).size(13))
                 .padding([8, 28])
                 .style(theme::btn_primary)
-                .on_press(SettingsMsg::Ok),
+                .on_press_maybe((!state.applying).then_some(SettingsMsg::Ok)),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -332,6 +342,10 @@ fn page_assoc<'a>(
             small_btn(
                 t(lang, "gui.settings.assoc.all"),
                 SettingsMsg::SelectAllAssocDefaults
+            ),
+            small_btn(
+                t(lang, "gui.settings.assoc.apply_on_ok"),
+                SettingsMsg::ApplySelectedAssoc
             ),
         ]
         .spacing(8)

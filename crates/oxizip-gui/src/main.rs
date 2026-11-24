@@ -414,6 +414,8 @@ struct OxizipApp {
     /// Draft prefs edited in the settings dialog; committed only on OK.
     settings_draft: Prefs,
     settings_draft_exts: BTreeMap<&'static str, bool>,
+    settings_applying: bool,
+    settings_assoc_apply_requested: bool,
     prefs_mtime: Option<std::time::SystemTime>,
     /// Native HWND of the main iced window (for modal disable).
     main_hwnd: Option<u64>,
@@ -474,6 +476,8 @@ impl Default for OxizipApp {
             settings_mode: false,
             settings_draft: Prefs::default(),
             settings_draft_exts: setup::default_assoc_selection(),
+            settings_applying: false,
+            settings_assoc_apply_requested: false,
             prefs_mtime: None,
             main_hwnd: None,
             settings_window: None,
@@ -509,6 +513,7 @@ enum Message {
     FindApply,
     FindClear,
     Settings(SettingsMsg),
+    SettingsApplied(Result<(), String>),
     SettingsBrowseTemp(Option<PathBuf>),
     SettingsBrowseNewArchiveFolder(Option<PathBuf>),
     SettingsExportPath(Option<PathBuf>),
@@ -654,10 +659,6 @@ impl OxizipApp {
         self.take_pending_open_task()
     }
 
-    fn lang_arg(&self) -> &'static str {
-        self.lang.cli_code()
-    }
-
     fn save_prefs(&mut self) {
         self.prefs.save();
         self.prefs.write_shell_menu_sidecar();
@@ -677,44 +678,33 @@ impl OxizipApp {
     }
 
     fn commit_settings_ok(&mut self) -> Task<Message> {
-        self.prefs = self.settings_draft.clone();
-        self.ui_theme = theme::build(self.prefs.theme_mode, self.prefs.color_accent);
-        self.setup_exts = self.settings_draft_exts.clone();
-        self.lang = self.prefs.lang_enum();
-        self.create_format = self.prefs.default_format_id();
-        self.create_method = method_label_from_prefs(&self.prefs);
-        self.save_prefs();
-        self.prefs_mtime = std::fs::metadata(prefs::prefs_path())
-            .and_then(|m| m.modified())
-            .ok();
-
-        let lang_arg = self.lang_arg();
-        let selected = setup::selected_exts(&self.setup_exts);
-        if !selected.is_empty() {
-            match setup::install_associations(lang_arg, &selected) {
-                Ok(_) => {
-                    setup::mark_setup_done();
-                    self.last_error = None;
-                }
-                Err(e) => {
-                    self.last_error = Some(format!("{}: {e}", t(self.lang, "gui.setup.failed")));
-                    self.set_settings_status(t(self.lang, "gui.setup.failed"));
-                    return Task::none();
-                }
-            }
-        }
-        if let Err(e) = setup::install_menus_only(lang_arg) {
-            self.last_error = Some(format!("{}: {e}", t(self.lang, "gui.setup.failed")));
-            self.set_settings_status(t(self.lang, "gui.setup.failed"));
+        if self.settings_assoc_apply_requested
+            && setup::selected_exts(&self.settings_draft_exts).is_empty()
+        {
+            self.last_error = Some(t(self.lang, "gui.setup.none").to_string());
             return Task::none();
         }
-        self.set_settings_status(t(self.lang, "gui.settings.status.assoc_ok"));
-        let level = if self.settings_mode {
-            Task::none()
-        } else {
-            apply_window_level_to(self.window_id, self.prefs.always_on_top)
-        };
-        Task::batch([self.leave_settings(), level])
+        let changes = SettingsChanges::between(
+            &self.prefs,
+            &self.settings_draft,
+            &self.setup_exts,
+            &self.settings_draft_exts,
+            self.settings_assoc_apply_requested,
+        );
+        if !changes.prefs && !changes.associations && !changes.menus {
+            self.setup_exts = self.settings_draft_exts.clone();
+            return self.leave_settings();
+        }
+
+        self.settings_applying = true;
+        self.last_error = None;
+        self.set_settings_status(t(self.lang, "gui.settings.status.applying"));
+        let prefs = self.settings_draft.clone();
+        let exts = setup::selected_exts(&self.settings_draft_exts);
+        Task::perform(
+            apply_settings(prefs, exts, changes),
+            Message::SettingsApplied,
+        )
     }
 
     fn open_settings_modal(&mut self, tab: Option<&str>) -> Task<Message> {
@@ -730,6 +720,7 @@ impl OxizipApp {
             }
             self.settings_status.clear();
             self.last_error = None;
+            self.settings_assoc_apply_requested = false;
             self.menu_popup = MenuPopup::None;
             self.screen = Screen::Settings;
             return Task::none();
@@ -748,6 +739,7 @@ impl OxizipApp {
         }
         self.settings_status.clear();
         self.last_error = None;
+        self.settings_assoc_apply_requested = false;
         let settings = window::Settings {
             size: SETTINGS_WINDOW_SIZE,
             resizable: false,
@@ -772,6 +764,9 @@ impl OxizipApp {
     }
 
     fn leave_settings(&mut self) -> Task<Message> {
+        if self.settings_applying {
+            return Task::none();
+        }
         if self.settings_mode {
             return self.window_id.map(window::close).unwrap_or_else(Task::none);
         }
@@ -818,6 +813,9 @@ impl OxizipApp {
     }
 
     fn handle_settings(&mut self, msg: SettingsMsg) -> Task<Message> {
+        if self.settings_applying {
+            return Task::none();
+        }
         let draft = &mut self.settings_draft;
         match msg {
             SettingsMsg::Tab(tab) => {
@@ -834,11 +832,22 @@ impl OxizipApp {
                 draft.recent = recent;
                 draft.set_lang(lang);
                 self.settings_draft_exts = setup::default_assoc_selection();
+                self.settings_assoc_apply_requested = false;
                 self.set_settings_status(t(self.lang, "gui.settings.status.reset"));
                 Task::none()
             }
             SettingsMsg::ExtToggled(ext, on) => {
                 self.settings_draft_exts.insert(ext, on);
+                Task::none()
+            }
+            SettingsMsg::ApplySelectedAssoc => {
+                if setup::selected_exts(&self.settings_draft_exts).is_empty() {
+                    self.last_error = Some(t(self.lang, "gui.setup.none").to_string());
+                } else {
+                    self.settings_assoc_apply_requested = true;
+                    self.last_error = None;
+                    self.set_settings_status(t(self.lang, "gui.settings.status.assoc_pending"));
+                }
                 Task::none()
             }
             SettingsMsg::ToggleSelectAllAssoc => {
@@ -854,6 +863,9 @@ impl OxizipApp {
                 for v in self.settings_draft_exts.values_mut() {
                     *v = true;
                 }
+                self.settings_assoc_apply_requested = true;
+                self.last_error = None;
+                self.set_settings_status(t(self.lang, "gui.settings.status.assoc_pending"));
                 Task::none()
             }
             SettingsMsg::DoubleClick(action) => {
@@ -1325,6 +1337,17 @@ impl OxizipApp {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        if self.settings_applying
+            && matches!(
+                &message,
+                Message::SettingsBrowseTemp(_)
+                    | Message::SettingsBrowseNewArchiveFolder(_)
+                    | Message::SettingsExportPath(_)
+                    | Message::SettingsImportPath(_)
+            )
+        {
+            return Task::none();
+        }
         match message {
             Message::WindowId(id) => {
                 self.window_id = id;
@@ -1417,6 +1440,9 @@ impl OxizipApp {
                     .unwrap_or_else(Task::none)
             }
             Message::Close => {
+                if self.settings_applying {
+                    return Task::none();
+                }
                 if self.settings_window.is_some() {
                     // Modal settings open: ignore main close.
                     return Task::none();
@@ -1580,6 +1606,38 @@ impl OxizipApp {
                 Task::none()
             }
             Message::Settings(msg) => self.handle_settings(msg),
+            Message::SettingsApplied(result) => {
+                self.settings_applying = false;
+                if let Err(error) = result {
+                    self.last_error = Some(format!(
+                        "{}: {error}",
+                        t(self.lang, "gui.settings.status.apply_warning")
+                    ));
+                    self.set_settings_status(t(self.lang, "gui.settings.status.apply_failed"));
+                    return Task::none();
+                }
+                let theme_changed = self.prefs.theme_mode != self.settings_draft.theme_mode
+                    || self.prefs.color_accent != self.settings_draft.color_accent;
+                let level_changed = self.prefs.always_on_top != self.settings_draft.always_on_top;
+                self.prefs = self.settings_draft.clone();
+                self.setup_exts = self.settings_draft_exts.clone();
+                self.lang = self.prefs.lang_enum();
+                self.create_format = self.prefs.default_format_id();
+                self.create_method = method_label_from_prefs(&self.prefs);
+                if theme_changed {
+                    self.ui_theme = theme::build(self.prefs.theme_mode, self.prefs.color_accent);
+                }
+                self.prefs_mtime = std::fs::metadata(prefs::prefs_path())
+                    .and_then(|m| m.modified())
+                    .ok();
+                self.last_error = None;
+                let level = if level_changed && !self.settings_mode {
+                    apply_window_level_to(self.window_id, self.prefs.always_on_top)
+                } else {
+                    Task::none()
+                };
+                Task::batch([self.leave_settings(), level])
+            }
             Message::SettingsBrowseTemp(path) => {
                 if let Some(path) = path {
                     self.settings_draft.temp_folder = path.to_string_lossy().into_owned();
@@ -4689,6 +4747,8 @@ impl OxizipApp {
             prefs: &self.settings_draft,
             setup_exts: &self.settings_draft_exts,
             status: &self.settings_status,
+            error: self.last_error.as_deref(),
+            applying: self.settings_applying,
         })
         .map(Message::Settings)
     }
@@ -5306,6 +5366,60 @@ async fn copy_file(from: PathBuf, to: PathBuf) -> Result<PathBuf, String> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SettingsChanges {
+    prefs: bool,
+    associations: bool,
+    menus: bool,
+}
+
+impl SettingsChanges {
+    fn between(
+        current: &Prefs,
+        draft: &Prefs,
+        current_exts: &BTreeMap<&'static str, bool>,
+        draft_exts: &BTreeMap<&'static str, bool>,
+        apply_associations: bool,
+    ) -> Self {
+        Self {
+            prefs: current != draft,
+            associations: (current_exts != draft_exts || apply_associations)
+                && draft_exts.values().any(|selected| *selected),
+            menus: current.shell != draft.shell || current.lang != draft.lang,
+        }
+    }
+}
+
+async fn apply_settings(
+    prefs: Prefs,
+    exts: Vec<&'static str>,
+    changes: SettingsChanges,
+) -> Result<(), String> {
+    let (tx, rx) = iced::futures::channel::oneshot::channel();
+    std::thread::spawn(move || {
+        let result = (|| {
+            if changes.associations || changes.menus {
+                prefs.write_shell_menu_sidecar_checked()?;
+            }
+            let lang = prefs.lang_enum().cli_code();
+            if changes.associations {
+                setup::install_associations(lang, &exts)?;
+                setup::mark_setup_done();
+            }
+            // Association installation also rebuilds menus for only the selected types.
+            if changes.associations || changes.menus {
+                setup::install_menus_only(lang)?;
+            }
+            if changes.prefs {
+                prefs.save_checked()?;
+            }
+            Ok(())
+        })();
+        let _ = tx.send(result);
+    });
+    rx.await.map_err(|e| e.to_string())?
+}
+
 fn method_label_from_prefs(prefs: &Prefs) -> MethodLabel {
     match prefs.default_method_id() {
         Some(method) => MethodLabel::Method(method),
@@ -5415,6 +5529,82 @@ fn dim_style(theme: &Theme, _status: button::Status) -> button::Style {
 #[cfg(test)]
 mod settings_window_tests {
     use super::*;
+
+    #[test]
+    fn settings_change_plan_only_updates_affected_system_features() {
+        let current = Prefs::default();
+        let exts = setup::default_assoc_selection();
+        let mut draft = current.clone();
+        let mut selected = exts.clone();
+        let unchanged = SettingsChanges::between(&current, &draft, &exts, &selected, false);
+        assert_eq!(
+            unchanged,
+            SettingsChanges {
+                prefs: false,
+                associations: false,
+                menus: false,
+            }
+        );
+
+        draft.show_gridlines = !draft.show_gridlines;
+        let ordinary = SettingsChanges::between(&current, &draft, &exts, &selected, false);
+        assert!(ordinary.prefs && !ordinary.associations && !ordinary.menus);
+
+        draft.shell.test = !draft.shell.test;
+        let shell = SettingsChanges::between(&current, &draft, &exts, &selected, false);
+        assert!(shell.prefs && shell.menus && !shell.associations);
+
+        let ext = *selected.keys().next().unwrap();
+        selected.insert(ext, !selected[ext]);
+        let association = SettingsChanges::between(&current, &current, &exts, &selected, false);
+        assert!(association.associations && !association.prefs && !association.menus);
+
+        let explicit = SettingsChanges::between(&current, &current, &exts, &exts, true);
+        assert!(explicit.associations);
+
+        for value in selected.values_mut() {
+            *value = false;
+        }
+        let none_selected = SettingsChanges::between(&current, &current, &exts, &selected, true);
+        assert!(!none_selected.associations);
+    }
+
+    #[test]
+    fn unchanged_settings_close_without_starting_work() {
+        let mut app = OxizipApp::default();
+        drop(app.open_settings_modal(None));
+        drop(app.handle_settings(SettingsMsg::Ok));
+        assert!(!app.settings_applying);
+        assert!(app.settings_window.is_none());
+    }
+
+    #[test]
+    fn explicitly_applying_unchanged_selection_starts_work() {
+        let mut app = OxizipApp::default();
+        drop(app.open_settings_modal(Some("assoc")));
+        drop(app.handle_settings(SettingsMsg::ApplySelectedAssoc));
+        drop(app.handle_settings(SettingsMsg::Ok));
+        assert!(app.settings_applying);
+        assert!(app.settings_window.is_some());
+    }
+
+    #[test]
+    fn applying_settings_blocks_edits_and_close() {
+        let mut app = OxizipApp::default();
+        drop(app.open_settings_modal(None));
+        let original = app.settings_draft.show_gridlines;
+        app.settings_applying = true;
+        drop(app.handle_settings(SettingsMsg::ShowGrid(!original)));
+        drop(app.handle_settings(SettingsMsg::Ok));
+        drop(app.leave_settings());
+        assert_eq!(app.settings_draft.show_gridlines, original);
+        assert!(app.settings_window.is_some());
+
+        drop(app.update(Message::SettingsApplied(Err("example".into()))));
+        assert!(!app.settings_applying);
+        assert!(app.last_error.as_deref().unwrap().contains("example"));
+        assert!(app.settings_window.is_some());
+    }
 
     #[test]
     fn cancel_discards_draft_and_reopening_uses_current_preferences() {

@@ -55,7 +55,7 @@ pub enum DoubleClickAction {
     ExtractToFolder,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolbarButtons {
     pub close: bool,
     pub open: bool,
@@ -82,7 +82,7 @@ impl Default for ToolbarButtons {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColumnVisibility {
     pub size: bool,
     pub compressed: bool,
@@ -105,7 +105,7 @@ impl Default for ColumnVisibility {
 }
 
 /// Explorer context-menu toggles (applied via `oxizip-cli shell install`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShellMenuPrefs {
     #[serde(default)]
     pub double_click: DoubleClickAction,
@@ -197,7 +197,7 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Prefs {
     pub lang: String,
     pub recent: Vec<String>,
@@ -355,9 +355,14 @@ impl Prefs {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
+
         if let Ok(bytes) = serde_json::to_vec_pretty(self) {
             let _ = fs::write(path, bytes);
         }
+    }
+
+    pub fn save_checked(&self) -> Result<(), String> {
+        self.export_to(&prefs_path())
     }
 
     pub fn export_to(&self, path: &Path) -> Result<(), String> {
@@ -379,9 +384,19 @@ impl Prefs {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
+
         if let Ok(bytes) = serde_json::to_vec_pretty(&self.shell) {
             let _ = fs::write(path, bytes);
         }
+    }
+
+    pub fn write_shell_menu_sidecar_checked(&self) -> Result<(), String> {
+        let path = shell_menu_path();
+        let bytes = serde_json::to_vec_pretty(&self.shell).map_err(|e| e.to_string())?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::write(path, bytes).map_err(|e| e.to_string())
     }
 
     pub fn lang_enum(&self) -> Lang {
