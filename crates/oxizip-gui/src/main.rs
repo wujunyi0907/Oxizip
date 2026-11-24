@@ -11,6 +11,7 @@ mod prefs;
 mod settings;
 mod setup;
 mod shell_ops;
+mod theme;
 mod worker;
 
 use std::collections::BTreeSet;
@@ -18,14 +19,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use iced::gradient::Linear;
 use iced::widget::{
     button, checkbox, column, container, image, mouse_area, pick_list, progress_bar, row,
     scrollable, stack, text, text_input, Column, Space,
 };
 use iced::{
-    window, Alignment, Background, Border, Color, Element, Gradient, Length, Point, Radians, Size,
-    Subscription, Task, Theme,
+    window, Alignment, Background, Border, Color, Element, Length, Point, Size, Subscription, Task,
+    Theme,
 };
 use icons::IconSet;
 use licenses::{catalog, ComponentKind};
@@ -132,8 +132,6 @@ impl std::fmt::Display for LicenseFilter {
 const APP_WINDOW_SIZE: Size = Size::new(775.0, 480.0);
 /// Dedicated settings dialog (separate process / window).
 const SETTINGS_WINDOW_SIZE: Size = Size::new(700.0, 460.0);
-const WINDOW_RADIUS: f32 = 12.0;
-const CONTROL_RADIUS: f32 = 8.0;
 
 fn center_on_monitor(size: Size, monitor: Size) -> Point {
     Point::new(
@@ -167,6 +165,7 @@ fn main() -> iced::Result {
     iced::application(OxizipApp::title, OxizipApp::update, OxizipApp::view)
         .subscription(OxizipApp::subscription)
         .default_font(ui_font())
+        .theme(OxizipApp::theme)
         .window(window)
         .run_with(OxizipApp::new)
 }
@@ -212,19 +211,15 @@ fn apply_native_window_rounding(raw_id: u64) {
 fn apply_native_window_rounding(_raw_id: u64) {}
 
 fn frame_border(theme: &Theme) -> iced::widget::container::Style {
-    let palette = theme.extended_palette();
-    iced::widget::container::Style {
-        background: Some(Background::Color(palette.background.base.color)),
-        border: Border {
-            color: palette.background.strong.color,
-            width: 1.0,
-            radius: WINDOW_RADIUS.into(),
-        },
-        ..Default::default()
-    }
+    theme::frame(theme)
 }
 
-fn caption_bar<'a>(title: String, on_drag: Message, on_minimize: Message, on_close: Message) -> Element<'a, Message> {
+fn caption_bar<'a>(
+    title: String,
+    on_drag: Message,
+    on_minimize: Message,
+    on_close: Message,
+) -> Element<'a, Message> {
     let drag_zone = mouse_area(
         row![text(title).size(12), Space::with_width(Length::Fill),]
             .align_y(Alignment::Center)
@@ -264,23 +259,7 @@ fn caption_bar<'a>(title: String, on_drag: Message, on_minimize: Message, on_clo
         .height(32),
     )
     .width(Length::Fill)
-    .style(|theme: &Theme| {
-        let palette = theme.extended_palette();
-        iced::widget::container::Style {
-            background: Some(Background::Color(palette.background.weak.color)),
-            border: Border {
-                color: palette.background.strong.color,
-                width: 0.0,
-                radius: iced::border::Radius {
-                    top_left: WINDOW_RADIUS,
-                    top_right: WINDOW_RADIUS,
-                    bottom_right: 0.0,
-                    bottom_left: 0.0,
-                },
-            },
-            ..Default::default()
-        }
-    })
+    .style(theme::caption_bar)
     .into()
 }
 
@@ -390,6 +369,7 @@ struct OxizipApp {
     pending_open: Option<PathBuf>,
     menu_popup: MenuPopup,
     prefs: Prefs,
+    ui_theme: Theme,
     selected: BTreeSet<usize>,
     find_filter: String,
     archive_comment: String,
@@ -454,6 +434,7 @@ impl Default for OxizipApp {
             pending_open: None,
             menu_popup: MenuPopup::None,
             prefs: Prefs::default(),
+            ui_theme: theme::build(prefs::ThemeMode::Light, ColorAccent::default()),
             selected: BTreeSet::new(),
             find_filter: String::new(),
             archive_comment: String::new(),
@@ -584,6 +565,7 @@ impl OxizipApp {
             .ok();
         let mut app = Self {
             lang,
+            ui_theme: theme::build(prefs.theme_mode, prefs.color_accent),
             prefs,
             status: t(lang, "gui.placeholder").to_string(),
             create_format,
@@ -672,6 +654,7 @@ impl OxizipApp {
 
     fn commit_settings_ok(&mut self) -> Task<Message> {
         self.prefs = self.settings_draft.clone();
+        self.ui_theme = theme::build(self.prefs.theme_mode, self.prefs.color_accent);
         self.setup_exts = self.settings_draft_exts.clone();
         self.lang = self.prefs.lang_enum();
         self.create_format = self.prefs.default_format_id();
@@ -704,10 +687,7 @@ impl OxizipApp {
         self.set_settings_status(t(self.lang, "gui.settings.status.assoc_ok"));
         if self.settings_mode {
             // Standalone `--settings` process: close after apply.
-            return self
-                .window_id
-                .map(window::close)
-                .unwrap_or_else(Task::none);
+            return self.window_id.map(window::close).unwrap_or_else(Task::none);
         }
         self.leave_settings()
     }
@@ -755,10 +735,7 @@ impl OxizipApp {
 
     fn leave_settings(&mut self) -> Task<Message> {
         if self.settings_mode {
-            return self
-                .window_id
-                .map(window::close)
-                .unwrap_or_else(Task::none);
+            return self.window_id.map(window::close).unwrap_or_else(Task::none);
         }
         // In-process Settings screen is no longer used from main; keep as safety.
         self.screen = Screen::Main;
@@ -807,6 +784,7 @@ impl OxizipApp {
         self.lang = loaded.lang_enum();
         self.create_format = loaded.default_format_id();
         self.create_method = method_label_from_prefs(&loaded);
+        self.ui_theme = theme::build(loaded.theme_mode, loaded.color_accent);
         self.prefs = loaded;
         self.prefs_mtime = Some(modified);
         apply_window_level(on_top)
@@ -1165,9 +1143,17 @@ impl OxizipApp {
         }
     }
 
+    fn theme(&self) -> Theme {
+        self.ui_theme.clone()
+    }
+
     fn title(&self) -> String {
         if self.settings_mode || self.screen == Screen::Settings {
-            return format!("{} - {}", t(self.lang, "gui.settings.title"), t(self.lang, "app.name"));
+            return format!(
+                "{} - {}",
+                t(self.lang, "gui.settings.title"),
+                t(self.lang, "app.name")
+            );
         }
         if self.screen == Screen::Job {
             let pct = (self.progress_fraction * 100.0).round() as i32;
@@ -1360,9 +1346,7 @@ impl OxizipApp {
                         busy.cancel.cancel();
                     }
                 }
-                self.window_id
-                    .map(window::close)
-                    .unwrap_or_else(Task::none)
+                self.window_id.map(window::close).unwrap_or_else(Task::none)
             }
             Message::JobCloseWhenDone(on) => {
                 self.job_close_when_done = on;
@@ -1524,8 +1508,7 @@ impl OxizipApp {
             }
             Message::SettingsBrowseNewArchiveFolder(path) => {
                 if let Some(path) = path {
-                    self.settings_draft.new_archive_folder =
-                        path.to_string_lossy().into_owned();
+                    self.settings_draft.new_archive_folder = path.to_string_lossy().into_owned();
                     self.settings_draft.new_archive_use_last = false;
                 }
                 Task::none()
@@ -1573,6 +1556,7 @@ impl OxizipApp {
             }
             Message::ColorPicked(accent) => {
                 self.prefs.color_accent = accent;
+                self.ui_theme = theme::build(self.prefs.theme_mode, accent);
                 self.prefs.save();
                 self.overlay = Overlay::None;
                 Task::none()
@@ -1731,11 +1715,11 @@ impl OxizipApp {
                 if self.screen == Screen::Job {
                     self.apply_shell_job_outcome(outcome)
                 } else {
-                self.progress_fraction = 0.0;
+                    self.progress_fraction = 0.0;
                     self.progress_file_fraction = 0.0;
-                self.progress_detail.clear();
-                self.apply_outcome(outcome)
-            }
+                    self.progress_detail.clear();
+                    self.apply_outcome(outcome)
+                }
             }
             Message::HideLicenses => {
                 self.screen = Screen::Main;
@@ -1794,9 +1778,7 @@ impl OxizipApp {
             cancel,
             progress,
             move |cancel, progress| {
-                worker::extract_archive(
-                    archive, dir, password, None, prefs, cancel, progress, lang,
-                )
+                worker::extract_archive(archive, dir, password, None, prefs, cancel, progress, lang)
             },
         )
     }
@@ -1809,11 +1791,7 @@ impl OxizipApp {
             self.last_error = Some(t(self.lang, "gui.err.need_archive").into());
             return Task::none();
         };
-        let dest = job::dest_smart(
-            &archive,
-            &self.entries,
-            self.prefs.smart_single_file_folder,
-        );
+        let dest = job::dest_smart(&archive, &self.entries, self.prefs.smart_single_file_folder);
         self.start_extract(self.maybe_long_path(dest))
     }
 
@@ -2116,7 +2094,7 @@ impl OxizipApp {
             cancel,
             progress,
             move |cancel, progress| {
-            worker::create_archive(out, format, inputs, opts, cancel, progress, lang)
+                worker::create_archive(out, format, inputs, opts, cancel, progress, lang)
             },
         )
     }
@@ -2269,9 +2247,9 @@ impl OxizipApp {
                             worker::test_archive_job(path, password, cancel, progress, lang)
                         })
                     } else {
-                    self.start_list(path)
+                        self.start_list(path)
+                    }
                 }
-            }
             }
             JobOutcome::Opened { name, temp, error } => {
                 if let Some(err) = error {
@@ -2306,7 +2284,7 @@ impl OxizipApp {
                     if let Some(open_path) = self.pending_open.take() {
                         self.start_list(open_path)
                     } else {
-                    Task::none()
+                        Task::none()
                     }
                 }
             }
@@ -2322,8 +2300,8 @@ impl OxizipApp {
                         self.pending_open = Some(path.clone());
                         self.start_test()
                     } else {
-                    self.start_list(path)
-                }
+                        self.start_list(path)
+                    }
                 }
             }
             JobOutcome::Renamed { path, error } => {
@@ -2513,6 +2491,7 @@ impl OxizipApp {
             MenuAction::OpenFileRecent
                 | MenuAction::OpenFileExtract
                 | MenuAction::OpenSettingsLang
+                | MenuAction::OpenSettingsTheme
                 | MenuAction::OpenViewToolbar
                 | MenuAction::OpenViewList
                 | MenuAction::OpenViewColumn
@@ -2782,6 +2761,20 @@ impl OxizipApp {
                 } else {
                     MenuPopup::SettingsLang
                 };
+                Task::none()
+            }
+            MenuAction::OpenSettingsTheme => {
+                self.menu_popup = if self.menu_popup == MenuPopup::SettingsTheme {
+                    MenuPopup::Settings
+                } else {
+                    MenuPopup::SettingsTheme
+                };
+                Task::none()
+            }
+            MenuAction::SetThemeMode(mode) => {
+                self.prefs.theme_mode = mode;
+                self.prefs.save();
+                self.ui_theme = theme::build(self.prefs.theme_mode, self.prefs.color_accent);
                 Task::none()
             }
             MenuAction::OpenFileRecent => {
@@ -3140,15 +3133,7 @@ impl OxizipApp {
                     container(Space::new(Length::Fill, Length::Fill))
                         .width(Length::Fill)
                         .height(Length::Fill)
-                        .style(|theme: &Theme| {
-                            let mut s = iced::widget::container::Style::default();
-                            let base = theme.extended_palette().background.base.color;
-                            s.background = Some(Background::Color(Color {
-                                a: 0.35,
-                                ..base
-                            }));
-                            s
-                        })
+                        .style(theme::scrim)
                 )
                 .on_press(Message::SettingsModalNop)
             ]
@@ -3187,8 +3172,6 @@ impl OxizipApp {
     }
 
     fn view_setup(&self) -> Element<'_, Message> {
-        const CONTROL_RADIUS: f32 = 8.0;
-
         let mut groups = Column::new().spacing(12).width(Length::Fill);
         for (group, exts) in setup::assoc_catalog() {
             let mut chips = Column::new().spacing(4).width(Length::Fill);
@@ -3225,18 +3208,7 @@ impl OxizipApp {
         )
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(|theme: &iced::Theme| {
-            let palette = theme.extended_palette();
-            iced::widget::container::Style {
-                background: Some(iced::Background::Color(palette.background.weak.color)),
-                border: iced::Border {
-                    color: palette.background.strong.color,
-                    width: 1.0,
-                    radius: CONTROL_RADIUS.into(),
-                },
-                ..Default::default()
-            }
-        });
+        .style(theme::panel);
 
         let err = self
             .last_error
@@ -3390,7 +3362,7 @@ impl OxizipApp {
                 .as_ref()
                 .map(|p| p.display().to_string())
                 .unwrap_or_default()
-            } else {
+        } else {
             // Show basename for long paths.
             Path::new(&self.progress_detail)
                 .file_name()
@@ -3422,18 +3394,18 @@ impl OxizipApp {
 
         let err: Element<'_, Message> = if let Some(err) = &self.last_error {
             text(err.clone()).size(11).into()
-            } else {
+        } else {
             Space::with_height(0).into()
         };
 
         let stop_label = if self.job_finished {
             t(self.lang, "gui.job.close")
-            } else {
+        } else {
             t(self.lang, "gui.job.stop")
         };
         let stop_msg = if self.is_busy() {
             Message::CancelClicked
-            } else {
+        } else {
             Message::Close
         };
 
@@ -3537,28 +3509,13 @@ impl OxizipApp {
 
     fn view_conflict_modal(&self) -> Element<'_, Message> {
         container(
-            container(self.conflict_prompt_column().padding(16).width(420))
-                .style(|theme: &Theme| {
-                    let palette = theme.extended_palette();
-                    iced::widget::container::Style {
-                        background: Some(Background::Color(palette.background.weak.color)),
-                        border: Border {
-                            color: palette.background.strong.color,
-                            width: 1.0,
-                            radius: CONTROL_RADIUS.into(),
-                        },
-                        ..Default::default()
-                    }
-                }),
+            container(self.conflict_prompt_column().padding(16).width(420)).style(theme::elevated),
         )
         .width(Length::Fill)
         .height(Length::Fill)
         .center_x(Length::Fill)
         .center_y(Length::Fill)
-        .style(|_theme| iced::widget::container::Style {
-            background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.35))),
-            ..Default::default()
-        })
+        .style(theme::scrim)
         .into()
     }
 
@@ -3626,27 +3583,15 @@ impl OxizipApp {
         let err = self
             .last_error
             .as_ref()
-            .map(|e| {
-                text(e.clone())
-                    .size(12)
-                    .style(|_| iced::widget::text::Style {
-                        color: Some(Color::from_rgb8(0xFF, 0xE0, 0xE0)),
-                    })
-            })
-            .unwrap_or_else(|| {
-                text("").size(12).style(|_| iced::widget::text::Style {
-                    color: Some(Color::WHITE),
-                })
-            });
+            .map(|e| text(e.clone()).size(12).style(theme::text_danger))
+            .unwrap_or_else(|| text("").size(12));
 
         let progress_area: Element<'_, Message> = if busy {
             column![
                 progress_bar(0.0..=1.0, self.progress_fraction).height(8),
                 text(self.progress_detail.clone())
                     .size(11)
-                    .style(|_| iced::widget::text::Style {
-                        color: Some(Color::WHITE),
-                    }),
+                    .style(theme::text_secondary),
                 button(t(self.lang, "gui.cancel"))
                     .style(rounded_secondary)
                     .on_press(Message::CancelClicked),
@@ -3674,7 +3619,7 @@ impl OxizipApp {
         container(stage)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(home_stage_style(self.prefs.color_accent))
+            .style(theme::home_stage)
             .into()
     }
 
@@ -3722,7 +3667,7 @@ impl OxizipApp {
                 progress_bar(0.0..=1.0, self.progress_fraction).height(8),
                 text(self.progress_detail.clone()).size(11),
             ]
-        .spacing(4)
+            .spacing(4)
             .into()
         } else {
             Space::with_height(0).into()
@@ -3918,7 +3863,7 @@ impl OxizipApp {
     }
 
     fn view_details(&self, busy: bool, indices: &[usize]) -> Element<'_, Message> {
-        let accent = accent_color(self.prefs.color_accent);
+        let accent = theme::tokens(&self.ui_theme).accent;
         let mut header = row![
             checkbox(
                 "",
@@ -3993,16 +3938,16 @@ impl OxizipApp {
 
     fn detail_row(&self, index: usize, entry: &EntryMeta, busy: bool) -> Element<'_, Message> {
         let selected = self.selected.contains(&index);
-            let name = if entry.is_dir {
-                format!("[DIR] {}", entry.name)
-            } else {
-                entry.name.clone()
-            };
+        let name = if entry.is_dir {
+            format!("[DIR] {}", entry.name)
+        } else {
+            entry.name.clone()
+        };
         let icon = if entry.is_dir {
-                self.icons.oxizip()
-            } else {
-                self.icons.for_path_name(&entry.name)
-            };
+            self.icons.oxizip()
+        } else {
+            self.icons.for_path_name(&entry.name)
+        };
         let name_msg = if entry.is_dir {
             let prefix = if entry.name.ends_with('/') {
                 entry.name.clone()
@@ -4066,19 +4011,19 @@ impl OxizipApp {
             };
             line = line.push(text(kind).size(12).width(Length::Fixed(56.0)));
         }
-            let open_btn = {
+        let open_btn = {
             let b = button(text(t(self.lang, "gui.open_entry")).size(12)).style(rounded_text_btn);
-                if busy || entry.is_dir {
-                    b
-                } else {
+            if busy || entry.is_dir {
+                b
+            } else {
                 b.on_press(Message::OpenEntry(index))
-                }
-            };
-            let del_btn = {
+            }
+        };
+        let del_btn = {
             let b = button(text(t(self.lang, "gui.delete_entry")).size(12)).style(rounded_text_btn);
-                if busy {
-                    b
-                } else {
+            if busy {
+                b
+            } else {
                 b.on_press(Message::DeleteEntry(index))
             }
         };
@@ -4095,11 +4040,11 @@ impl OxizipApp {
         container(row_body)
             .padding([2, 4])
             .width(Length::Fill)
-            .style(move |_theme| {
-                let mut style = row_style(selected);
+            .style(move |theme: &Theme| {
+                let mut style = row_style(theme, selected);
                 if show_grid {
                     style.border = Border {
-                        color: Color::from_rgb(0.82, 0.84, 0.88),
+                        color: theme::tokens(theme).border,
                         width: 1.0,
                         radius: 0.0.into(),
                     };
@@ -4142,7 +4087,7 @@ impl OxizipApp {
                 container(line)
                     .padding([2, 4])
                     .width(Length::Fill)
-                    .style(move |_theme| row_style(selected)),
+                    .style(move |theme: &Theme| row_style(theme, selected)),
             );
         }
         col.into()
@@ -4185,7 +4130,7 @@ impl OxizipApp {
                         let mut style = rounded_text_btn(theme, status);
                         if selected {
                             style.background =
-                                Some(Background::Color(Color::from_rgba(0.37, 0.49, 0.89, 0.18)));
+                                Some(Background::Color(theme::tokens(theme).accent_soft));
                         }
                         style
                     }),
@@ -4219,7 +4164,7 @@ impl OxizipApp {
             Overlay::None => return Space::with_height(0).into(),
             Overlay::About => self.overlay_card(
                 t(self.lang, "gui.about.title"),
-            column![
+                column![
                     text(format!("Oxizip {}", env!("CARGO_PKG_VERSION"))).size(14),
                     text(t(self.lang, "gui.about.body")).size(12),
                     button(text(t(self.lang, "gui.dialog.close")).size(12))
@@ -4294,7 +4239,7 @@ impl OxizipApp {
                     row![
                         text(if self.recover_wordlist.is_empty() {
                             "—".to_string()
-        } else {
+                        } else {
                             self.recover_wordlist.clone()
                         })
                         .size(11)
@@ -4440,7 +4385,7 @@ impl OxizipApp {
                         text(hint).size(12),
                         row![
                             button(text(t(self.lang, "gui.dialog.ok")).size(12))
-                                .style(button::danger)
+                                .style(theme::btn_danger)
                                 .on_press(Message::ConfirmDeleteArchive),
                             button(text(t(self.lang, "gui.dialog.cancel")).size(12))
                                 .style(rounded_secondary)
@@ -4482,7 +4427,7 @@ impl OxizipApp {
     ) -> Element<'a, Message> {
         container(
             column![text(title).size(16), body.into()]
-        .spacing(8)
+                .spacing(8)
                 .padding(12)
                 .width(Length::Fixed(360.0)),
         )
@@ -4530,155 +4475,39 @@ impl OxizipApp {
 }
 
 fn rounded_primary(theme: &Theme, status: button::Status) -> button::Style {
-    let mut style = button::primary(theme, status);
-    style.border.radius = CONTROL_RADIUS.into();
-    style
+    theme::btn_primary(theme, status)
 }
 
 fn rounded_secondary(theme: &Theme, status: button::Status) -> button::Style {
-    let mut style = button::secondary(theme, status);
-    style.border.radius = CONTROL_RADIUS.into();
-    style
+    theme::btn_secondary(theme, status)
 }
 
 fn rounded_text_btn(theme: &Theme, status: button::Status) -> button::Style {
-    let mut style = button::text(theme, status);
-    style.border.radius = 6.0.into();
-    style
+    theme::btn_ghost(theme, status)
 }
 
 fn list_header_style(theme: &Theme) -> iced::widget::container::Style {
-    let palette = theme.extended_palette();
-    iced::widget::container::Style {
-        background: Some(Background::Color(palette.background.weak.color)),
-        border: Border {
-            color: palette.background.strong.color,
-            width: 1.0,
-            radius: CONTROL_RADIUS.into(),
-        },
-        ..Default::default()
-    }
+    theme::list_header(theme)
 }
 
 fn list_box_style(theme: &Theme) -> iced::widget::container::Style {
-    let palette = theme.extended_palette();
-    iced::widget::container::Style {
-        background: Some(Background::Color(palette.background.weak.color)),
-        border: Border {
-            color: palette.background.strong.color,
-            width: 1.0,
-            radius: CONTROL_RADIUS.into(),
-        },
-        ..Default::default()
-    }
+    theme::panel(theme)
 }
 
-pub(crate) fn home_menu_bar_style(_theme: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(Background::Color(Color::WHITE)),
-        border: Border {
-            color: Color::from_rgb8(0xE0, 0xE0, 0xE0),
-            width: 0.0,
-            radius: 0.0.into(),
-        },
-        ..Default::default()
-    }
+pub(crate) fn home_menu_bar_style(theme: &Theme) -> iced::widget::container::Style {
+    theme::menu_bar(theme)
 }
 
-fn home_stage_style(accent: ColorAccent) -> impl Fn(&Theme) -> iced::widget::container::Style {
-    let (c0, c1, c2) = match accent {
-        ColorAccent::BrandBlue => (
-            Color::from_rgb8(0x3D, 0x91, 0xF8),
-            Color::from_rgb8(0x2C, 0x76, 0xF5),
-            Color::from_rgb8(0x21, 0x56, 0xF2),
-        ),
-        ColorAccent::DeepNavy => (
-            Color::from_rgb8(0x10, 0x30, 0x58),
-            Color::from_rgb8(0x00, 0x20, 0x40),
-            Color::from_rgb8(0x00, 0x10, 0x30),
-        ),
-        ColorAccent::Teal => (
-            Color::from_rgb8(0x40, 0xC0, 0xD0),
-            Color::from_rgb8(0x20, 0xA0, 0xC0),
-            Color::from_rgb8(0x10, 0x70, 0x90),
-        ),
-    };
-    move |_theme: &Theme| {
-        let gradient = Linear::new(Radians(std::f32::consts::FRAC_PI_2))
-            .add_stop(0.0, c0)
-            .add_stop(0.45, c1)
-            .add_stop(1.0, c2);
-        iced::widget::container::Style {
-            background: Some(Background::Gradient(Gradient::Linear(gradient))),
-            ..Default::default()
-        }
-    }
+pub(crate) fn home_menu_btn_style(theme: &Theme, status: button::Status) -> button::Style {
+    theme::btn_menu(theme, status)
 }
 
-pub(crate) fn home_menu_btn_style(_theme: &Theme, status: button::Status) -> button::Style {
-    let (bg, text_color) = match status {
-        button::Status::Hovered | button::Status::Pressed => (
-            Some(Background::Color(Color::from_rgb8(0xE8, 0xE8, 0xE8))),
-            Color::BLACK,
-        ),
-        button::Status::Disabled => (None, Color::from_rgb8(0x99, 0x99, 0x99)),
-        button::Status::Active => (None, Color::BLACK),
-    };
-    button::Style {
-        background: bg,
-        text_color,
-        border: Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: 2.0.into(),
-        },
-        ..Default::default()
-    }
-}
-
-pub(crate) fn dropdown_panel_style(_theme: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0xFF, 0xFF, 0xFF))),
-        border: Border {
-            color: Color::from_rgb8(0xCC, 0xCC, 0xCC),
-            width: 1.0,
-            radius: 6.0.into(),
-        },
-        shadow: iced::Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.18),
-            offset: iced::Vector::new(0.0, 2.0),
-            blur_radius: 8.0,
-        },
-        ..Default::default()
-    }
+pub(crate) fn dropdown_panel_style(theme: &Theme) -> iced::widget::container::Style {
+    theme::elevated(theme)
 }
 
 pub(crate) fn dropdown_item_style(theme: &Theme, status: button::Status) -> button::Style {
-    let mut style = button::text(theme, status);
-    style.border.radius = 4.0.into();
-    if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-        style.background = Some(Background::Color(Color::from_rgb8(0xE8, 0xF0, 0xFF)));
-    }
-    style
-}
-
-fn home_glass_style(_theme: &Theme, status: button::Status) -> button::Style {
-    let (bg_a, border_a) = match status {
-        button::Status::Hovered => (0.30, 0.45),
-        button::Status::Pressed => (0.34, 0.50),
-        button::Status::Disabled => (0.12, 0.18),
-        button::Status::Active => (0.22, 0.32),
-    };
-    button::Style {
-        background: Some(Background::Color(Color::from_rgba(1.0, 1.0, 1.0, bg_a))),
-        text_color: Color::WHITE,
-        border: Border {
-            color: Color::from_rgba(1.0, 1.0, 1.0, border_a),
-            width: 1.0,
-            radius: 10.0.into(),
-        },
-        shadow: Default::default(),
-    }
+    theme::btn_menu(theme, status)
 }
 
 fn home_glass_tile<'a>(
@@ -4687,11 +4516,11 @@ fn home_glass_tile<'a>(
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
     let body = column![
-        image(icon).width(52).height(52),
-        Space::with_height(16),
-        text(label).size(14).style(|_| iced::widget::text::Style {
-            color: Some(Color::WHITE),
-        }),
+        container(image(icon).width(36).height(36))
+            .padding(14)
+            .style(theme::icon_badge),
+        Space::with_height(18),
+        text(label).size(14).style(theme::text_primary),
     ]
     .spacing(0)
     .align_x(Alignment::Center);
@@ -4703,7 +4532,7 @@ fn home_glass_tile<'a>(
             .center_x(Length::Fill),
     )
     .width(210)
-    .style(home_glass_style);
+    .style(theme::home_tile);
 
     if let Some(msg) = on_press {
         btn = btn.on_press(msg);
@@ -4764,9 +4593,7 @@ async fn pick_create_output(format: FormatId, initial_dir: Option<PathBuf>) -> O
     if let Some(dir) = initial_dir {
         dlg = dlg.set_directory(dir);
     }
-    dlg.save_file()
-        .await
-        .map(|f| f.path().to_path_buf())
+    dlg.save_file().await.map(|f| f.path().to_path_buf())
 }
 
 async fn pick_save_as(name: String) -> Option<PathBuf> {
@@ -4890,28 +4717,17 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
     (y as i32, m as u32, d as u32)
 }
 
-fn accent_color(accent: ColorAccent) -> Color {
-    match accent {
-        ColorAccent::BrandBlue => Color::from_rgb8(0x5E, 0x7C, 0xE2),
-        ColorAccent::DeepNavy => Color::from_rgb8(0x00, 0x20, 0x40),
-        ColorAccent::Teal => Color::from_rgb8(0x20, 0xA0, 0xC0),
+fn row_style(theme: &Theme, selected: bool) -> iced::widget::container::Style {
+    if selected {
+        theme::row_selected(theme)
+    } else {
+        Default::default()
     }
 }
 
-fn row_style(selected: bool) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: if selected {
-            Some(Background::Color(Color::from_rgba(0.37, 0.49, 0.89, 0.16)))
-        } else {
-            None
-        },
-        ..Default::default()
-    }
-}
-
-fn dim_style(_theme: &Theme, _status: button::Status) -> button::Style {
+fn dim_style(theme: &Theme, _status: button::Status) -> button::Style {
     button::Style {
-        background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.28))),
+        background: theme::scrim(theme).background,
         text_color: Color::WHITE,
         border: Border::default(),
         shadow: iced::Shadow::default(),

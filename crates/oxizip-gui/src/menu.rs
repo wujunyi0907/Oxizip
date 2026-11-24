@@ -10,11 +10,11 @@ use crate::{
 };
 
 /// Compact dropdown panel width (px).
-pub const MENU_WIDTH: f32 = 156.0;
+pub const MENU_WIDTH: f32 = 184.0;
 const PANEL_PAD: f32 = 4.0;
 const ITEM_GAP: f32 = 1.0;
 /// Fixed row height so submenu top offset matches the triggering item.
-const ITEM_H: f32 = 22.0;
+const ITEM_H: f32 = 27.0;
 const SEP_H: f32 = 5.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -28,6 +28,7 @@ pub enum MenuPopup {
     Find,
     Settings,
     SettingsLang,
+    SettingsTheme,
     View,
     ViewToolbar,
     ViewList,
@@ -41,12 +42,11 @@ impl MenuPopup {
     pub fn root(self) -> Self {
         match self {
             Self::FileRecent | Self::FileExtract => Self::File,
-            Self::SettingsLang => Self::Settings,
+            Self::SettingsLang | Self::SettingsTheme => Self::Settings,
             Self::ViewToolbar | Self::ViewList | Self::ViewColumn => Self::View,
             other => other,
         }
     }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +77,7 @@ pub enum MenuAction {
     Find,
     ShowSettings,
     SetLang(oxizip_i18n::Lang),
+    SetThemeMode(crate::prefs::ThemeMode),
     StartScreen,
     ToggleTree,
     ToggleComment,
@@ -106,6 +107,7 @@ pub enum MenuAction {
     PasswordManager,
     Associations,
     OpenSettingsLang,
+    OpenSettingsTheme,
     OpenFileRecent,
     OpenFileExtract,
     OpenViewToolbar,
@@ -141,7 +143,7 @@ pub const MENU_BAR_PAD: Padding = Padding {
     bottom: 0.0,
     left: 4.0,
 };
-pub const MENU_LABEL_SIZE: u16 = 11;
+pub const MENU_LABEL_SIZE: u16 = 13;
 
 const MENU_TOPS: &[(MenuPopup, &str)] = &[
     (MenuPopup::File, "gui.home.menu.file"),
@@ -214,18 +216,18 @@ fn menu_item_width(label: &str) -> f32 {
             if !c.is_ascii() {
                 f32::from(MENU_LABEL_SIZE)
             } else if c.is_ascii_alphanumeric() {
-                6.6
+                8.0
             } else {
-                4.8
+                5.6
             }
         })
         .sum();
     // padding L+R; small fudge so text is not clipped inside the fixed button
-    text_w + MENU_BAR_PAD_X * 2.0 + 2.0
+    text_w + MENU_BAR_PAD_X * 2.0 + 4.0
 }
 
 fn item_btn<'a>(label: String, enabled: bool, action: MenuAction) -> Element<'a, Message> {
-    let mut b = button(text(label).size(12))
+    let mut b = button(text(label).size(13))
         .padding(Padding {
             top: 2.0,
             right: 6.0,
@@ -246,10 +248,8 @@ fn sep<'a>() -> Element<'a, Message> {
         container(Space::with_height(1))
             .width(Length::Fill)
             .height(1)
-            .style(|_theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(iced::Color::from_rgb8(
-                    0xD0, 0xD0, 0xD0,
-                ))),
+            .style(|theme: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(crate::theme::tokens(theme).border)),
                 ..Default::default()
             }),
     )
@@ -265,8 +265,12 @@ fn submenu_chevron<'a>(open: bool) -> Element<'a, Message> {
     svg(handle)
         .width(10)
         .height(10)
-        .style(|_theme, _status| svg::Style {
-            color: Some(iced::Color::from_rgb8(0x33, 0x33, 0x33)),
+        .style(|theme: &iced::Theme, _status| svg::Style {
+            color: Some(if crate::theme::tokens(theme).dark {
+                iced::Color::WHITE
+            } else {
+                iced::Color::BLACK
+            }),
         })
         .into()
 }
@@ -274,7 +278,7 @@ fn submenu_chevron<'a>(open: bool) -> Element<'a, Message> {
 fn submenu_btn<'a>(label: String, open: bool, action: MenuAction) -> Element<'a, Message> {
     button(
         row![
-            text(label).size(12).width(Length::Fill),
+            text(label).size(13).width(Length::Fill),
             submenu_chevron(open),
         ]
         .spacing(4)
@@ -322,6 +326,7 @@ fn submenu_offset(popup: MenuPopup) -> f32 {
         MenuPopup::FileExtract => item_top_offset(14, &[3, 7, 12, 15]),
         // Settings: page, lang*, passman, assoc
         MenuPopup::SettingsLang => item_top_offset(1, &[]),
+        MenuPopup::SettingsTheme => item_top_offset(2, &[]),
         // View: start, tree, comment, status, toolbar*, pick, list*, column*, top, color
         MenuPopup::ViewToolbar => item_top_offset(4, &[]),
         MenuPopup::ViewList => item_top_offset(6, &[]),
@@ -356,9 +361,7 @@ pub fn view_dropdown<'a>(popup: MenuPopup, ctx: &MenuCtx<'_>) -> Element<'a, Mes
     match popup {
         MenuPopup::None => Space::with_height(0).into(),
 
-        MenuPopup::File
-        | MenuPopup::FileRecent
-        | MenuPopup::FileExtract => {
+        MenuPopup::File | MenuPopup::FileRecent | MenuPopup::FileExtract => {
             let child = match popup {
                 MenuPopup::FileRecent => Some(panel_recent(ctx, busy)),
                 MenuPopup::FileExtract => Some(panel_extract(lang, a)),
@@ -375,27 +378,35 @@ pub fn view_dropdown<'a>(popup: MenuPopup, ctx: &MenuCtx<'_>) -> Element<'a, Mes
             MenuAction::Find,
         )]),
 
-        MenuPopup::Settings | MenuPopup::SettingsLang => {
-            let child = if popup == MenuPopup::SettingsLang {
-                Some(panel(
+        MenuPopup::Settings | MenuPopup::SettingsLang | MenuPopup::SettingsTheme => {
+            let child = match popup {
+                MenuPopup::SettingsLang => Some(panel(
                     oxizip_i18n::Lang::all()
                         .map(|l| item_btn(l.native_name().into(), true, MenuAction::SetLang(l)))
                         .collect(),
-                ))
-            } else {
-                None
+                )),
+                MenuPopup::SettingsTheme => Some(panel(
+                    [
+                        (crate::prefs::ThemeMode::System, "gui.theme.system"),
+                        (crate::prefs::ThemeMode::Light, "gui.theme.light"),
+                        (crate::prefs::ThemeMode::Dark, "gui.theme.dark"),
+                    ]
+                    .into_iter()
+                    .map(|(m, key)| {
+                        item_btn(
+                            check_label(t(lang, key), ctx.prefs.theme_mode == m),
+                            true,
+                            MenuAction::SetThemeMode(m),
+                        )
+                    })
+                    .collect(),
+                )),
+                _ => None,
             };
-            flyout(
-                panel_settings(lang, popup),
-                child,
-                submenu_offset(popup),
-            )
+            flyout(panel_settings(lang, popup), child, submenu_offset(popup))
         }
 
-        MenuPopup::View
-        | MenuPopup::ViewToolbar
-        | MenuPopup::ViewList
-        | MenuPopup::ViewColumn => {
+        MenuPopup::View | MenuPopup::ViewToolbar | MenuPopup::ViewList | MenuPopup::ViewColumn => {
             let child = match popup {
                 MenuPopup::ViewToolbar => Some(panel_view_toolbar(lang, ctx)),
                 MenuPopup::ViewList => Some(panel_view_list(lang, ctx)),
@@ -604,6 +615,11 @@ fn panel_settings<'a>(lang: Lang, popup: MenuPopup) -> Element<'a, Message> {
             t(lang, "gui.home.menu.settings.lang").into(),
             popup == MenuPopup::SettingsLang,
             MenuAction::OpenSettingsLang,
+        ),
+        submenu_btn(
+            t(lang, "gui.settings.viewer.theme").into(),
+            popup == MenuPopup::SettingsTheme,
+            MenuAction::OpenSettingsTheme,
         ),
         item_btn(
             t(lang, "gui.menu.settings.passman").into(),

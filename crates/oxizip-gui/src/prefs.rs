@@ -39,6 +39,15 @@ pub enum ColorAccent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum DoubleClickAction {
     #[default]
     Open,
@@ -201,6 +210,8 @@ pub struct Prefs {
     pub columns: ColumnVisibility,
     pub always_on_top: bool,
     pub color_accent: ColorAccent,
+    #[serde(default)]
+    pub theme_mode: ThemeMode,
     pub default_format: String,
     pub default_method: String,
     pub open_dest_after_extract: bool,
@@ -289,6 +300,7 @@ impl Default for Prefs {
             columns: ColumnVisibility::default(),
             always_on_top: false,
             color_accent: ColorAccent::default(),
+            theme_mode: ThemeMode::default(),
             default_format: "zip".into(),
             default_method: "auto".into(),
             open_dest_after_extract: false,
