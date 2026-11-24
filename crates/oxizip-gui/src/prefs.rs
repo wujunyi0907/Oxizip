@@ -473,16 +473,22 @@ pub fn prefs_path() -> PathBuf {
     }
     #[cfg(not(windows))]
     {
-        // Honor XDG_CONFIG_HOME so prefs / shell_menu.json match CLI + i18n.
-        if let Ok(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
-            return PathBuf::from(xdg).join("oxizip").join("prefs.json");
-        }
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home)
-                .join(".config")
-                .join("oxizip")
-                .join("prefs.json");
-        }
+        unix_prefs_path(std::env::var_os("XDG_CONFIG_HOME"), std::env::var_os("HOME"))
+    }
+    #[cfg(windows)]
+    PathBuf::from("oxizip-prefs.json")
+}
+
+#[cfg(any(not(windows), test))]
+fn unix_prefs_path(xdg: Option<std::ffi::OsString>, home: Option<std::ffi::OsString>) -> PathBuf {
+    if let Some(xdg) = xdg {
+        return PathBuf::from(xdg).join("oxizip").join("prefs.json");
+    }
+    if let Some(home) = home {
+        return PathBuf::from(home)
+            .join(".config")
+            .join("oxizip")
+            .join("prefs.json");
     }
     PathBuf::from("oxizip-prefs.json")
 }
@@ -492,4 +498,27 @@ pub fn shell_menu_path() -> PathBuf {
         .parent()
         .map(|p| p.join("shell_menu.json"))
         .unwrap_or_else(|| PathBuf::from("shell_menu.json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unix_prefs_path_prefers_xdg_and_falls_back_to_home() {
+        let xdg = PathBuf::from("custom").join("oxizip").join("prefs.json");
+        let home = PathBuf::from("home")
+            .join(".config")
+            .join("oxizip")
+            .join("prefs.json");
+        assert_eq!(
+            unix_prefs_path(Some("custom".into()), Some("home".into())),
+            xdg
+        );
+        assert_eq!(unix_prefs_path(None, Some("home".into())), home);
+        assert_eq!(
+            unix_prefs_path(None, None),
+            PathBuf::from("oxizip-prefs.json")
+        );
+    }
 }
