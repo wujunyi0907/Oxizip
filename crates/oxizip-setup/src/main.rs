@@ -5,15 +5,17 @@
 mod install;
 
 use iced::widget::{
-    button, column, container, mouse_area, pick_list, progress_bar, row, scrollable, text,
-    text_input, Space,
+    button, column, container, image as iced_image, mouse_area, overlay::menu, pick_list,
+    progress_bar, row, scrollable, text, text_input, Space,
 };
-use iced::{window, Alignment, Element, Length, Point, Size, Subscription, Task};
+use iced::{
+    window, Alignment, Background, Border, Color, Element, Length, Point, Size, Subscription, Task,
+};
 use install::{
     append_window_pos, default_install_dir, encode_install_args, encode_uninstall_args,
     is_elevated, launch_app, parse_cli, perform_cleanup_dir, perform_install, perform_uninstall,
-    relaunch_elevated, schedule_install_dir_cleanup,
-    resolve_install_dir, CliMode, InstallOptions, APP_NAME, VERSION,
+    relaunch_elevated, resolve_install_dir, schedule_install_dir_cleanup, CliMode, InstallOptions,
+    APP_NAME, VERSION,
 };
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -87,6 +89,7 @@ fn run_installer_ui(
         .subscription(SetupApp::subscription)
         .window(undecorated_window(Size::new(600.0, 440.0), window_pos))
         .default_font(ui_font())
+        .theme(|_| setup_theme())
         .run_with(move || SetupApp::new(auto_install))
 }
 
@@ -104,6 +107,7 @@ fn run_uninstall_ui(
     // ≈ golden ratio: 486 / 300 = 1.62
     .window(undecorated_window(Size::new(486.0, 300.0), window_pos))
     .default_font(ui_font())
+    .theme(|_| setup_theme())
     .run_with(move || UninstallApp::new(dir, auto_start))
 }
 
@@ -209,19 +213,76 @@ fn apply_native_window_rounding(raw_id: u64) {
     }
     const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
     const DWMWCP_ROUND: i32 = 2;
+    const DWMWA_BORDER_COLOR: u32 = 34;
+    const DWMWA_COLOR_NONE: u32 = 0xFFFFFFFE;
     unsafe {
+        let hwnd = raw_id as *mut core::ffi::c_void;
         let pref = DWMWCP_ROUND;
         let _ = DwmSetWindowAttribute(
-            raw_id as *mut core::ffi::c_void,
+            hwnd,
             DWMWA_WINDOW_CORNER_PREFERENCE,
             (&pref as *const i32).cast(),
             std::mem::size_of_val(&pref) as u32,
+        );
+        let border = DWMWA_COLOR_NONE;
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR,
+            (&border as *const u32).cast(),
+            std::mem::size_of_val(&border) as u32,
         );
     }
 }
 
 #[cfg(not(windows))]
 fn apply_native_window_rounding(_raw_id: u64) {}
+
+fn rgb(hex: u32) -> Color {
+    Color::from_rgb8((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
+}
+
+const SURFACE_BG: u32 = 0xF2F3F6;
+const ELEVATED_BG: u32 = 0xFFFFFF;
+const BORDER_HEX: u32 = 0xE1E4EA;
+const TEXT_2_HEX: u32 = 0x474C5A;
+const TEXT_3_HEX: u32 = 0x727887;
+const ACCENT_HEX: u32 = 0x2F6FD6;
+const DANGER_HEX: u32 = 0xD64545;
+
+fn setup_theme() -> iced::Theme {
+    iced::Theme::custom(
+        "Oxizip Light".to_string(),
+        iced::theme::Palette {
+            background: rgb(0xFAFAFB),
+            text: rgb(0x14161B),
+            primary: rgb(ACCENT_HEX),
+            success: rgb(0x2E9E6B),
+            danger: rgb(DANGER_HEX),
+        },
+    )
+}
+
+fn brand_icon_handle() -> iced_image::Handle {
+    let bytes = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../oxizip-gui/assets/icons/oxizip.ico"
+    ));
+    let mut reader = ::image::io::Reader::new(std::io::Cursor::new(bytes));
+    reader.set_format(::image::ImageFormat::Ico);
+    if let Ok(img) = reader.decode() {
+        let rgba = img.to_rgba8();
+        let (w, h, pixels) = if rgba.width() > 32 || rgba.height() > 32 {
+            let resized =
+                ::image::imageops::resize(&rgba, 16, 16, ::image::imageops::FilterType::Triangle);
+            (16, 16, resized.into_raw())
+        } else {
+            (rgba.width(), rgba.height(), rgba.into_raw())
+        };
+        iced_image::Handle::from_rgba(w, h, pixels)
+    } else {
+        iced_image::Handle::from_rgba(1, 1, vec![0, 0, 0, 0])
+    }
+}
 
 fn rounded_primary(
     theme: &iced::Theme,
@@ -242,12 +303,29 @@ fn rounded_danger(
 }
 
 fn rounded_secondary(
-    theme: &iced::Theme,
+    _theme: &iced::Theme,
     status: iced::widget::button::Status,
 ) -> iced::widget::button::Style {
-    let mut style = iced::widget::button::secondary(theme, status);
-    style.border.radius = CONTROL_RADIUS.into();
-    style
+    let bg = match status {
+        button::Status::Active => rgb(ELEVATED_BG),
+        button::Status::Hovered => rgb(0xF0F2F6),
+        button::Status::Pressed => rgb(0xE6E9F0),
+        button::Status::Disabled => rgb(SURFACE_BG),
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: if matches!(status, button::Status::Disabled) {
+            rgb(TEXT_3_HEX)
+        } else {
+            rgb(0x14161B)
+        },
+        border: Border {
+            color: rgb(BORDER_HEX),
+            width: 1.0,
+            radius: CONTROL_RADIUS.into(),
+        },
+        ..Default::default()
+    }
 }
 
 fn rounded_text_btn(
@@ -259,7 +337,109 @@ fn rounded_text_btn(
     style
 }
 
-/// Custom caption bar: drag region + language dropdown immediately left of min/close.
+fn caption_close_btn(
+    _theme: &iced::Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    let (bg, fg) = match status {
+        button::Status::Hovered => (Some(rgb(DANGER_HEX)), Color::WHITE),
+        button::Status::Pressed => (Some(rgb(0xB83232)), Color::WHITE),
+        button::Status::Active => (None, rgb(TEXT_2_HEX)),
+        button::Status::Disabled => (None, rgb(TEXT_3_HEX)),
+    };
+    button::Style {
+        background: bg.map(Background::Color),
+        text_color: fg,
+        border: Border {
+            radius: 6.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+fn setup_input_style(_theme: &iced::Theme, status: text_input::Status) -> text_input::Style {
+    let border_color = match status {
+        text_input::Status::Active => rgb(BORDER_HEX),
+        text_input::Status::Hovered => rgb(0xB8C0CE),
+        text_input::Status::Focused => rgb(ACCENT_HEX),
+        text_input::Status::Disabled => rgb(BORDER_HEX),
+    };
+    text_input::Style {
+        background: Background::Color(if matches!(status, text_input::Status::Disabled) {
+            rgb(SURFACE_BG)
+        } else {
+            rgb(ELEVATED_BG)
+        }),
+        border: Border {
+            color: border_color,
+            width: if matches!(status, text_input::Status::Focused) {
+                1.5
+            } else {
+                1.0
+            },
+            radius: CONTROL_RADIUS.into(),
+        },
+        icon: rgb(TEXT_3_HEX),
+        placeholder: rgb(TEXT_3_HEX),
+        value: if matches!(status, text_input::Status::Disabled) {
+            rgb(TEXT_3_HEX)
+        } else {
+            rgb(0x14161B)
+        },
+        selection: Color {
+            a: 0.16,
+            ..rgb(ACCENT_HEX)
+        },
+    }
+}
+
+fn setup_pick_style(_theme: &iced::Theme, status: pick_list::Status) -> pick_list::Style {
+    let border_color = match status {
+        pick_list::Status::Active => rgb(BORDER_HEX),
+        pick_list::Status::Hovered => rgb(0xB8C0CE),
+        pick_list::Status::Opened => rgb(ACCENT_HEX),
+    };
+    pick_list::Style {
+        text_color: rgb(0x14161B),
+        placeholder_color: rgb(TEXT_3_HEX),
+        handle_color: rgb(TEXT_2_HEX),
+        background: Background::Color(rgb(ELEVATED_BG)),
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+    }
+}
+
+fn setup_pick_menu(_theme: &iced::Theme) -> menu::Style {
+    menu::Style {
+        background: Background::Color(rgb(ELEVATED_BG)),
+        border: Border {
+            color: rgb(BORDER_HEX),
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        text_color: rgb(0x14161B),
+        selected_text_color: Color::WHITE,
+        selected_background: Background::Color(rgb(ACCENT_HEX)),
+    }
+}
+
+fn setup_progress_style(_theme: &iced::Theme) -> progress_bar::Style {
+    progress_bar::Style {
+        background: Background::Color(rgb(SURFACE_BG)),
+        bar: Background::Color(rgb(ACCENT_HEX)),
+        border: Border {
+            color: rgb(BORDER_HEX),
+            width: 0.5,
+            radius: 4.0.into(),
+        },
+    }
+}
+
+/// Custom caption bar: brand icon + drag region + language dropdown immediately left of min/close.
 fn caption_bar<'a, Message: Clone + 'a>(
     title: String,
     lang: Lang,
@@ -269,55 +449,70 @@ fn caption_bar<'a, Message: Clone + 'a>(
     on_close: Message,
 ) -> Element<'a, Message> {
     let drag_zone = mouse_area(
-        row![text(title).size(12), Space::with_width(Length::Fill),]
-            .align_y(Alignment::Center)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(iced::Padding {
-                top: 0.0,
-                right: 8.0,
-                bottom: 0.0,
-                left: 10.0,
-            }),
+        row![
+            iced_image(brand_icon_handle()).width(16).height(16),
+            text(title).size(12).color(rgb(TEXT_2_HEX)),
+            Space::with_width(Length::Fill),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(iced::Padding {
+            top: 0.0,
+            right: 8.0,
+            bottom: 0.0,
+            left: 12.0,
+        }),
     )
     .on_press(on_drag);
 
-    let caption_btn = |label: &'static str, msg: Message| {
-        button(
-            container(text(label).size(12))
-                .center_x(Length::Fill)
-                .center_y(Length::Fill),
-        )
-        .width(40)
-        .height(28)
-        .padding(0)
-        .style(rounded_text_btn)
-        .on_press(msg)
-    };
-
-    container(
-        row![
-            drag_zone,
-            pick_list(Lang::ALL, Some(lang), on_lang)
-                .text_size(12)
-                .width(78)
-                .padding(4),
-            Space::with_width(4),
-            caption_btn("—", on_minimize),
-            caption_btn("×", on_close),
-        ]
-        .spacing(2)
-        .align_y(Alignment::Center)
-        .width(Length::Fill)
-        .height(32),
+    let min_btn = button(
+        container(text("—").size(12).color(rgb(TEXT_2_HEX)))
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
     )
-    .width(Length::Fill)
-    .style(|theme: &iced::Theme| {
-        let palette = theme.extended_palette();
-        iced::widget::container::Style {
-            background: Some(iced::Background::Color(palette.background.weak.color)),
-            border: iced::Border {
-                color: palette.background.strong.color,
+    .width(38)
+    .height(28)
+    .padding(0)
+    .style(rounded_text_btn)
+    .on_press(on_minimize);
+
+    let close_btn = button(
+        container(text("×").size(14))
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .width(38)
+    .height(28)
+    .padding(0)
+    .style(caption_close_btn)
+    .on_press(on_close);
+
+    column![
+        container(
+            row![
+                drag_zone,
+                pick_list(Lang::ALL, Some(lang), on_lang)
+                    .text_size(12)
+                    .width(82)
+                    .padding([3, 6])
+                    .style(setup_pick_style)
+                    .menu_style(setup_pick_menu),
+                Space::with_width(4),
+                min_btn,
+                close_btn,
+            ]
+            .spacing(2)
+            .align_y(Alignment::Center)
+            .width(Length::Fill)
+            .height(32),
+        )
+        .width(Length::Fill)
+        .style(|_theme: &iced::Theme| iced::widget::container::Style {
+            background: Some(Background::Color(rgb(SURFACE_BG))),
+            border: Border {
+                color: rgb(BORDER_HEX),
                 width: 0.0,
                 radius: iced::border::Radius {
                     top_left: WINDOW_RADIUS,
@@ -327,17 +522,22 @@ fn caption_bar<'a, Message: Clone + 'a>(
                 },
             },
             ..Default::default()
-        }
-    })
+        }),
+        container(Space::with_height(1))
+            .width(Length::Fill)
+            .style(|_theme: &iced::Theme| iced::widget::container::Style {
+                background: Some(Background::Color(rgb(BORDER_HEX))),
+                ..Default::default()
+            }),
+    ]
     .into()
 }
 
-fn frame_border(theme: &iced::Theme) -> iced::widget::container::Style {
-    let palette = theme.extended_palette();
+fn frame_border(_theme: &iced::Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
-        background: Some(iced::Background::Color(palette.background.base.color)),
-        border: iced::Border {
-            color: palette.background.strong.color,
+        background: Some(Background::Color(rgb(0xFAFAFB))),
+        border: Border {
+            color: rgb(BORDER_HEX),
             width: 1.0,
             radius: WINDOW_RADIUS.into(),
         },
@@ -640,34 +840,41 @@ impl SetupApp {
             .size(16)
             .width(Length::Fixed(CONTENT_WIDTH));
 
-        let license_body = text(self.tr(LICENSE_TEXT_ZH, LICENSE_TEXT_EN)).size(11);
+        let license_body = text(self.tr(LICENSE_TEXT_ZH, LICENSE_TEXT_EN))
+            .size(11)
+            .color(rgb(TEXT_2_HEX));
         let license_box = container(
             scrollable(license_body)
                 .height(Length::Fill)
                 .width(Length::Fill),
         )
-        .padding(8)
+        .padding(10)
         .width(Length::Fixed(CONTENT_WIDTH))
         .height(Length::Fill)
-        .style(|theme: &iced::Theme| {
-            let palette = theme.extended_palette();
-            iced::widget::container::Style {
-                background: Some(iced::Background::Color(palette.background.weak.color)),
-                border: iced::Border {
-                    color: palette.background.strong.color,
-                    width: 1.0,
-                    radius: CONTROL_RADIUS.into(),
-                },
-                ..Default::default()
-            }
+        .style(|_theme: &iced::Theme| iced::widget::container::Style {
+            background: Some(Background::Color(rgb(SURFACE_BG))),
+            border: Border {
+                color: rgb(BORDER_HEX),
+                width: 1.0,
+                radius: CONTROL_RADIUS.into(),
+            },
+            ..Default::default()
         });
 
-        let path_label = text(self.tr("目标文件夹", "Destination folder")).size(12);
-        let mut path_input = text_input("", &self.dir).size(12).width(Length::Fill);
+        let path_label = text(self.tr("目标文件夹", "Destination folder"))
+            .size(12)
+            .color(rgb(TEXT_2_HEX));
+        let mut path_input = text_input("", &self.dir)
+            .size(12)
+            .padding([7, 10])
+            .style(setup_input_style)
+            .width(Length::Fill);
         if !self.busy && !self.done {
             path_input = path_input.on_input(Message::DirChanged);
         }
-        let mut browse = button(text("...").size(12)).style(rounded_secondary);
+        let mut browse = button(text("...").size(12))
+            .padding([7, 12])
+            .style(rounded_secondary);
         if !self.busy && !self.done {
             browse = browse.on_press(Message::Browse);
         }
@@ -686,11 +893,13 @@ impl SetupApp {
                 self.status.as_str()
             })
             .size(11)
+            .color(rgb(TEXT_2_HEX))
             .width(Length::Fill);
             column![
                 progress_bar(0.0..=1.0, self.progress)
                     .width(Length::Fill)
-                    .height(8),
+                    .height(8)
+                    .style(setup_progress_style),
                 status,
             ]
             .spacing(4)
@@ -723,9 +932,9 @@ impl SetupApp {
         ]
         .spacing(4)
         .padding(iced::Padding {
-            top: 10.0,
+            top: 12.0,
             right: 16.0,
-            bottom: 12.0,
+            bottom: 14.0,
             left: 16.0,
         })
         .align_x(Alignment::Center)
@@ -740,6 +949,7 @@ impl SetupApp {
         .width(Length::Fill)
         .height(Length::Fill)
         .style(frame_border)
+        .clip(true)
         .into()
     }
 }
@@ -993,29 +1203,49 @@ impl UninstallApp {
             UMessage::Close,
         );
 
-        let path_line = text(format!(
-            "{} {}",
-            self.tr("安装目录：", "Install folder:"),
-            self.dir.display()
-        ))
-        .size(12);
+        let path_line = container(
+            row![
+                text(self.tr("安装目录：", "Install folder:"))
+                    .size(11)
+                    .color(rgb(TEXT_3_HEX)),
+                text(self.dir.display().to_string())
+                    .size(11)
+                    .color(rgb(TEXT_2_HEX))
+                    .width(Length::Fill),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .padding([8, 12])
+        .width(Length::Fill)
+        .style(|_theme: &iced::Theme| iced::widget::container::Style {
+            background: Some(Background::Color(rgb(SURFACE_BG))),
+            border: Border {
+                color: rgb(BORDER_HEX),
+                width: 1.0,
+                radius: CONTROL_RADIUS.into(),
+            },
+            ..Default::default()
+        });
 
         let status = if self.status.is_empty() {
-            text(self.prompt()).size(12)
+            text(self.prompt()).size(12).color(rgb(TEXT_2_HEX))
         } else {
-            text(&self.status).size(12)
+            text(&self.status).size(12).color(rgb(0x14161B))
         };
 
         let action_area: Element<'_, UMessage> = if self.busy {
             progress_bar(0.0..=1.0, self.progress)
                 .width(Length::Fill)
                 .height(8)
+                .style(setup_progress_style)
                 .into()
         } else if self.done {
             column![
                 progress_bar(0.0..=1.0, self.progress)
                     .width(Length::Fill)
-                    .height(8),
+                    .height(8)
+                    .style(setup_progress_style),
                 Space::with_height(8),
                 button(
                     container(text(self.tr("完成", "Done")).size(14))
@@ -1051,19 +1281,17 @@ impl UninstallApp {
         };
 
         let content = column![
-            text(window_title).size(16),
-            Space::with_height(6),
+            text(window_title).size(16).width(Length::Fill),
             path_line,
-            Space::with_height(6),
             status,
             Space::with_height(Length::Fill),
             action_area,
         ]
-        .spacing(6)
+        .spacing(10)
         .padding(16)
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_x(Alignment::Center);
+        .align_x(Alignment::Start);
 
         container(
             column![caption, content]
@@ -1073,6 +1301,7 @@ impl UninstallApp {
         .width(Length::Fill)
         .height(Length::Fill)
         .style(frame_border)
+        .clip(true)
         .into()
     }
 }

@@ -227,12 +227,15 @@ fn menu_item_width(label: &str) -> f32 {
 }
 
 fn item_btn<'a>(label: String, enabled: bool, action: MenuAction) -> Element<'a, Message> {
-    let mut b = button(text(label).size(13))
+    let content = container(text(label).size(13).line_height(1.0))
+        .width(Length::Fill)
+        .center_y(Length::Fill);
+    let mut b = button(content)
         .padding(Padding {
-            top: 2.0,
-            right: 6.0,
-            bottom: 2.0,
-            left: 6.0,
+            top: 1.0,
+            right: 8.0,
+            bottom: 0.0,
+            left: 8.0,
         })
         .height(Length::Fixed(ITEM_H))
         .style(dropdown_item_style)
@@ -276,25 +279,29 @@ fn submenu_chevron<'a>(open: bool) -> Element<'a, Message> {
 }
 
 fn submenu_btn<'a>(label: String, open: bool, action: MenuAction) -> Element<'a, Message> {
-    button(
+    let content = container(
         row![
-            text(label).size(13).width(Length::Fill),
+            text(label).size(13).line_height(1.0).width(Length::Fill),
             submenu_chevron(open),
         ]
         .spacing(4)
         .align_y(Alignment::Center),
     )
-    .padding(Padding {
-        top: 2.0,
-        right: 6.0,
-        bottom: 2.0,
-        left: 6.0,
-    })
-    .height(Length::Fixed(ITEM_H))
-    .style(dropdown_item_style)
     .width(Length::Fill)
-    .on_press(Message::MenuAction(action))
-    .into()
+    .center_y(Length::Fill);
+
+    button(content)
+        .padding(Padding {
+            top: 1.0,
+            right: 8.0,
+            bottom: 0.0,
+            left: 8.0,
+        })
+        .height(Length::Fixed(ITEM_H))
+        .style(dropdown_item_style)
+        .width(Length::Fill)
+        .on_press(Message::MenuAction(action))
+        .into()
 }
 
 fn panel<'a>(items: Vec<Element<'a, Message>>) -> Element<'a, Message> {

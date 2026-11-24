@@ -216,50 +216,70 @@ fn frame_border(theme: &Theme) -> iced::widget::container::Style {
 
 fn caption_bar<'a>(
     title: String,
+    brand_icon: iced::widget::image::Handle,
     on_drag: Message,
     on_minimize: Message,
     on_close: Message,
 ) -> Element<'a, Message> {
     let drag_zone = mouse_area(
-        row![text(title).size(12), Space::with_width(Length::Fill),]
-            .align_y(Alignment::Center)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(iced::Padding {
-                top: 0.0,
-                right: 8.0,
-                bottom: 0.0,
-                left: 10.0,
-            }),
+        row![
+            image(brand_icon).width(16).height(16),
+            text(title).size(12).style(theme::text_secondary),
+            Space::with_width(Length::Fill),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .padding(iced::Padding {
+            top: 0.0,
+            right: 8.0,
+            bottom: 0.0,
+            left: 12.0,
+        }),
     )
     .on_press(on_drag);
 
-    let caption_btn = |label: &'static str, msg: Message| {
-        button(
-            container(text(label).size(12))
-                .center_x(Length::Fill)
-                .center_y(Length::Fill),
-        )
-        .width(40)
-        .height(28)
-        .padding(0)
-        .style(rounded_text_btn)
-        .on_press(msg)
-    };
-
-    container(
-        row![
-            drag_zone,
-            caption_btn("—", on_minimize),
-            caption_btn("×", on_close),
-        ]
-        .spacing(2)
-        .align_y(Alignment::Center)
-        .width(Length::Fill)
-        .height(32),
+    let min_btn = button(
+        container(icons::ui_svg(
+            icons::UiIcon::Min,
+            12.0,
+            Color::from_rgb8(0x72, 0x78, 0x87),
+        ))
+        .center_x(Length::Fill)
+        .center_y(Length::Fill),
     )
-    .width(Length::Fill)
-    .style(theme::caption_bar)
+    .width(38)
+    .height(28)
+    .padding(0)
+    .style(rounded_text_btn)
+    .on_press(on_minimize);
+
+    let close_btn = button(
+        container(text("×").size(14))
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+    )
+    .width(38)
+    .height(28)
+    .padding(0)
+    .style(theme::btn_caption_close)
+    .on_press(on_close);
+
+    column![
+        container(
+            row![drag_zone, min_btn, close_btn]
+                .spacing(2)
+                .align_y(Alignment::Center)
+                .width(Length::Fill)
+                .height(32),
+        )
+        .width(Length::Fill)
+        .style(theme::caption_bar),
+        container(Space::with_height(1))
+            .width(Length::Fill)
+            .style(theme::divider),
+    ]
     .into()
 }
 
@@ -3149,6 +3169,7 @@ impl OxizipApp {
     fn framed_window<'a>(&'a self, body: Element<'a, Message>) -> Element<'a, Message> {
         let caption = caption_bar(
             self.title(),
+            self.icons.oxizip(),
             Message::TitleDrag,
             Message::Minimize,
             Message::Close,
@@ -3172,37 +3193,55 @@ impl OxizipApp {
     }
 
     fn view_setup(&self) -> Element<'_, Message> {
+        const PER_ROW: usize = 6;
         let mut groups = Column::new().spacing(12).width(Length::Fill);
-        for (group, exts) in setup::assoc_catalog() {
-            let mut chips = Column::new().spacing(4).width(Length::Fill);
-            let mut row_exts = row![].spacing(8).align_y(Alignment::Center);
-            let mut count_in_row = 0usize;
-            for ext in *exts {
-                let checked = self.setup_exts.get(ext).copied().unwrap_or(false);
-                let cell = checkbox(format!(".{ext}"), checked)
-                    .on_toggle(move |on| Message::SetupExtToggled(ext, on))
-                    .width(Length::Fixed(88.0));
-                row_exts = row_exts.push(cell);
-                count_in_row += 1;
-                if count_in_row >= 5 {
-                    chips = chips.push(row_exts);
-                    row_exts = row![].spacing(8).align_y(Alignment::Center);
-                    count_in_row = 0;
+        let catalog = setup::assoc_catalog();
+        let last_group = catalog.len().saturating_sub(1);
+        for (gi, (group, exts)) in catalog.iter().enumerate() {
+            let mut chips = Column::new().spacing(6).width(Length::Fill);
+            for chunk in exts.chunks(PER_ROW) {
+                let mut row_exts = row![].spacing(8).align_y(Alignment::Center);
+                for ext in chunk {
+                    let e = *ext;
+                    let checked = self.setup_exts.get(e).copied().unwrap_or(false);
+                    row_exts = row_exts.push(
+                        checkbox(format!(".{e}"), checked)
+                            .on_toggle(move |on| Message::SetupExtToggled(e, on))
+                            .size(16)
+                            .text_size(12)
+                            .spacing(8)
+                            .style(theme::checkbox_style)
+                            .width(Length::FillPortion(1)),
+                    );
                 }
-            }
-            if count_in_row > 0 {
+                for _ in chunk.len()..PER_ROW {
+                    row_exts = row_exts.push(Space::with_width(Length::FillPortion(1)));
+                }
                 chips = chips.push(row_exts);
             }
             groups = groups.push(
-                column![text(t(self.lang, group.i18n_key())).size(13), chips,]
-                    .spacing(6)
-                    .width(Length::Fill)
-                    .align_x(Alignment::Start),
+                column![
+                    text(t(self.lang, group.i18n_key()))
+                        .size(12)
+                        .style(theme::text_secondary),
+                    chips,
+                ]
+                .spacing(6)
+                .width(Length::Fill)
+                .align_x(Alignment::Start),
             );
+            if gi != last_group {
+                groups = groups.push(
+                    container(Space::with_height(1))
+                        .width(Length::Fill)
+                        .style(theme::divider),
+                );
+            }
         }
 
         let list = container(
-            scrollable(groups.padding(12))
+            scrollable(groups.padding(14))
+                .style(theme::scrollable_style)
                 .height(Length::Fill)
                 .width(Length::Fill),
         )
@@ -3210,11 +3249,15 @@ impl OxizipApp {
         .height(Length::Fill)
         .style(theme::panel);
 
-        let err = self
-            .last_error
-            .as_ref()
-            .map(|e| text(e.as_str()).size(12))
-            .unwrap_or_else(|| text(" ").size(12));
+        let err: Element<'_, Message> = if let Some(e) = &self.last_error {
+            container(text(e.as_str()).size(12).style(theme::text_danger))
+                .padding([6, 10])
+                .width(Length::Fill)
+                .style(theme::error_banner)
+                .into()
+        } else {
+            Space::with_height(0).into()
+        };
 
         let toggle_label = if self.setup_all_selected() {
             t(self.lang, "gui.setup.clear_all")
@@ -3235,7 +3278,7 @@ impl OxizipApp {
                 .on_press(Message::SetupSkip)
                 .style(rounded_text_btn),
             button(text(t(self.lang, "gui.setup.apply")).size(13))
-                .padding([6, 16])
+                .padding([6, 20])
                 .height(32)
                 .on_press(Message::SetupConfirm)
                 .style(rounded_primary),
@@ -3245,17 +3288,22 @@ impl OxizipApp {
         .width(Length::Fill);
 
         let body = column![
-            text(t(self.lang, "gui.setup.title"))
-                .size(16)
-                .width(Length::Fill),
-            text(t(self.lang, "gui.setup.intro"))
-                .size(12)
-                .width(Length::Fill),
+            column![
+                text(t(self.lang, "gui.setup.title"))
+                    .size(16)
+                    .style(theme::text_primary)
+                    .width(Length::Fill),
+                text(t(self.lang, "gui.setup.intro"))
+                    .size(12)
+                    .style(theme::text_secondary)
+                    .width(Length::Fill),
+            ]
+            .spacing(4),
             list,
             err,
             actions,
         ]
-        .spacing(10)
+        .spacing(12)
         .padding(16)
         .align_x(Alignment::Start)
         .width(Length::Fill)
@@ -3268,73 +3316,162 @@ impl OxizipApp {
     }
 
     fn view_licenses(&self) -> Element<'_, Message> {
-        let filters: Vec<LicenseFilter> = LicenseFilter::all().to_vec();
-
-        let toolbar = row![
-            button(t(self.lang, "gui.licenses.back")).on_press(Message::HideLicenses),
-            Space::with_width(16),
-            text(t(self.lang, "gui.licenses.title")).size(20),
-            Space::with_width(Length::Fill),
-            text(t(self.lang, "gui.licenses.filter")),
-            pick_list(
-                filters,
-                Some(self.license_filter),
-                Message::LicenseFilterSelected,
-            )
-            .width(160),
-            Space::with_width(8),
-            text(self.license_filter.label(self.lang)).size(13),
-        ]
-        .padding(8)
-        .spacing(8)
-        .align_y(iced::Alignment::Center);
-
-        let intro = text(t(self.lang, "gui.licenses.intro")).size(13);
-
-        let header = row![
-            text(t(self.lang, "gui.licenses.col.kind")).width(Length::FillPortion(2)),
-            text(t(self.lang, "gui.licenses.col.name")).width(Length::FillPortion(4)),
-            text(t(self.lang, "gui.licenses.col.license")).width(Length::FillPortion(3)),
-            text(t(self.lang, "gui.licenses.col.purpose")).width(Length::FillPortion(4)),
-            text(t(self.lang, "gui.licenses.col.note")).width(Length::FillPortion(4)),
-        ]
-        .padding([4, 8])
-        .spacing(8);
-
-        let mut list_col = Column::new().spacing(4).padding(4);
-        for item in catalog()
-            .iter()
-            .filter(|c| self.license_filter.matches(c.kind))
-        {
-            list_col = list_col.push(
-                container(
-                    row![
-                        text(item.kind.label(self.lang)).width(Length::FillPortion(2)),
-                        text(item.name).width(Length::FillPortion(4)),
-                        text(item.license).width(Length::FillPortion(3)),
-                        text(item.purpose(self.lang)).width(Length::FillPortion(4)),
-                        text(item.note(self.lang)).width(Length::FillPortion(4)),
-                    ]
-                    .spacing(8)
-                    .align_y(iced::Alignment::Center),
-                )
-                .padding(6),
+        let mut filter_pills = row![].spacing(4).align_y(Alignment::Center);
+        for f in LicenseFilter::all() {
+            let filter = *f;
+            let active = self.license_filter == filter;
+            filter_pills = filter_pills.push(
+                button(text(filter.label(self.lang)).size(11))
+                    .padding([5, 10])
+                    .style(move |th, st| {
+                        let mut s = theme::btn_ghost(th, st);
+                        let tk = theme::tokens(th);
+                        if active {
+                            s.background = Some(Background::Color(tk.accent_soft));
+                            s.text_color = tk.accent;
+                        } else {
+                            s.text_color = tk.text_2;
+                        }
+                        s.border.radius = theme::SMALL_RADIUS.into();
+                        s
+                    })
+                    .on_press(Message::LicenseFilterSelected(filter)),
             );
         }
 
+        let toolbar = row![
+            button(text(t(self.lang, "gui.licenses.back")).size(12))
+                .padding([6, 12])
+                .style(rounded_secondary)
+                .on_press(Message::HideLicenses),
+            Space::with_width(10),
+            text(t(self.lang, "gui.licenses.title"))
+                .size(16)
+                .style(theme::text_primary),
+            Space::with_width(Length::Fill),
+            filter_pills,
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center);
+
+        let intro = text(t(self.lang, "gui.licenses.intro"))
+            .size(11)
+            .style(theme::text_secondary);
+
+        let header = container(
+            row![
+                text(t(self.lang, "gui.licenses.col.kind"))
+                    .size(11)
+                    .style(theme::text_secondary)
+                    .width(Length::FillPortion(2)),
+                text(t(self.lang, "gui.licenses.col.name"))
+                    .size(11)
+                    .style(theme::text_secondary)
+                    .width(Length::FillPortion(4)),
+                text(t(self.lang, "gui.licenses.col.license"))
+                    .size(11)
+                    .style(theme::text_secondary)
+                    .width(Length::FillPortion(3)),
+                text(t(self.lang, "gui.licenses.col.purpose"))
+                    .size(11)
+                    .style(theme::text_secondary)
+                    .width(Length::FillPortion(4)),
+                text(t(self.lang, "gui.licenses.col.note"))
+                    .size(11)
+                    .style(theme::text_secondary)
+                    .width(Length::FillPortion(4)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .padding([7, 10])
+        .width(Length::Fill)
+        .style(list_header_style);
+
+        let items: Vec<_> = catalog()
+            .iter()
+            .filter(|c| self.license_filter.matches(c.kind))
+            .collect();
+        let last = items.len().saturating_sub(1);
+        let mut list_col = Column::new();
+        for (i, item) in items.into_iter().enumerate() {
+            let kind_badge = container(
+                text(item.kind.label(self.lang))
+                    .size(10)
+                    .style(theme::text_secondary),
+            )
+            .padding([2, 6])
+            .style(|th| theme::pill(th, false));
+            let lic_badge = container(text(item.license).size(10).style(theme::text_primary))
+                .padding([2, 6])
+                .style(|th| theme::pill(th, true));
+
+            list_col = list_col.push(
+                container(
+                    row![
+                        container(kind_badge)
+                            .width(Length::FillPortion(2))
+                            .align_x(Alignment::Start),
+                        text(item.name)
+                            .size(12)
+                            .style(theme::text_primary)
+                            .width(Length::FillPortion(4)),
+                        container(lic_badge)
+                            .width(Length::FillPortion(3))
+                            .align_x(Alignment::Start),
+                        text(item.purpose(self.lang))
+                            .size(12)
+                            .style(theme::text_secondary)
+                            .width(Length::FillPortion(4)),
+                        text(item.note(self.lang))
+                            .size(11)
+                            .style(theme::text_muted)
+                            .width(Length::FillPortion(4)),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .padding([7, 10])
+                .width(Length::Fill),
+            );
+            if i != last {
+                list_col = list_col.push(
+                    container(Space::with_height(1))
+                        .width(Length::Fill)
+                        .style(theme::divider),
+                );
+            }
+        }
+
+        let table = container(
+            column![
+                header,
+                container(Space::with_height(1))
+                    .width(Length::Fill)
+                    .style(theme::divider),
+                scrollable(list_col)
+                    .style(theme::scrollable_style)
+                    .height(Length::Fill),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(theme::panel);
+
         let body = column![
             toolbar,
-            container(intro).padding(iced::Padding {
-                top: 0.0,
-                right: 12.0,
-                bottom: 8.0,
-                left: 12.0,
-            }),
-            header,
-            container(scrollable(list_col)).height(Length::Fill),
-            container(text(t(self.lang, "gui.licenses.footer")).size(12)).padding(8),
+            intro,
+            table,
+            text(t(self.lang, "gui.licenses.footer"))
+                .size(11)
+                .style(theme::text_muted),
         ]
-        .spacing(4);
+        .spacing(10)
+        .padding(16)
+        .width(Length::Fill)
+        .height(Length::Fill);
 
         container(body)
             .width(Length::Fill)
@@ -3372,28 +3509,50 @@ impl OxizipApp {
 
         let overall = column![
             row![
-                text(format!("{pct}%")).size(12),
+                text(t(self.lang, "gui.job.overall"))
+                    .size(11)
+                    .style(theme::text_secondary),
+                Space::with_width(8),
+                text(format!("{pct}%")).size(11).style(theme::text_primary),
                 Space::with_width(Length::Fill),
-                text(format!("{elapsed} / {total}")).size(11),
+                text(format!("{elapsed} / {total}"))
+                    .size(11)
+                    .style(theme::text_muted),
             ]
             .align_y(Alignment::Center),
-            progress_bar(0.0..=1.0, self.progress_fraction).height(14),
+            progress_bar(0.0..=1.0, self.progress_fraction)
+                .height(10)
+                .style(theme::progress_style),
         ]
         .spacing(4);
 
         let file_bar = column![
             row![
-                text(format!("{file_pct}%")).size(12),
+                text(t(self.lang, "gui.job.current"))
+                    .size(11)
+                    .style(theme::text_secondary),
+                Space::with_width(8),
+                text(format!("{file_pct}%"))
+                    .size(11)
+                    .style(theme::text_primary),
                 Space::with_width(Length::Fill),
-                text(format!("{file_elapsed} / {file_total}")).size(11),
+                text(format!("{file_elapsed} / {file_total}"))
+                    .size(11)
+                    .style(theme::text_muted),
             ]
             .align_y(Alignment::Center),
-            progress_bar(0.0..=1.0, self.progress_file_fraction).height(14),
+            progress_bar(0.0..=1.0, self.progress_file_fraction)
+                .height(10)
+                .style(theme::progress_style),
         ]
         .spacing(4);
 
         let err: Element<'_, Message> = if let Some(err) = &self.last_error {
-            text(err.clone()).size(11).into()
+            container(text(err.clone()).size(11).style(theme::text_danger))
+                .padding([4, 8])
+                .width(Length::Fill)
+                .style(theme::error_banner)
+                .into()
         } else {
             Space::with_height(0).into()
         };
@@ -3409,39 +3568,51 @@ impl OxizipApp {
             Message::Close
         };
 
-        let actions = row![
-            checkbox(
-                t(self.lang, "gui.job.close_when_done"),
-                self.job_close_when_done
-            )
-            .on_toggle(Message::JobCloseWhenDone)
-            .text_size(11),
-            Space::with_width(8),
-            checkbox(t(self.lang, "gui.job.open_folder"), self.job_open_folder)
-                .on_toggle(Message::JobOpenFolder)
-                .text_size(11),
-            Space::with_width(Length::Fill),
-            button(text(stop_label).size(12))
-                .padding([8, 16])
-                .style(rounded_secondary)
-                .on_press(stop_msg),
+        let actions = column![
+            container(Space::with_height(1))
+                .width(Length::Fill)
+                .style(theme::divider),
+            row![
+                checkbox(
+                    t(self.lang, "gui.job.close_when_done"),
+                    self.job_close_when_done
+                )
+                .on_toggle(Message::JobCloseWhenDone)
+                .size(15)
+                .text_size(11)
+                .spacing(6)
+                .style(theme::checkbox_style),
+                Space::with_width(8),
+                checkbox(t(self.lang, "gui.job.open_folder"), self.job_open_folder)
+                    .on_toggle(Message::JobOpenFolder)
+                    .size(15)
+                    .text_size(11)
+                    .spacing(6)
+                    .style(theme::checkbox_style),
+                Space::with_width(Length::Fill),
+                button(text(stop_label).size(12))
+                    .padding([6, 16])
+                    .style(rounded_secondary)
+                    .on_press(stop_msg),
+            ]
+            .align_y(Alignment::Center)
+            .spacing(4),
         ]
-        .align_y(Alignment::Center)
-        .spacing(4);
+        .spacing(8);
 
         container(
             column![
                 overall,
-                Space::with_height(8),
-                file_bar,
                 Space::with_height(6),
-                text(current).size(12),
+                file_bar,
+                Space::with_height(4),
+                text(current).size(11).style(theme::text_secondary),
                 err,
                 Space::with_height(Length::Fill),
                 actions,
             ]
-            .spacing(2)
-            .padding(12)
+            .spacing(4)
+            .padding(14)
             .width(Length::Fill)
             .height(Length::Fill),
         )
@@ -3552,9 +3723,24 @@ impl OxizipApp {
     fn view_home(&self) -> Element<'_, Message> {
         let busy = self.is_busy();
 
+        let brand_header = column![
+            row![
+                image(self.icons.oxizip()).width(28).height(28),
+                text("Oxizip").size(18).style(theme::text_primary),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+            text(t(self.lang, "gui.home.hint"))
+                .size(12)
+                .style(theme::text_secondary),
+        ]
+        .spacing(6)
+        .align_x(Alignment::Center);
+
         let open_tile = home_glass_tile(
             self.icons.home_open(),
             t(self.lang, "gui.home.open"),
+            t(self.lang, "gui.home.open_desc"),
             if busy {
                 None
             } else {
@@ -3564,6 +3750,7 @@ impl OxizipApp {
         let create_tile = home_glass_tile(
             self.icons.home_create(),
             t(self.lang, "gui.home.create"),
+            t(self.lang, "gui.home.create_desc"),
             if busy {
                 None
             } else {
@@ -3574,44 +3761,61 @@ impl OxizipApp {
         let tiles = row![
             Space::with_width(Length::Fill),
             open_tile,
-            Space::with_width(18),
+            Space::with_width(20),
             create_tile,
             Space::with_width(Length::Fill),
         ]
         .align_y(Alignment::Center);
 
-        let err = self
-            .last_error
-            .as_ref()
-            .map(|e| text(e.clone()).size(12).style(theme::text_danger))
-            .unwrap_or_else(|| text("").size(12));
+        let err: Element<'_, Message> = if let Some(e) = &self.last_error {
+            container(text(e.clone()).size(12).style(theme::text_danger))
+                .padding([6, 12])
+                .style(theme::error_banner)
+                .into()
+        } else {
+            Space::with_height(0).into()
+        };
 
         let progress_area: Element<'_, Message> = if busy {
-            column![
-                progress_bar(0.0..=1.0, self.progress_fraction).height(8),
-                text(self.progress_detail.clone())
-                    .size(11)
-                    .style(theme::text_secondary),
-                button(t(self.lang, "gui.cancel"))
-                    .style(rounded_secondary)
-                    .on_press(Message::CancelClicked),
-            ]
-            .spacing(6)
-            .align_x(Alignment::Center)
+            container(
+                column![
+                    progress_bar(0.0..=1.0, self.progress_fraction)
+                        .height(8)
+                        .style(theme::progress_style),
+                    row![
+                        text(self.progress_detail.clone())
+                            .size(11)
+                            .style(theme::text_secondary)
+                            .width(Length::Fill),
+                        button(text(t(self.lang, "gui.cancel")).size(11))
+                            .padding([4, 12])
+                            .style(rounded_secondary)
+                            .on_press(Message::CancelClicked),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                ]
+                .spacing(6),
+            )
+            .width(360)
+            .padding(10)
+            .style(theme::panel)
             .into()
         } else {
             Space::with_height(0).into()
         };
 
         let stage = column![
-            Space::with_height(24),
             Space::with_height(Length::Fill),
+            brand_header,
+            Space::with_height(24),
             tiles,
             Space::with_height(Length::Fill),
             err,
             progress_area,
-            Space::with_height(14),
+            Space::with_height(18),
         ]
+        .spacing(8)
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(Alignment::Center);
@@ -3634,59 +3838,89 @@ impl OxizipApp {
 
         let toolbar = self.view_toolbar(busy);
 
-        let options = row![
-            text(t(self.lang, "gui.format")).size(12),
-            pick_list(
-                formats,
-                Some(FormatLabel(self.create_format)),
-                Message::FormatSelected,
-            )
-            .width(80),
-            Space::with_width(8),
-            text(t(self.lang, "gui.method")).size(12),
-            pick_list(methods, Some(self.create_method), Message::MethodSelected,).width(90),
-            Space::with_width(8),
-            text(t(self.lang, "gui.password")).size(12),
-            text_input("", &self.password)
-                .secure(true)
-                .on_input(Message::PasswordChanged)
-                .width(100),
-            Space::with_width(Length::Fill),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center);
+        let options = container(
+            row![
+                text(t(self.lang, "gui.format"))
+                    .size(11)
+                    .style(theme::text_secondary),
+                pick_list(
+                    formats,
+                    Some(FormatLabel(self.create_format)),
+                    Message::FormatSelected,
+                )
+                .text_size(12)
+                .padding([4, 8])
+                .style(theme::pick_list_style)
+                .menu_style(theme::pick_menu_style)
+                .width(78),
+                Space::with_width(6),
+                text(t(self.lang, "gui.method"))
+                    .size(11)
+                    .style(theme::text_secondary),
+                pick_list(methods, Some(self.create_method), Message::MethodSelected)
+                    .text_size(12)
+                    .padding([4, 8])
+                    .style(theme::pick_list_style)
+                    .menu_style(theme::pick_menu_style)
+                    .width(92),
+                Space::with_width(6),
+                text(t(self.lang, "gui.password"))
+                    .size(11)
+                    .style(theme::text_secondary),
+                text_input("", &self.password)
+                    .secure(true)
+                    .size(12)
+                    .padding([4, 8])
+                    .style(theme::input_style)
+                    .on_input(Message::PasswordChanged)
+                    .width(120),
+                Space::with_width(Length::Fill),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .padding([5, 10])
+        .width(Length::Fill)
+        .style(theme::panel);
 
-        let err = self
-            .last_error
-            .as_ref()
-            .map(|e| text(e.clone()).size(12))
-            .unwrap_or_else(|| text("").size(12));
+        let err: Element<'_, Message> = if let Some(e) = &self.last_error {
+            container(text(e.clone()).size(12).style(theme::text_danger))
+                .padding([6, 10])
+                .width(Length::Fill)
+                .style(theme::error_banner)
+                .into()
+        } else {
+            Space::with_height(0).into()
+        };
 
         let progress_row: Element<'_, Message> = if busy {
-            column![
-                progress_bar(0.0..=1.0, self.progress_fraction).height(8),
-                text(self.progress_detail.clone()).size(11),
-            ]
-            .spacing(4)
+            container(
+                column![
+                    progress_bar(0.0..=1.0, self.progress_fraction)
+                        .height(6)
+                        .style(theme::progress_style),
+                    text(self.progress_detail.clone())
+                        .size(11)
+                        .style(theme::text_secondary),
+                ]
+                .spacing(4),
+            )
+            .padding([6, 10])
+            .width(Length::Fill)
+            .style(theme::panel)
             .into()
         } else {
             Space::with_height(0).into()
         };
 
-        let status_icon = match self.archive_format {
-            Some(fmt) => self.icons.for_format(fmt),
-            None => self.icons.oxizip(),
-        };
-        let status_row = row![
-            image(status_icon).width(18).height(18),
-            text(self.status.clone()).size(12),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
-
         let mut workspace = column![]
-            .spacing(6)
-            .padding(12)
+            .spacing(8)
+            .padding(iced::Padding {
+                top: 10.0,
+                right: 12.0,
+                bottom: 8.0,
+                left: 12.0,
+            })
             .width(Length::Fill)
             .height(Length::Fill);
         if self.prefs.toolbar != ToolbarSize::Hidden {
@@ -3698,102 +3932,214 @@ impl OxizipApp {
         }
         if !self.find_filter.is_empty() {
             workspace = workspace.push(
-                text(format!(
-                    "{}: {}",
-                    t(self.lang, "gui.find.title"),
-                    self.find_filter
-                ))
-                .size(12),
+                container(
+                    row![
+                        text(format!(
+                            "{}: {}",
+                            t(self.lang, "gui.find.title"),
+                            self.find_filter
+                        ))
+                        .size(11)
+                        .style(theme::text_primary)
+                        .width(Length::Fill),
+                        button(text("×").size(12))
+                            .padding([1, 6])
+                            .style(rounded_text_btn)
+                            .on_press(Message::FindClear),
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .padding([4, 10])
+                .width(Length::Fill)
+                .style(|th| theme::pill(th, true)),
             );
         }
-        if self.prefs.show_status_bar {
-            workspace = workspace.push(status_row);
+        if self.last_error.is_some() {
+            workspace = workspace.push(err);
         }
-        workspace = workspace
-            .push(err)
-            .push(progress_row)
-            .push(self.view_entry_browser(busy));
+        if busy {
+            workspace = workspace.push(progress_row);
+        }
+        workspace = workspace.push(self.view_entry_browser(busy));
 
-        container(workspace)
+        let mut outer = column![workspace].width(Length::Fill).height(Length::Fill);
+
+        if self.prefs.show_status_bar {
+            let status_icon = match self.archive_format {
+                Some(fmt) => self.icons.for_format(fmt),
+                None => self.icons.oxizip(),
+            };
+            let visible_count = self.visible_indices().len();
+            let sel_count = self.selected.len();
+            let counts = if sel_count > 0 {
+                format!(
+                    "{} {}  ·  {} {}",
+                    visible_count,
+                    t(self.lang, "gui.status.items"),
+                    sel_count,
+                    t(self.lang, "gui.status.selected")
+                )
+            } else {
+                format!("{} {}", visible_count, t(self.lang, "gui.status.items"))
+            };
+            let status_bar = container(
+                row![
+                    image(status_icon).width(15).height(15),
+                    text(self.status.clone())
+                        .size(11)
+                        .style(theme::text_secondary)
+                        .width(Length::Fill),
+                    text(counts).size(11).style(theme::text_muted),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding([6, 12])
+            .width(Length::Fill)
+            .style(theme::status_bar);
+            outer = outer.push(status_bar);
+        }
+
+        container(outer)
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
     }
 
     fn view_toolbar(&self, busy: bool) -> Element<'_, Message> {
-        let label_size = if matches!(self.prefs.toolbar, ToolbarSize::Small) {
-            11.0
-        } else {
-            13.0
-        };
-        let specs = [
-            (
-                self.prefs.toolbar_buttons.close,
-                "gui.close_archive",
-                Message::CloseArchive,
-                false,
-            ),
-            (
-                self.prefs.toolbar_buttons.open,
-                "gui.open_archive",
-                Message::OpenClicked,
-                false,
-            ),
-            (
-                self.prefs.toolbar_buttons.extract,
-                "gui.extract",
-                Message::ExtractClicked,
-                true,
-            ),
-            (
-                self.prefs.toolbar_buttons.extract_here,
-                "gui.extract_here",
-                Message::ExtractHereClicked,
-                false,
-            ),
-            (
-                self.prefs.toolbar_buttons.extract_smart,
-                "gui.extract_smart",
-                Message::ExtractSmartClicked,
-                false,
-            ),
-            (
-                self.prefs.toolbar_buttons.test,
-                "gui.test",
-                Message::TestClicked,
-                false,
-            ),
-            (
-                self.prefs.toolbar_buttons.add,
-                "gui.add",
-                Message::AddClicked,
-                false,
-            ),
-            (
-                self.prefs.toolbar_buttons.create,
-                "gui.create",
-                Message::CreateClicked,
-                false,
-            ),
-            (true, "gui.cancel", Message::CancelClicked, false),
-        ];
-        let mut tools = row![].spacing(6).align_y(Alignment::Center);
-        for (visible, key, msg, primary) in specs {
-            let is_cancel = matches!(msg, Message::CancelClicked);
-            if !visible && !is_cancel {
-                continue;
-            }
-            let style = if primary {
+        let tk = theme::tokens(&self.ui_theme);
+        let small = matches!(self.prefs.toolbar, ToolbarSize::Small);
+        let label_size = if small { 11.0 } else { 12.0 };
+        let icon_size = if small { 13.0 } else { 14.0 };
+        let pad = if small { [4, 8] } else { [6, 10] };
+
+        let make_btn = |icon: icons::UiIcon,
+                        key: &'static str,
+                        msg: Message,
+                        primary: bool,
+                        enabled: bool|
+         -> Element<'_, Message> {
+            let fg = if !enabled {
+                tk.text_3
+            } else if primary {
+                Color::WHITE
+            } else {
+                tk.text
+            };
+            let content = row![
+                icons::ui_svg(icon, icon_size, fg),
+                text(t(self.lang, key)).size(label_size),
+            ]
+            .spacing(5)
+            .align_y(Alignment::Center);
+            let mut btn = button(content).padding(pad).style(if primary {
                 rounded_primary
             } else {
                 rounded_secondary
-            };
-            let mut btn = button(text(t(self.lang, key)).size(label_size)).style(style);
-            let enabled = if is_cancel { busy } else { !busy };
+            });
             if enabled {
                 btn = btn.on_press(msg);
             }
-            tools = tools.push(btn);
+            btn.into()
+        };
+
+        let tb = &self.prefs.toolbar_buttons;
+        type ToolbarGroup<'a> = &'a [(bool, icons::UiIcon, &'static str, Message, bool)];
+        let groups: [ToolbarGroup<'_>; 3] = [
+            &[
+                (
+                    tb.open,
+                    icons::UiIcon::Open,
+                    "gui.open_archive",
+                    Message::OpenClicked,
+                    false,
+                ),
+                (
+                    tb.close,
+                    icons::UiIcon::Close,
+                    "gui.close_archive",
+                    Message::CloseArchive,
+                    false,
+                ),
+            ],
+            &[
+                (
+                    tb.extract,
+                    icons::UiIcon::Extract,
+                    "gui.extract",
+                    Message::ExtractClicked,
+                    true,
+                ),
+                (
+                    tb.extract_here,
+                    icons::UiIcon::ExtractHere,
+                    "gui.extract_here",
+                    Message::ExtractHereClicked,
+                    false,
+                ),
+                (
+                    tb.extract_smart,
+                    icons::UiIcon::Smart,
+                    "gui.extract_smart",
+                    Message::ExtractSmartClicked,
+                    false,
+                ),
+                (
+                    tb.test,
+                    icons::UiIcon::Test,
+                    "gui.test",
+                    Message::TestClicked,
+                    false,
+                ),
+            ],
+            &[
+                (
+                    tb.add,
+                    icons::UiIcon::Add,
+                    "gui.add",
+                    Message::AddClicked,
+                    false,
+                ),
+                (
+                    tb.create,
+                    icons::UiIcon::Create,
+                    "gui.create",
+                    Message::CreateClicked,
+                    false,
+                ),
+            ],
+        ];
+
+        let mut tools = row![].spacing(5).align_y(Alignment::Center);
+        let mut any_prev = false;
+        for group in groups {
+            let visible_items: Vec<_> = group.iter().filter(|s| s.0).collect();
+            if visible_items.is_empty() {
+                continue;
+            }
+            if any_prev {
+                tools = tools.push(
+                    container(Space::with_width(1))
+                        .height(20)
+                        .style(theme::divider),
+                );
+            }
+            for (visible, icon, key, msg, primary) in visible_items {
+                if *visible {
+                    tools = tools.push(make_btn(*icon, key, msg.clone(), *primary, !busy));
+                }
+            }
+            any_prev = true;
+        }
+        if busy {
+            tools = tools.push(Space::with_width(Length::Fill));
+            tools = tools.push(make_btn(
+                icons::UiIcon::Close,
+                "gui.cancel",
+                Message::CancelClicked,
+                false,
+                true,
+            ));
         }
         tools.into()
     }
@@ -3819,11 +4165,15 @@ impl OxizipApp {
             ListViewMode::Icons => self.view_icon_grid(busy, &indices, 32.0, 4),
             ListViewMode::LargeIcons => self.view_icon_grid(busy, &indices, 48.0, 3),
         };
-        let list_box = container(scrollable(list).height(Length::Fill))
-            .style(list_box_style)
-            .padding(4)
-            .width(Length::Fill)
-            .height(Length::Fill);
+        let list_box = container(
+            scrollable(list)
+                .style(theme::scrollable_style)
+                .height(Length::Fill),
+        )
+        .style(list_box_style)
+        .padding(4)
+        .width(Length::Fill)
+        .height(Length::Fill);
         if self.prefs.show_tree {
             row![self.view_tree(), list_box]
                 .spacing(8)
@@ -3835,43 +4185,94 @@ impl OxizipApp {
     }
 
     fn view_tree(&self) -> Element<'_, Message> {
+        let tk = theme::tokens(&self.ui_theme);
         let mut folders = BTreeSet::new();
         for entry in &self.entries {
             if let Some(folder) = top_folder(&entry.name, entry.is_dir) {
                 folders.insert(folder);
             }
         }
-        let all_style = rounded_text_btn;
-        let mut col = column![button(text(t(self.lang, "gui.tree.all")).size(12))
-            .style(all_style)
-            .on_press(Message::SetTreePrefix(None))]
+        let all_active = self.tree_prefix.is_none();
+        let mut col = column![button(
+            row![
+                icons::ui_svg(
+                    icons::UiIcon::Folder,
+                    14.0,
+                    if all_active { tk.accent } else { tk.text_2 }
+                ),
+                text(t(self.lang, "gui.tree.all")).size(12),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .width(Length::Fill)
+        .padding([5, 8])
+        .style(move |th, st| {
+            let mut s = theme::btn_ghost(th, st);
+            if all_active {
+                let t = theme::tokens(th);
+                s.background = Some(Background::Color(t.accent_soft));
+                s.text_color = t.accent;
+            }
+            s
+        })
+        .on_press(Message::SetTreePrefix(None))]
         .spacing(2)
-        .padding(4);
+        .padding(6);
         for folder in folders {
             let label = folder.clone();
+            let active = self.tree_prefix.as_deref() == Some(label.as_str())
+                || self.tree_prefix.as_deref() == Some(&format!("{label}/"));
             col = col.push(
-                button(text(label.clone()).size(12))
-                    .style(rounded_text_btn)
-                    .on_press(Message::SetTreePrefix(Some(label))),
+                button(
+                    row![
+                        icons::ui_svg(
+                            icons::UiIcon::Folder,
+                            14.0,
+                            if active { tk.accent } else { tk.text_2 }
+                        ),
+                        text(label.clone()).size(12),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .padding([5, 8])
+                .style(move |th, st| {
+                    let mut s = theme::btn_ghost(th, st);
+                    if active {
+                        let t = theme::tokens(th);
+                        s.background = Some(Background::Color(t.accent_soft));
+                        s.text_color = t.accent;
+                    }
+                    s
+                })
+                .on_press(Message::SetTreePrefix(Some(label))),
             );
         }
-        container(scrollable(col).height(Length::Fill))
-            .width(Length::Fixed(140.0))
-            .height(Length::Fill)
-            .style(list_box_style)
-            .into()
+        container(
+            scrollable(col)
+                .style(theme::scrollable_style)
+                .height(Length::Fill),
+        )
+        .width(Length::Fixed(152.0))
+        .height(Length::Fill)
+        .style(list_box_style)
+        .into()
     }
 
     fn view_details(&self, busy: bool, indices: &[usize]) -> Element<'_, Message> {
-        let accent = theme::tokens(&self.ui_theme).accent;
         let mut header = row![
             checkbox(
                 "",
                 indices.iter().all(|i| self.selected.contains(i)) && !indices.is_empty()
             )
+            .size(15)
+            .style(theme::checkbox_style)
             .on_toggle(|_| Message::ToggleSelectAll),
             text(t(self.lang, "gui.col.name"))
-                .size(12)
+                .size(11)
+                .style(theme::text_secondary)
                 .width(Length::Fill),
         ]
         .spacing(6)
@@ -3879,51 +4280,59 @@ impl OxizipApp {
         if self.prefs.columns.size {
             header = header.push(
                 text(t(self.lang, "gui.col.size"))
-                    .size(12)
+                    .size(11)
+                    .style(theme::text_secondary)
+                    .align_x(Alignment::End)
                     .width(Length::Fixed(72.0)),
             );
         }
         if self.prefs.columns.compressed {
             header = header.push(
                 text(t(self.lang, "gui.col.compressed"))
-                    .size(12)
+                    .size(11)
+                    .style(theme::text_secondary)
+                    .align_x(Alignment::End)
                     .width(Length::Fixed(72.0)),
             );
         }
         if self.prefs.columns.method {
             header = header.push(
                 text(t(self.lang, "gui.col.method"))
-                    .size(12)
-                    .width(Length::Fixed(64.0)),
+                    .size(11)
+                    .style(theme::text_secondary)
+                    .width(Length::Fixed(60.0)),
             );
         }
         if self.prefs.columns.modified {
             header = header.push(
                 text(t(self.lang, "gui.col.modified"))
-                    .size(12)
-                    .width(Length::Fixed(118.0)),
+                    .size(11)
+                    .style(theme::text_secondary)
+                    .width(Length::Fixed(116.0)),
             );
         }
         if self.prefs.columns.kind {
             header = header.push(
                 text(t(self.lang, "gui.col.kind"))
-                    .size(12)
-                    .width(Length::Fixed(56.0)),
+                    .size(11)
+                    .style(theme::text_secondary)
+                    .width(Length::Fixed(50.0)),
             );
         }
-        header = header.push(Space::with_width(Length::Fixed(92.0)));
-        let mut col =
-            column![container(header)
-                .padding([4, 6])
+        header = header.push(Space::with_width(Length::Fixed(76.0)));
+        let mut col = column![
+            container(header)
+                .padding([5, 6])
                 .width(Length::Fill)
-                .style(move |theme| {
-                    let mut style = list_header_style(theme);
-                    style.border.color = accent;
-                    style
-                })]
-            .spacing(2);
+                .style(list_header_style),
+            container(Space::with_height(1))
+                .width(Length::Fill)
+                .style(theme::divider),
+        ]
+        .spacing(2);
         if self.prefs.show_dotdot && self.tree_prefix.is_some() {
             let up = button(text("[..]").size(12))
+                .padding([3, 6])
                 .style(rounded_text_btn)
                 .on_press(Message::SetTreePrefix(None));
             col = col.push(container(up).padding([2, 4]).width(Length::Fill));
@@ -3937,16 +4346,22 @@ impl OxizipApp {
     }
 
     fn detail_row(&self, index: usize, entry: &EntryMeta, busy: bool) -> Element<'_, Message> {
+        let tk = theme::tokens(&self.ui_theme);
         let selected = self.selected.contains(&index);
-        let name = if entry.is_dir {
-            format!("[DIR] {}", entry.name)
+        let display_name = entry
+            .name
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(&entry.name)
+            .to_string();
+        let entry_icon: Element<'_, Message> = if entry.is_dir {
+            icons::ui_svg(icons::UiIcon::Folder, 15.0, tk.accent)
         } else {
-            entry.name.clone()
-        };
-        let icon = if entry.is_dir {
-            self.icons.oxizip()
-        } else {
-            self.icons.for_path_name(&entry.name)
+            image(self.icons.for_path_name(&entry.name))
+                .width(16)
+                .height(16)
+                .into()
         };
         let name_msg = if entry.is_dir {
             let prefix = if entry.name.ends_with('/') {
@@ -3959,17 +4374,25 @@ impl OxizipApp {
             Message::OpenEntry(index)
         };
         let name_widget: Element<'_, Message> = if self.prefs.single_click_open && !busy {
-            button(text(name).size(12))
+            button(text(display_name).size(12))
+                .padding([2, 4])
                 .style(rounded_text_btn)
                 .on_press(name_msg)
                 .width(Length::Fill)
                 .into()
         } else {
-            text(name).size(12).width(Length::Fill).into()
+            text(display_name)
+                .size(12)
+                .style(theme::text_primary)
+                .width(Length::Fill)
+                .into()
         };
         let mut line = row![
-            checkbox("", selected).on_toggle(move |_| Message::ToggleSelect(index)),
-            image(icon).width(16).height(16),
+            checkbox("", selected)
+                .size(15)
+                .style(theme::checkbox_style)
+                .on_toggle(move |_| Message::ToggleSelect(index)),
+            entry_icon,
             name_widget,
         ]
         .spacing(6)
@@ -3978,25 +4401,43 @@ impl OxizipApp {
             let size = entry
                 .uncompressed_size
                 .map(human_size)
-                .unwrap_or_else(|| "-".into());
-            line = line.push(text(size).size(12).width(Length::Fixed(72.0)));
+                .unwrap_or_else(|| "—".into());
+            line = line.push(
+                text(size)
+                    .size(12)
+                    .style(theme::text_secondary)
+                    .align_x(Alignment::End)
+                    .width(Length::Fixed(72.0)),
+            );
         }
         if self.prefs.columns.compressed {
             let size = entry
                 .compressed_size
                 .map(human_size)
-                .unwrap_or_else(|| "-".into());
-            line = line.push(text(size).size(12).width(Length::Fixed(72.0)));
+                .unwrap_or_else(|| "—".into());
+            line = line.push(
+                text(size)
+                    .size(12)
+                    .style(theme::text_secondary)
+                    .align_x(Alignment::End)
+                    .width(Length::Fixed(72.0)),
+            );
         }
         if self.prefs.columns.method {
-            let method = entry.method.clone().unwrap_or_else(|| "-".into());
-            line = line.push(text(method).size(12).width(Length::Fixed(64.0)));
+            let method = entry.method.clone().unwrap_or_else(|| "—".into());
+            line = line.push(
+                text(method)
+                    .size(11)
+                    .style(theme::text_muted)
+                    .width(Length::Fixed(60.0)),
+            );
         }
         if self.prefs.columns.modified {
             line = line.push(
                 text(fmt_modified(entry.modified))
                     .size(11)
-                    .width(Length::Fixed(118.0)),
+                    .style(theme::text_muted)
+                    .width(Length::Fixed(116.0)),
             );
         }
         if self.prefs.columns.kind {
@@ -4009,10 +4450,17 @@ impl OxizipApp {
                     .map(|e| e.to_ascii_uppercase())
                     .unwrap_or_else(|| "—".into())
             };
-            line = line.push(text(kind).size(12).width(Length::Fixed(56.0)));
+            line = line.push(
+                text(kind)
+                    .size(11)
+                    .style(theme::text_muted)
+                    .width(Length::Fixed(50.0)),
+            );
         }
         let open_btn = {
-            let b = button(text(t(self.lang, "gui.open_entry")).size(12)).style(rounded_text_btn);
+            let b = button(text(t(self.lang, "gui.open_entry")).size(11))
+                .padding([2, 6])
+                .style(rounded_text_btn);
             if busy || entry.is_dir {
                 b
             } else {
@@ -4020,7 +4468,9 @@ impl OxizipApp {
             }
         };
         let del_btn = {
-            let b = button(text(t(self.lang, "gui.delete_entry")).size(12)).style(rounded_text_btn);
+            let b = button(text(t(self.lang, "gui.delete_entry")).size(11))
+                .padding([2, 6])
+                .style(rounded_text_btn);
             if busy {
                 b
             } else {
@@ -4037,21 +4487,22 @@ impl OxizipApp {
         } else {
             line.into()
         };
-        container(row_body)
-            .padding([2, 4])
+        let row_container = container(row_body)
+            .padding([3, 6])
             .width(Length::Fill)
-            .style(move |theme: &Theme| {
-                let mut style = row_style(theme, selected);
-                if show_grid {
-                    style.border = Border {
-                        color: theme::tokens(theme).border,
-                        width: 1.0,
-                        radius: 0.0.into(),
-                    };
-                }
-                style
-            })
+            .style(move |theme: &Theme| row_style(theme, selected));
+
+        if show_grid {
+            column![
+                row_container,
+                container(Space::with_height(1))
+                    .width(Length::Fill)
+                    .style(theme::divider),
+            ]
             .into()
+        } else {
+            row_container.into()
+        }
     }
 
     fn view_name_rows(
@@ -4062,30 +4513,37 @@ impl OxizipApp {
         show_icon: bool,
     ) -> Element<'_, Message> {
         let _ = busy;
+        let tk = theme::tokens(&self.ui_theme);
         let mut col = column![].spacing(2);
         for index in indices {
             let Some(entry) = self.entries.get(*index) else {
                 continue;
             };
             let selected = self.selected.contains(index);
-            let mut line = row![checkbox("", selected).on_toggle({
-                let index = *index;
-                move |_| Message::ToggleSelect(index)
-            })]
+            let mut line = row![checkbox("", selected)
+                .size(15)
+                .style(theme::checkbox_style)
+                .on_toggle({
+                    let index = *index;
+                    move |_| Message::ToggleSelect(index)
+                })]
             .spacing(6)
             .align_y(Alignment::Center);
             if show_icon {
-                let icon = if entry.is_dir {
-                    self.icons.oxizip()
+                let icon_el: Element<'_, Message> = if entry.is_dir {
+                    icons::ui_svg(icons::UiIcon::Folder, icon_px, tk.accent)
                 } else {
-                    self.icons.for_path_name(&entry.name)
+                    image(self.icons.for_path_name(&entry.name))
+                        .width(icon_px)
+                        .height(icon_px)
+                        .into()
                 };
-                line = line.push(image(icon).width(icon_px).height(icon_px));
+                line = line.push(icon_el);
             }
             line = line.push(text(entry.name.clone()).size(12));
             col = col.push(
                 container(line)
-                    .padding([2, 4])
+                    .padding([3, 6])
                     .width(Length::Fill)
                     .style(move |theme: &Theme| row_style(theme, selected)),
             );
@@ -4101,6 +4559,7 @@ impl OxizipApp {
         per_row: usize,
     ) -> Element<'_, Message> {
         let _ = busy;
+        let tk = theme::tokens(&self.ui_theme);
         let mut col = column![].spacing(8);
         let mut line = row![].spacing(8);
         let mut count = 0usize;
@@ -4109,23 +4568,22 @@ impl OxizipApp {
                 continue;
             };
             let selected = self.selected.contains(index);
-            let icon = if entry.is_dir {
-                self.icons.oxizip()
+            let icon_el: Element<'_, Message> = if entry.is_dir {
+                icons::ui_svg(icons::UiIcon::Folder, icon_px, tk.accent)
             } else {
-                self.icons.for_path_name(&entry.name)
+                image(self.icons.for_path_name(&entry.name))
+                    .width(icon_px)
+                    .height(icon_px)
+                    .into()
             };
-            let cell = column![
-                image(icon).width(icon_px).height(icon_px),
-                text(entry.name.clone()).size(11),
-            ]
-            .spacing(4)
-            .align_x(Alignment::Center)
-            .width(Length::Fixed(icon_px + 36.0));
+            let cell = column![icon_el, text(entry.name.clone()).size(11)]
+                .spacing(6)
+                .align_x(Alignment::Center)
+                .width(Length::Fixed(icon_px + 42.0));
             let index = *index;
             line = line.push(
                 button(cell)
-                    .style(rounded_text_btn)
-                    .on_press(Message::ToggleSelect(index))
+                    .padding([8, 6])
                     .style(move |theme, status| {
                         let mut style = rounded_text_btn(theme, status);
                         if selected {
@@ -4133,7 +4591,8 @@ impl OxizipApp {
                                 Some(Background::Color(theme::tokens(theme).accent_soft));
                         }
                         style
-                    }),
+                    })
+                    .on_press(Message::ToggleSelect(index)),
             );
             count += 1;
             if count >= per_row {
@@ -4160,82 +4619,162 @@ impl OxizipApp {
     }
 
     fn view_overlay(&self) -> Element<'_, Message> {
+        let color_swatch = |hex: u32, label_key: &'static str, accent: ColorAccent| {
+            let active = self.prefs.color_accent == accent;
+            let swatch = container(Space::new(14, 14)).style(move |_th: &Theme| {
+                iced::widget::container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(
+                        (hex >> 16) as u8,
+                        (hex >> 8) as u8,
+                        hex as u8,
+                    ))),
+                    border: Border {
+                        radius: 7.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            });
+            button(
+                row![
+                    swatch,
+                    text(t(self.lang, label_key)).size(12).width(Length::Fill),
+                    if active {
+                        text("✓").size(12).style(theme::text_primary)
+                    } else {
+                        text("").size(12)
+                    },
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .padding([8, 12])
+            .style(rounded_secondary)
+            .on_press(Message::ColorPicked(accent))
+        };
+
         let card = match self.overlay {
             Overlay::None => return Space::with_height(0).into(),
             Overlay::About => self.overlay_card(
                 t(self.lang, "gui.about.title"),
                 column![
-                    text(format!("Oxizip {}", env!("CARGO_PKG_VERSION"))).size(14),
-                    text(t(self.lang, "gui.about.body")).size(12),
-                    button(text(t(self.lang, "gui.dialog.close")).size(12))
-                        .style(rounded_primary)
-                        .on_press(Message::DismissOverlay),
+                    row![
+                        image(self.icons.oxizip()).width(36).height(36),
+                        column![
+                            text(format!("Oxizip {}", env!("CARGO_PKG_VERSION")))
+                                .size(15)
+                                .style(theme::text_primary),
+                            text("AGPL-3.0-only").size(11).style(theme::text_muted),
+                        ]
+                        .spacing(2),
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                    text(t(self.lang, "gui.about.body"))
+                        .size(12)
+                        .style(theme::text_secondary),
+                    row![
+                        Space::with_width(Length::Fill),
+                        button(text(t(self.lang, "gui.dialog.close")).size(12))
+                            .padding([6, 16])
+                            .style(rounded_primary)
+                            .on_press(Message::DismissOverlay),
+                    ],
                 ]
-                .spacing(8),
+                .spacing(12),
             ),
             Overlay::Comment => self.overlay_card(
                 t(self.lang, "gui.comment.title"),
                 column![
                     text_input("", &self.dialog_text)
+                        .size(12)
+                        .padding([6, 8])
+                        .style(theme::input_style)
                         .on_input(Message::DialogTextChanged)
                         .width(Length::Fill),
                     row![
-                        button(text(t(self.lang, "gui.comment.save")).size(12))
-                            .style(rounded_primary)
-                            .on_press(Message::CommentSave),
+                        Space::with_width(Length::Fill),
                         button(text(t(self.lang, "gui.dialog.cancel")).size(12))
+                            .padding([6, 14])
                             .style(rounded_secondary)
                             .on_press(Message::DismissOverlay),
+                        button(text(t(self.lang, "gui.comment.save")).size(12))
+                            .padding([6, 14])
+                            .style(rounded_primary)
+                            .on_press(Message::CommentSave),
                     ]
                     .spacing(8),
                 ]
-                .spacing(8),
+                .spacing(12),
             ),
             Overlay::Rename => self.overlay_card(
                 t(self.lang, "gui.rename.title"),
                 column![
-                    text(t(self.lang, "gui.rename.name")).size(12),
+                    text(t(self.lang, "gui.rename.name"))
+                        .size(12)
+                        .style(theme::text_secondary),
                     text_input("", &self.dialog_text)
+                        .size(12)
+                        .padding([6, 8])
+                        .style(theme::input_style)
                         .on_input(Message::DialogTextChanged)
                         .on_submit(Message::RenameConfirm)
                         .width(Length::Fill),
                     row![
-                        button(text(t(self.lang, "gui.dialog.ok")).size(12))
-                            .style(rounded_primary)
-                            .on_press(Message::RenameConfirm),
+                        Space::with_width(Length::Fill),
                         button(text(t(self.lang, "gui.dialog.cancel")).size(12))
+                            .padding([6, 14])
                             .style(rounded_secondary)
                             .on_press(Message::DismissOverlay),
+                        button(text(t(self.lang, "gui.dialog.ok")).size(12))
+                            .padding([6, 14])
+                            .style(rounded_primary)
+                            .on_press(Message::RenameConfirm),
                     ]
                     .spacing(8),
                 ]
-                .spacing(8),
+                .spacing(10),
             ),
             Overlay::PasswordManager => self.overlay_card(
                 t(self.lang, "gui.passman.title"),
                 column![
-                    text(t(self.lang, "gui.passman.hint")).size(11),
+                    text(t(self.lang, "gui.passman.hint"))
+                        .size(11)
+                        .style(theme::text_secondary),
                     row![
                         text_input("", &self.dialog_text)
+                            .size(12)
+                            .padding([6, 8])
+                            .style(theme::input_style)
                             .on_input(Message::DialogTextChanged)
                             .width(Length::Fill),
                         button(text(t(self.lang, "gui.passman.add")).size(12))
+                            .padding([6, 12])
                             .style(rounded_secondary)
                             .on_press(Message::PassmanAdd),
                     ]
-                    .spacing(6),
+                    .spacing(8),
                     self.view_password_list(),
-                    button(text(t(self.lang, "gui.dialog.close")).size(12))
-                        .style(rounded_primary)
-                        .on_press(Message::DismissOverlay),
+                    row![
+                        Space::with_width(Length::Fill),
+                        button(text(t(self.lang, "gui.dialog.close")).size(12))
+                            .padding([6, 16])
+                            .style(rounded_primary)
+                            .on_press(Message::DismissOverlay),
+                    ],
                 ]
-                .spacing(8),
+                .spacing(10),
             ),
             Overlay::Recover => self.overlay_card(
                 t(self.lang, "gui.recover.title"),
                 column![
-                    text(t(self.lang, "gui.recover.hint")).size(11),
-                    text(t(self.lang, "gui.recover.wordlist")).size(12),
+                    text(t(self.lang, "gui.recover.hint"))
+                        .size(11)
+                        .style(theme::text_secondary),
+                    text(t(self.lang, "gui.recover.wordlist"))
+                        .size(12)
+                        .style(theme::text_primary),
                     row![
                         text(if self.recover_wordlist.is_empty() {
                             "—".to_string()
@@ -4243,48 +4782,66 @@ impl OxizipApp {
                             self.recover_wordlist.clone()
                         })
                         .size(11)
+                        .style(theme::text_secondary)
                         .width(Length::Fill),
                         button(text(t(self.lang, "gui.recover.browse")).size(12))
+                            .padding([5, 12])
                             .style(rounded_secondary)
                             .on_press(Message::PickWordlist),
                     ]
-                    .spacing(6),
+                    .spacing(8)
+                    .align_y(Alignment::Center),
                     row![
-                        text(t(self.lang, "gui.recover.maxlen")).size(12),
+                        text(t(self.lang, "gui.recover.maxlen"))
+                            .size(12)
+                            .style(theme::text_primary),
                         text_input("", &self.recover_max_len)
+                            .size(12)
+                            .padding([5, 8])
+                            .style(theme::input_style)
                             .on_input(Message::RecoverMaxChanged)
-                            .width(Length::Fixed(48.0)),
+                            .width(Length::Fixed(52.0)),
                     ]
                     .spacing(8)
                     .align_y(Alignment::Center),
-                    text(self.dialog_result.as_str()).size(12),
+                    text(self.dialog_result.as_str())
+                        .size(12)
+                        .style(theme::text_secondary),
                     row![
-                        button(text(t(self.lang, "gui.recover.start")).size(12))
-                            .style(rounded_primary)
-                            .on_press(Message::RecoverStart),
+                        Space::with_width(Length::Fill),
                         button(text(t(self.lang, "gui.dialog.close")).size(12))
+                            .padding([6, 14])
                             .style(rounded_secondary)
                             .on_press(Message::DismissOverlay),
+                        button(text(t(self.lang, "gui.recover.start")).size(12))
+                            .padding([6, 14])
+                            .style(rounded_primary)
+                            .on_press(Message::RecoverStart),
                     ]
                     .spacing(8),
                 ]
-                .spacing(8),
+                .spacing(10),
             ),
             Overlay::Checksum => self.overlay_card(
                 t(self.lang, "gui.checksum.title"),
                 column![
                     container(
                         scrollable(text(self.dialog_result.as_str()).size(11))
+                            .style(theme::scrollable_style)
                             .height(Length::Fixed(180.0))
                     )
                     .style(list_box_style)
-                    .padding(6)
+                    .padding(8)
                     .width(Length::Fill),
-                    button(text(t(self.lang, "gui.dialog.close")).size(12))
-                        .style(rounded_primary)
-                        .on_press(Message::DismissOverlay),
+                    row![
+                        Space::with_width(Length::Fill),
+                        button(text(t(self.lang, "gui.dialog.close")).size(12))
+                            .padding([6, 16])
+                            .style(rounded_primary)
+                            .on_press(Message::DismissOverlay),
+                    ],
                 ]
-                .spacing(8),
+                .spacing(10),
             ),
             Overlay::Toolbar => self.overlay_card(
                 t(self.lang, "gui.toolbar.title"),
@@ -4329,49 +4886,60 @@ impl OxizipApp {
                         "gui.create",
                         self.prefs.toolbar_buttons.create
                     ),
-                    button(text(t(self.lang, "gui.dialog.close")).size(12))
-                        .style(rounded_primary)
-                        .on_press(Message::DismissOverlay),
+                    Space::with_height(4),
+                    row![
+                        Space::with_width(Length::Fill),
+                        button(text(t(self.lang, "gui.dialog.close")).size(12))
+                            .padding([6, 16])
+                            .style(rounded_primary)
+                            .on_press(Message::DismissOverlay),
+                    ],
                 ]
-                .spacing(4),
+                .spacing(6),
             ),
             Overlay::Color => self.overlay_card(
                 t(self.lang, "gui.color.title"),
                 column![
-                    button(text(t(self.lang, "gui.color.brand")).size(12))
-                        .style(rounded_secondary)
-                        .on_press(Message::ColorPicked(ColorAccent::BrandBlue)),
-                    button(text(t(self.lang, "gui.color.navy")).size(12))
-                        .style(rounded_secondary)
-                        .on_press(Message::ColorPicked(ColorAccent::DeepNavy)),
-                    button(text(t(self.lang, "gui.color.teal")).size(12))
-                        .style(rounded_secondary)
-                        .on_press(Message::ColorPicked(ColorAccent::Teal)),
-                    button(text(t(self.lang, "gui.dialog.cancel")).size(12))
-                        .style(rounded_text_btn)
-                        .on_press(Message::DismissOverlay),
+                    color_swatch(0x2F6FD6, "gui.color.brand", ColorAccent::BrandBlue),
+                    color_swatch(0x1F4E8C, "gui.color.navy", ColorAccent::DeepNavy),
+                    color_swatch(0x1783A3, "gui.color.teal", ColorAccent::Teal),
+                    row![
+                        Space::with_width(Length::Fill),
+                        button(text(t(self.lang, "gui.dialog.cancel")).size(12))
+                            .padding([6, 12])
+                            .style(rounded_text_btn)
+                            .on_press(Message::DismissOverlay),
+                    ],
                 ]
-                .spacing(6),
+                .spacing(8),
             ),
             Overlay::Find => self.overlay_card(
                 t(self.lang, "gui.find.title"),
                 column![
-                    text(t(self.lang, "gui.find.hint")).size(12),
+                    text(t(self.lang, "gui.find.hint"))
+                        .size(12)
+                        .style(theme::text_secondary),
                     text_input("", &self.dialog_text)
+                        .size(12)
+                        .padding([6, 8])
+                        .style(theme::input_style)
                         .on_input(Message::DialogTextChanged)
                         .on_submit(Message::FindApply)
                         .width(Length::Fill),
                     row![
-                        button(text(t(self.lang, "gui.find.apply")).size(12))
-                            .style(rounded_primary)
-                            .on_press(Message::FindApply),
+                        Space::with_width(Length::Fill),
                         button(text(t(self.lang, "gui.find.clear")).size(12))
+                            .padding([6, 14])
                             .style(rounded_secondary)
                             .on_press(Message::FindClear),
+                        button(text(t(self.lang, "gui.find.apply")).size(12))
+                            .padding([6, 14])
+                            .style(rounded_primary)
+                            .on_press(Message::FindApply),
                     ]
                     .spacing(8),
                 ]
-                .spacing(8),
+                .spacing(10),
             ),
             Overlay::ConfirmDelete(permanent) => {
                 let hint = if permanent {
@@ -4382,18 +4950,21 @@ impl OxizipApp {
                 self.overlay_card(
                     t(self.lang, "gui.menu.file.delete"),
                     column![
-                        text(hint).size(12),
+                        text(hint).size(12).style(theme::text_secondary),
                         row![
-                            button(text(t(self.lang, "gui.dialog.ok")).size(12))
-                                .style(theme::btn_danger)
-                                .on_press(Message::ConfirmDeleteArchive),
+                            Space::with_width(Length::Fill),
                             button(text(t(self.lang, "gui.dialog.cancel")).size(12))
+                                .padding([6, 14])
                                 .style(rounded_secondary)
                                 .on_press(Message::DismissOverlay),
+                            button(text(t(self.lang, "gui.dialog.ok")).size(12))
+                                .padding([6, 14])
+                                .style(theme::btn_danger)
+                                .on_press(Message::ConfirmDeleteArchive),
                         ]
                         .spacing(8),
                     ]
-                    .spacing(8),
+                    .spacing(12),
                 )
             }
         };
@@ -4426,10 +4997,16 @@ impl OxizipApp {
         body: impl Into<Element<'a, Message>>,
     ) -> Element<'a, Message> {
         container(
-            column![text(title).size(16), body.into()]
-                .spacing(8)
-                .padding(12)
-                .width(Length::Fixed(360.0)),
+            column![
+                text(title).size(16).style(theme::text_primary),
+                container(Space::with_height(1))
+                    .width(Length::Fill)
+                    .style(theme::divider),
+                body.into(),
+            ]
+            .spacing(10)
+            .padding(18)
+            .width(Length::Fixed(380.0)),
         )
         .style(dropdown_panel_style)
         .into()
@@ -4437,7 +5014,10 @@ impl OxizipApp {
 
     fn view_password_list(&self) -> Element<'_, Message> {
         if self.prefs.passwords.is_empty() {
-            return text(t(self.lang, "gui.passman.empty")).size(12).into();
+            return text(t(self.lang, "gui.passman.empty"))
+                .size(12)
+                .style(theme::text_muted)
+                .into();
         }
         let mut col = column![].spacing(4);
         for (index, password) in self.prefs.passwords.iter().enumerate() {
@@ -4445,9 +5025,11 @@ impl OxizipApp {
                 row![
                     text(password.clone()).size(12).width(Length::Fill),
                     button(text(t(self.lang, "gui.passman.use")).size(11))
+                        .padding([2, 8])
                         .style(rounded_text_btn)
                         .on_press(Message::PassmanUse(index)),
                     button(text(t(self.lang, "gui.passman.remove")).size(11))
+                        .padding([2, 8])
                         .style(rounded_text_btn)
                         .on_press(Message::PassmanRemove(index)),
                 ]
@@ -4455,11 +5037,15 @@ impl OxizipApp {
                 .align_y(Alignment::Center),
             );
         }
-        container(scrollable(col).height(Length::Fixed(120.0)))
-            .style(list_box_style)
-            .padding(6)
-            .width(Length::Fill)
-            .into()
+        container(
+            scrollable(col)
+                .style(theme::scrollable_style)
+                .height(Length::Fixed(120.0)),
+        )
+        .style(list_box_style)
+        .padding(8)
+        .width(Length::Fill)
+        .into()
     }
 
     fn toolbar_flag_box(
@@ -4469,6 +5055,10 @@ impl OxizipApp {
         on: bool,
     ) -> Element<'_, Message> {
         checkbox(t(self.lang, key), on)
+            .size(15)
+            .text_size(12)
+            .spacing(8)
+            .style(theme::checkbox_style)
             .on_toggle(move |value| Message::ToolbarFlagToggled(flag, value))
             .into()
     }
@@ -4513,14 +5103,17 @@ pub(crate) fn dropdown_item_style(theme: &Theme, status: button::Status) -> butt
 fn home_glass_tile<'a>(
     icon: iced::widget::image::Handle,
     label: &'a str,
+    desc: &'a str,
     on_press: Option<Message>,
 ) -> Element<'a, Message> {
     let body = column![
-        container(image(icon).width(36).height(36))
+        container(image(icon).width(34).height(34))
             .padding(14)
             .style(theme::icon_badge),
-        Space::with_height(18),
+        Space::with_height(14),
         text(label).size(14).style(theme::text_primary),
+        Space::with_height(4),
+        text(desc).size(11).style(theme::text_secondary),
     ]
     .spacing(0)
     .align_x(Alignment::Center);
@@ -4528,10 +5121,10 @@ fn home_glass_tile<'a>(
     let mut btn = button(
         container(body)
             .width(Length::Fill)
-            .padding([34, 18])
+            .padding([24, 18])
             .center_x(Length::Fill),
     )
-    .width(210)
+    .width(236)
     .style(theme::home_tile);
 
     if let Some(msg) = on_press {

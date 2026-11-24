@@ -106,9 +106,9 @@ fn parse_locale_toml(path: &Path) -> Locale {
 
     let mut messages = BTreeMap::new();
     for (k, v) in messages_table {
-        let s = v.as_str().unwrap_or_else(|| {
-            panic!("{}: messages.{} must be a string", path.display(), k)
-        });
+        let s = v
+            .as_str()
+            .unwrap_or_else(|| panic!("{}: messages.{} must be a string", path.display(), k));
         messages.insert(k.clone(), s.to_string());
     }
     if messages.is_empty() {

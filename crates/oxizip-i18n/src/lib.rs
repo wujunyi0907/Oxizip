@@ -113,13 +113,7 @@ fn merge_dir(map: &mut BTreeMap<&'static str, RuntimeLocale>, dir: &Path) {
     files.sort();
     for path in files {
         if let Some(parsed) = parse_locale_file(&path) {
-            insert_locale(
-                map,
-                parsed.code,
-                parsed.cli,
-                parsed.native,
-                parsed.messages,
-            );
+            insert_locale(map, parsed.code, parsed.cli, parsed.native, parsed.messages);
         }
     }
 }

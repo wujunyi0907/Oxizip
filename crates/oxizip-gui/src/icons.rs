@@ -3,9 +3,48 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 
-use iced::widget::image as iced_image;
-use iced::window;
+use iced::widget::{image as iced_image, svg};
+use iced::{window, Color, Element};
 use oxizip_engine::FormatId;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UiIcon {
+    Folder,
+    Open,
+    Extract,
+    ExtractHere,
+    Smart,
+    Test,
+    Add,
+    Create,
+    Close,
+    Min,
+}
+
+impl UiIcon {
+    pub fn bytes(self) -> &'static [u8] {
+        match self {
+            Self::Folder => include_bytes!("../assets/icons/ui_folder.svg"),
+            Self::Open => include_bytes!("../assets/icons/ui_open.svg"),
+            Self::Extract => include_bytes!("../assets/icons/ui_extract.svg"),
+            Self::ExtractHere => include_bytes!("../assets/icons/ui_extract_here.svg"),
+            Self::Smart => include_bytes!("../assets/icons/ui_smart.svg"),
+            Self::Test => include_bytes!("../assets/icons/ui_test.svg"),
+            Self::Add => include_bytes!("../assets/icons/ui_add.svg"),
+            Self::Create => include_bytes!("../assets/icons/ui_create.svg"),
+            Self::Close => include_bytes!("../assets/icons/ui_close.svg"),
+            Self::Min => include_bytes!("../assets/icons/ui_min.svg"),
+        }
+    }
+}
+
+pub fn ui_svg<'a, M: 'a>(icon: UiIcon, size: f32, color: Color) -> Element<'a, M> {
+    svg(svg::Handle::from_memory(icon.bytes()))
+        .width(size)
+        .height(size)
+        .style(move |_, _| svg::Style { color: Some(color) })
+        .into()
+}
 
 macro_rules! ico {
     ($file:literal) => {

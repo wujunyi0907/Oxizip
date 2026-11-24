@@ -725,13 +725,7 @@ pub fn perform_install(opts: &InstallOptions, progress: &mut ProgressCb<'_>) -> 
     if cli.is_file() {
         let mut cmd = Command::new(&cli);
         let status = hide_console(&mut cmd)
-            .args([
-                "--lang",
-                &opts.lang,
-                "shell",
-                "install",
-                "--menus-only",
-            ])
+            .args(["--lang", &opts.lang, "shell", "install", "--menus-only"])
             .status()
             .map_err(InstallError::Io)?;
         if !status.success() {
@@ -791,14 +785,11 @@ pub fn resolve_install_dir(dir: Option<PathBuf>) -> PathBuf {
 
 #[cfg(windows)]
 fn norm_path_key(path: &Path) -> String {
-    let canon = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf());
+    let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let s = canon.to_string_lossy();
     // Strip Windows `\\?\` prefix from canonicalize for stable compares.
     let s = s.strip_prefix(r"\\?\").unwrap_or(&s);
-    s.trim_end_matches(['/', '\\'])
-        .to_ascii_lowercase()
+    s.trim_end_matches(['/', '\\']).to_ascii_lowercase()
 }
 
 #[cfg(windows)]
@@ -1167,9 +1158,7 @@ pub fn perform_uninstall(dir: Option<PathBuf>, progress: &mut ProgressCb<'_>) ->
     #[cfg(windows)]
     {
         let self_exe = std::env::current_exe().ok();
-        let self_in_dir = self_exe
-            .as_ref()
-            .is_some_and(|p| path_is_inside(p, &dir));
+        let self_in_dir = self_exe.as_ref().is_some_and(|p| path_is_inside(p, &dir));
         if self_in_dir {
             // Leave only this Uninstall.exe; final wipe runs when user clicks「完成」.
             let keep = self_exe.as_deref();
@@ -1294,10 +1283,7 @@ pub fn parse_cli() -> CliMode {
     };
     // Temp helper copied out of the install dir (`~xinst~temp~.exe`).
     if let Some(d) = cleanup_dir {
-        return CliMode::CleanupDir {
-            dir: d,
-            wait_pid,
-        };
+        return CliMode::CleanupDir { dir: d, wait_pid };
     }
     // If this binary was installed as Uninstall.exe, default to uninstall UI.
     if let Ok(exe) = std::env::current_exe() {

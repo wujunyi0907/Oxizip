@@ -470,8 +470,7 @@ pub fn extract_shell_job(
                     };
                 }
             };
-            let dest =
-                resolve_shell_dest(mode, dest_override.as_ref(), archive, &entries, prefs);
+            let dest = resolve_shell_dest(mode, dest_override.as_ref(), archive, &entries, prefs);
             let _ = fs::create_dir_all(&dest);
             for name in collect_conflicts(&dest, &entries) {
                 if !all_conflicts.contains(&name) {
@@ -611,9 +610,15 @@ pub fn create_archive_each(
             slot,
             lang,
         ) {
-            JobOutcome::Created { path, error: None, .. } => last = path,
+            JobOutcome::Created {
+                path, error: None, ..
+            } => last = path,
             JobOutcome::Canceled => return JobOutcome::Canceled,
-            JobOutcome::Created { path, error: Some(e), .. } => {
+            JobOutcome::Created {
+                path,
+                error: Some(e),
+                ..
+            } => {
                 return JobOutcome::Created {
                     path,
                     format,

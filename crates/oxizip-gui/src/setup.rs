@@ -72,8 +72,7 @@ fn windows_ext_associated(ext: &str) -> bool {
     use winreg::enums::*;
     use winreg::RegKey;
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let parent =
-        format!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.{ext}");
+    let parent = format!(r"Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.{ext}");
     // Classic UserChoice.
     if let Ok(k) = hkcu.open_subkey(format!("{parent}\\UserChoice")) {
         if let Ok(p) = k.get_value::<String, _>("ProgId") {

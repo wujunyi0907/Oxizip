@@ -304,10 +304,7 @@ mod tests {
                 method: None,
             },
         ];
-        assert_eq!(
-            dest_smart(archive, &entries, false),
-            PathBuf::from("/tmp")
-        );
+        assert_eq!(dest_smart(archive, &entries, false), PathBuf::from("/tmp"));
     }
 
     #[test]

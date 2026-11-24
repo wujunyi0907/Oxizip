@@ -66,6 +66,7 @@ fn toggle<'a>(label: &'a str, on: bool, msg: impl Fn(bool) -> SettingsMsg + 'a) 
             .size(16)
             .text_size(12)
             .spacing(10)
+            .style(theme::checkbox_style)
             .width(Length::Fill),
     )
     .padding([8, 0])
@@ -113,23 +114,42 @@ pub fn view_settings(state: SettingsView<'_>) -> Element<'_, SettingsMsg> {
     let lang = state.lang;
 
     let nav = SettingsTab::ALL.iter().fold(
-        Column::new().spacing(2).width(Length::Fixed(124.0)),
+        Column::new().spacing(2).width(Length::Fixed(130.0)),
         |col, tab| {
             let selected = *tab == state.tab;
-            col.push(
-                button(text(t(lang, tab.i18n_key())).size(12))
-                    .width(Length::Fill)
-                    .padding([8, 12])
-                    .style(move |th, st| {
-                        let mut s = theme::btn_ghost(th, st);
-                        if selected {
-                            let tk = theme::tokens(th);
-                            s.background = Some(iced::Background::Color(tk.accent_soft));
-                            s.text_color = tk.accent;
-                        }
-                        s
+            let indicator: El<'_> = if selected {
+                container(Space::with_width(3))
+                    .height(14)
+                    .style(|th: &iced::Theme| iced::widget::container::Style {
+                        background: Some(iced::Background::Color(theme::tokens(th).accent)),
+                        border: iced::Border {
+                            radius: 2.0.into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
                     })
-                    .on_press(SettingsMsg::Tab(*tab)),
+                    .into()
+            } else {
+                Space::with_width(3).into()
+            };
+            col.push(
+                button(
+                    row![indicator, text(t(lang, tab.i18n_key())).size(12),]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .padding([8, 10])
+                .style(move |th, st| {
+                    let mut s = theme::btn_ghost(th, st);
+                    if selected {
+                        let tk = theme::tokens(th);
+                        s.background = Some(iced::Background::Color(tk.accent_soft));
+                        s.text_color = tk.accent;
+                    }
+                    s
+                })
+                .on_press(SettingsMsg::Tab(*tab)),
             )
         },
     );
@@ -144,37 +164,55 @@ pub fn view_settings(state: SettingsView<'_>) -> Element<'_, SettingsMsg> {
         SettingsTab::Advanced => page_advanced(lang, state.prefs),
     };
 
-    let footer = row![
-        button(text(t(lang, "gui.settings.reset")).size(12))
-            .padding([8, 14])
-            .style(theme::btn_secondary)
-            .on_press(SettingsMsg::Reset),
-        text(if state.status.is_empty() {
-            " "
-        } else {
-            state.status
-        })
-        .size(11)
-        .style(theme::text_secondary)
-        .width(Length::Fill)
-        .align_x(Alignment::Center),
-        button(text(t(lang, "gui.settings.ok")).size(13))
-            .padding([8, 28])
-            .style(theme::btn_primary)
-            .on_press(SettingsMsg::Ok),
+    let footer = column![
+        container(Space::with_height(1))
+            .width(Length::Fill)
+            .style(theme::divider),
+        row![
+            button(text(t(lang, "gui.settings.reset")).size(12))
+                .padding([8, 14])
+                .style(theme::btn_secondary)
+                .on_press(SettingsMsg::Reset),
+            text(if state.status.is_empty() {
+                " "
+            } else {
+                state.status
+            })
+            .size(11)
+            .style(theme::text_secondary)
+            .width(Length::Fill)
+            .align_x(Alignment::Center),
+            button(text(t(lang, "gui.settings.ok")).size(13))
+                .padding([8, 28])
+                .style(theme::btn_primary)
+                .on_press(SettingsMsg::Ok),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
     ]
-    .spacing(8)
-    .align_y(Alignment::Center);
+    .spacing(10);
 
     let body = column![
         row![
-            container(scrollable(nav).height(Length::Fill)).padding([4, 0]),
-            container(scrollable(container(content).padding(iced::Padding {
-                top: 4.0,
-                right: 14.0,
-                bottom: 4.0,
-                left: 4.0,
-            })))
+            container(
+                scrollable(nav)
+                    .style(theme::scrollable_style)
+                    .height(Length::Fill),
+            )
+            .padding([4, 0]),
+            container(Space::with_width(1))
+                .height(Length::Fill)
+                .style(theme::divider),
+            container(
+                scrollable(container(content).padding(iced::Padding {
+                    top: 4.0,
+                    right: 14.0,
+                    bottom: 4.0,
+                    left: 4.0,
+                }))
+                .style(theme::scrollable_style)
+                .height(Length::Fill),
+            )
             .width(Length::Fill)
             .height(Length::Fill),
         ]
@@ -199,7 +237,7 @@ fn page_general(lang: Lang, prefs: &Prefs) -> El<'_> {
         None,
         vec![
             section(
-                t(lang, "gui.settings.tab.general"),
+                t(lang, "gui.settings.section.options"),
                 vec![
                     toggle(
                         t(lang, "gui.settings.general.esc"),
@@ -271,6 +309,7 @@ fn page_assoc<'a>(
                         .size(16)
                         .text_size(12)
                         .spacing(8)
+                        .style(theme::checkbox_style)
                         .width(Length::FillPortion(1)),
                 );
             }
@@ -484,7 +523,7 @@ fn page_extract(lang: Lang, prefs: &Prefs) -> El<'_> {
         t(lang, "gui.settings.extract.heading"),
         None,
         vec![section(
-            t(lang, "gui.settings.tab.extract"),
+            t(lang, "gui.settings.section.options"),
             vec![
                 toggle(
                     t(lang, "gui.settings.open_dest"),
@@ -529,6 +568,10 @@ fn page_archive(lang: Lang, prefs: &Prefs) -> El<'_> {
                 pick_list(formats, Some(FormatLabel(prefs.default_format_id())), |f| {
                     SettingsMsg::DefaultFormat(f.0)
                 })
+                .text_size(12)
+                .padding([5, 8])
+                .style(theme::pick_list_style)
+                .menu_style(theme::pick_menu_style)
                 .width(PICK_W),
             ),
             field(
@@ -537,6 +580,10 @@ fn page_archive(lang: Lang, prefs: &Prefs) -> El<'_> {
                     None => SettingsMsg::DefaultMethodAuto,
                     Some(id) => SettingsMsg::DefaultMethod(id),
                 })
+                .text_size(12)
+                .padding([5, 8])
+                .style(theme::pick_list_style)
+                .menu_style(theme::pick_menu_style)
                 .width(PICK_W),
             ),
             field(
@@ -544,13 +591,17 @@ fn page_archive(lang: Lang, prefs: &Prefs) -> El<'_> {
                 pick_list(levels, Some(LevelLabel(prefs.compression_level)), |l| {
                     SettingsMsg::CompressionLevel(l.0)
                 })
+                .text_size(12)
+                .padding([5, 8])
+                .style(theme::pick_list_style)
+                .menu_style(theme::pick_menu_style)
                 .width(PICK_W),
             ),
         ],
     );
 
     let options = section(
-        t(lang, "gui.settings.archive.heading"),
+        t(lang, "gui.settings.section.options"),
         vec![
             toggle(
                 t(lang, "gui.settings.archive.utf8"),
@@ -594,6 +645,8 @@ fn page_archive(lang: Lang, prefs: &Prefs) -> El<'_> {
                     &prefs.new_archive_folder
                 )
                 .size(12)
+                .padding([6, 8])
+                .style(theme::input_style)
                 .on_input(SettingsMsg::NewArchiveFolderChanged)
                 .width(Length::Fill),
                 small_btn("…", SettingsMsg::BrowseNewArchiveFolder),
@@ -609,6 +662,8 @@ fn page_archive(lang: Lang, prefs: &Prefs) -> El<'_> {
                     &prefs.exclude_filter
                 )
                 .size(12)
+                .padding([6, 8])
+                .style(theme::input_style)
                 .on_input(SettingsMsg::ExcludeFilterChanged),
             ]
             .spacing(6)
@@ -655,6 +710,10 @@ fn page_viewer(lang: Lang, prefs: &Prefs) -> El<'_> {
                         pick_list(accents, Some(AccentLabel(prefs.color_accent)), |a| {
                             SettingsMsg::ColorAccent(a.0)
                         })
+                        .text_size(12)
+                        .padding([5, 8])
+                        .style(theme::pick_list_style)
+                        .menu_style(theme::pick_menu_style)
                         .width(PICK_W),
                     ),
                 ],
@@ -695,7 +754,7 @@ fn page_viewer(lang: Lang, prefs: &Prefs) -> El<'_> {
 
 fn page_advanced(lang: Lang, prefs: &Prefs) -> El<'_> {
     let behavior = section(
-        t(lang, "gui.settings.advanced.heading"),
+        t(lang, "gui.settings.section.options"),
         vec![
             toggle(
                 t(lang, "gui.settings.security.zone"),
@@ -751,6 +810,8 @@ fn page_advanced(lang: Lang, prefs: &Prefs) -> El<'_> {
             pad(row![
                 text_input(t(lang, "gui.settings.advanced.temp_ph"), &prefs.temp_folder)
                     .size(12)
+                    .padding([6, 8])
+                    .style(theme::input_style)
                     .on_input(SettingsMsg::TempFolderChanged)
                     .width(Length::Fill),
                 small_btn("…", SettingsMsg::BrowseTempFolder),

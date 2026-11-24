@@ -4,7 +4,9 @@
 //! and dark modes stay consistent. Views must not hard-code colors.
 
 use iced::theme::Palette;
-use iced::widget::{button, container};
+use iced::widget::{
+    button, checkbox, container, overlay::menu, pick_list, progress_bar, scrollable, text_input,
+};
 use iced::{Background, Border, Color, Shadow, Theme, Vector};
 
 use crate::prefs::{ColorAccent, ThemeMode};
@@ -150,6 +152,12 @@ pub fn text_primary(theme: &Theme) -> iced::widget::text::Style {
 pub fn text_secondary(theme: &Theme) -> iced::widget::text::Style {
     iced::widget::text::Style {
         color: Some(tokens(theme).text_2),
+    }
+}
+
+pub fn text_muted(theme: &Theme) -> iced::widget::text::Style {
+    iced::widget::text::Style {
+        color: Some(tokens(theme).text_3),
     }
 }
 
@@ -399,4 +407,223 @@ pub fn home_tile(theme: &Theme, status: button::Status) -> button::Style {
         };
     }
     s
+}
+
+pub fn btn_caption_close(theme: &Theme, status: button::Status) -> button::Style {
+    let t = tokens(theme);
+    let (bg, fg) = match status {
+        button::Status::Hovered => (Some(t.danger), Color::WHITE),
+        button::Status::Pressed => (Some(mix(t.danger, Color::BLACK, 0.14)), Color::WHITE),
+        button::Status::Active => (None, t.text_2),
+        button::Status::Disabled => (None, t.text_3),
+    };
+    btn_base(bg, fg, None, SMALL_RADIUS)
+}
+
+pub fn status_bar(theme: &Theme) -> container::Style {
+    let t = tokens(theme);
+    container::Style {
+        background: Some(Background::Color(t.surface)),
+        border: Border {
+            color: t.border,
+            width: 1.0,
+            radius: iced::border::Radius {
+                top_left: 0.0,
+                top_right: 0.0,
+                bottom_right: WINDOW_RADIUS,
+                bottom_left: WINDOW_RADIUS,
+            },
+        },
+        ..Default::default()
+    }
+}
+
+pub fn error_banner(theme: &Theme) -> container::Style {
+    let t = tokens(theme);
+    container::Style {
+        background: Some(Background::Color(with_alpha(
+            t.danger,
+            if t.dark { 0.16 } else { 0.08 },
+        ))),
+        border: Border {
+            color: with_alpha(t.danger, 0.45),
+            width: 1.0,
+            radius: SMALL_RADIUS.into(),
+        },
+        ..Default::default()
+    }
+}
+
+pub fn pill(theme: &Theme, accent: bool) -> container::Style {
+    let t = tokens(theme);
+    container::Style {
+        background: Some(Background::Color(if accent {
+            t.accent_soft
+        } else {
+            t.elevated
+        })),
+        border: Border {
+            color: if accent {
+                with_alpha(t.accent, 0.35)
+            } else {
+                t.border
+            },
+            width: 1.0,
+            radius: 10.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+pub fn input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let t = tokens(theme);
+    let border_color = match status {
+        text_input::Status::Active => t.border,
+        text_input::Status::Hovered => mix(t.border, t.text, 0.25),
+        text_input::Status::Focused => t.accent,
+        text_input::Status::Disabled => t.border,
+    };
+    let bg = match status {
+        text_input::Status::Disabled => t.surface,
+        _ => t.elevated,
+    };
+    text_input::Style {
+        background: Background::Color(bg),
+        border: Border {
+            color: border_color,
+            width: if matches!(status, text_input::Status::Focused) {
+                1.5
+            } else {
+                1.0
+            },
+            radius: CONTROL_RADIUS.into(),
+        },
+        icon: t.text_3,
+        placeholder: t.text_3,
+        value: if matches!(status, text_input::Status::Disabled) {
+            t.text_3
+        } else {
+            t.text
+        },
+        selection: t.accent_soft,
+    }
+}
+
+pub fn pick_list_style(theme: &Theme, status: pick_list::Status) -> pick_list::Style {
+    let t = tokens(theme);
+    let border_color = match status {
+        pick_list::Status::Active => t.border,
+        pick_list::Status::Hovered => mix(t.border, t.text, 0.25),
+        pick_list::Status::Opened => t.accent,
+    };
+    pick_list::Style {
+        text_color: t.text,
+        placeholder_color: t.text_3,
+        handle_color: t.text_2,
+        background: Background::Color(t.elevated),
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: CONTROL_RADIUS.into(),
+        },
+    }
+}
+
+pub fn pick_menu_style(theme: &Theme) -> menu::Style {
+    let t = tokens(theme);
+    menu::Style {
+        background: Background::Color(t.elevated),
+        border: Border {
+            color: t.border,
+            width: 1.0,
+            radius: CONTROL_RADIUS.into(),
+        },
+        text_color: t.text,
+        selected_text_color: Color::WHITE,
+        selected_background: Background::Color(t.accent),
+    }
+}
+
+pub fn checkbox_style(theme: &Theme, status: checkbox::Status) -> checkbox::Style {
+    let t = tokens(theme);
+    let (is_checked, hovered, disabled) = match status {
+        checkbox::Status::Active { is_checked } => (is_checked, false, false),
+        checkbox::Status::Hovered { is_checked } => (is_checked, true, false),
+        checkbox::Status::Disabled { is_checked } => (is_checked, false, true),
+    };
+    let bg = if disabled {
+        t.surface
+    } else if is_checked {
+        if hovered {
+            mix(t.accent, Color::WHITE, 0.12)
+        } else {
+            t.accent
+        }
+    } else if hovered {
+        t.hover
+    } else {
+        t.elevated
+    };
+    let border_color = if disabled {
+        t.border
+    } else if is_checked {
+        t.accent
+    } else if hovered {
+        mix(t.border, t.accent, 0.5)
+    } else {
+        t.border
+    };
+    checkbox::Style {
+        background: Background::Color(bg),
+        icon_color: Color::WHITE,
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        text_color: Some(if disabled { t.text_3 } else { t.text }),
+    }
+}
+
+pub fn progress_style(theme: &Theme) -> progress_bar::Style {
+    let t = tokens(theme);
+    progress_bar::Style {
+        background: Background::Color(t.surface),
+        bar: Background::Color(t.accent),
+        border: Border {
+            color: t.border,
+            width: 0.5,
+            radius: 4.0.into(),
+        },
+    }
+}
+
+pub fn scrollable_style(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
+    let t = tokens(theme);
+    let hovered = matches!(
+        status,
+        scrollable::Status::Hovered { .. } | scrollable::Status::Dragged { .. }
+    );
+    let scroller_color = if hovered {
+        with_alpha(t.text_3, 0.65)
+    } else {
+        with_alpha(t.text_3, 0.35)
+    };
+    let rail = scrollable::Rail {
+        background: None,
+        border: Border::default(),
+        scroller: scrollable::Scroller {
+            color: scroller_color,
+            border: Border {
+                radius: 4.0.into(),
+                ..Default::default()
+            },
+        },
+    };
+    scrollable::Style {
+        container: container::Style::default(),
+        vertical_rail: rail,
+        horizontal_rail: rail,
+        gap: None,
+    }
 }
