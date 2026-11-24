@@ -6,7 +6,7 @@
 
 ## [Unreleased]
 
-## [0.1.9] - 2026-11-24
+## [0.1.10] - 2026-11-24
 
 ### Added
 
@@ -22,6 +22,7 @@
 
 - 设置确认无更改时不再重复修改文件关联和右键菜单；系统集成更新移至后台
 - Linux 打包警告及文件关联和菜单选项的兼容问题
+- 修复 Linux 桌面菜单生成代码的生命周期编译错误
 
 ## [0.1.8] - 2026-11-23
 
@@ -168,8 +169,8 @@
 - 二进制命名：GUI = `oxizip`，CLI = `oxizip-cli`
 - 应用 ID：`cn.wujunyi.oxizip`
 
-[Unreleased]: https://github.com/wujunyi0907/Oxizip/compare/v0.1.9...HEAD
-[0.1.9]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.9
+[Unreleased]: https://github.com/wujunyi0907/Oxizip/compare/v0.1.10...HEAD
+[0.1.10]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.10
 [0.1.8]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.8
 [0.1.7]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.7
 [0.1.6]: https://github.com/wujunyi0907/Oxizip/releases/tag/v0.1.6

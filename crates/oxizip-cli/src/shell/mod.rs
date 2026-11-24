@@ -13,6 +13,9 @@ use oxizip_i18n::Lang;
 mod icons;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod linux;
+#[cfg(all(test, windows))]
+#[allow(dead_code)]
+mod linux;
 #[cfg(windows)]
 mod user_choice;
 #[cfg(windows)]

@@ -3349,7 +3349,7 @@ dependencies = [
 
 [[package]]
 name = "oxizip-cli"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "base64",
  "cc",
@@ -3368,7 +3368,7 @@ dependencies = [
 
 [[package]]
 name = "oxizip-core"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "crc32fast",
  "sha2 0.10.9",
@@ -3377,7 +3377,7 @@ dependencies = [
 
 [[package]]
 name = "oxizip-engine"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "oxizip-core",
  "oxizip-formats",
@@ -3386,7 +3386,7 @@ dependencies = [
 
 [[package]]
 name = "oxizip-formats"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "bzip2 0.5.2",
  "cab",
@@ -3407,7 +3407,7 @@ dependencies = [
 
 [[package]]
 name = "oxizip-gui"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "arboard",
  "iced",
@@ -3427,7 +3427,7 @@ dependencies = [
 
 [[package]]
 name = "oxizip-i18n"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "oxizip-core",
  "toml 0.8.23",
@@ -3435,7 +3435,7 @@ dependencies = [
 
 [[package]]
 name = "oxizip-setup"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "iced",
  "image 0.24.9",
@@ -3448,14 +3448,14 @@ dependencies = [
 
 [[package]]
 name = "oxizip-sfx-stub"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "zip",
 ]
 
 [[package]]
 name = "oxizip-shellext"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "windows 0.58.0",
  "windows-core 0.58.0",

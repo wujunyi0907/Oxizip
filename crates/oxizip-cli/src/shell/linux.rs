@@ -204,18 +204,24 @@ NoDisplay=false
     )
 }
 
+fn push_desktop_action<'a>(
+    actions: &mut Vec<&'a str>,
+    body: &mut String,
+    id: &'a str,
+    block: String,
+) {
+    actions.push(id);
+    body.push('\n');
+    body.push_str(&block);
+}
+
 fn extract_desktop(cli: &Path, gui: &Path, mimes: &[&str], filter: &MenuFilter) -> String {
     let cli_s = shell_escape_desktop_exec(cli);
     let gui_s = shell_escape_desktop_exec(gui);
     let mut actions = Vec::new();
     let mut body = String::new();
-    let push = |actions: &mut Vec<&str>, body: &mut String, id: &str, block: String| {
-        actions.push(id);
-        body.push('\n');
-        body.push_str(&block);
-    };
     if filter.extract_here {
-        push(
+        push_desktop_action(
             &mut actions,
             &mut body,
             "ExtractHere",
@@ -228,7 +234,7 @@ fn extract_desktop(cli: &Path, gui: &Path, mimes: &[&str], filter: &MenuFilter) 
         );
     }
     if filter.extract_smart {
-        push(
+        push_desktop_action(
             &mut actions,
             &mut body,
             "ExtractSmart",
@@ -241,7 +247,7 @@ fn extract_desktop(cli: &Path, gui: &Path, mimes: &[&str], filter: &MenuFilter) 
         );
     }
     if filter.extract_to_folder {
-        push(
+        push_desktop_action(
             &mut actions,
             &mut body,
             "ExtractToFolder",
@@ -254,7 +260,7 @@ fn extract_desktop(cli: &Path, gui: &Path, mimes: &[&str], filter: &MenuFilter) 
         );
     }
     if filter.test {
-        push(
+        push_desktop_action(
             &mut actions,
             &mut body,
             "Test",
@@ -267,7 +273,7 @@ fn extract_desktop(cli: &Path, gui: &Path, mimes: &[&str], filter: &MenuFilter) 
         );
     }
     if filter.checksum {
-        push(
+        push_desktop_action(
             &mut actions,
             &mut body,
             "Checksum",
@@ -307,13 +313,8 @@ fn compress_desktop(gui: &Path, filter: &MenuFilter) -> String {
     let exe_s = shell_escape_desktop_exec(gui);
     let mut actions = Vec::new();
     let mut body = String::new();
-    let push = |actions: &mut Vec<&str>, body: &mut String, id: &str, block: String| {
-        actions.push(id);
-        body.push('\n');
-        body.push_str(&block);
-    };
     if filter.compress_zip {
-        push(
+        push_desktop_action(
             &mut actions,
             &mut body,
             "CompressZip",
@@ -326,7 +327,7 @@ fn compress_desktop(gui: &Path, filter: &MenuFilter) -> String {
         );
     }
     if filter.compress_7z {
-        push(
+        push_desktop_action(
             &mut actions,
             &mut body,
             "Compress7z",
@@ -1099,6 +1100,33 @@ mod tests {
         let mimes = collect_mimes(&["7z", "zpaq"]);
         assert!(mimes.contains(&"application/x-7z-compressed"));
         assert!(mimes.contains(&"application/x-zpaq"));
-        assert!(!mimes.iter().any(|m| *m == "application/zip"));
+        assert!(!mimes.contains(&"application/zip"));
+    }
+
+    #[test]
+    fn desktop_actions_match_enabled_menu_items() {
+        let filter = MenuFilter {
+            extract_here: true,
+            extract_smart: false,
+            extract_to_folder: false,
+            test: false,
+            checksum: false,
+            compress_zip: false,
+            compress_7z: true,
+            ..MenuFilter::default()
+        };
+        let extract = extract_desktop(
+            Path::new("/usr/bin/oxizip-cli"),
+            Path::new("/usr/bin/oxizip"),
+            &["application/zip"],
+            &filter,
+        );
+        assert!(extract.contains("Actions=ExtractHere;"));
+        assert!(extract.contains("[Desktop Action ExtractHere]"));
+        assert!(!extract.contains("[Desktop Action ExtractSmart]"));
+        let compress = compress_desktop(Path::new("/usr/bin/oxizip"), &filter);
+        assert!(compress.contains("Actions=Compress7z;"));
+        assert!(compress.contains("[Desktop Action Compress7z]"));
+        assert!(!compress.contains("[Desktop Action CompressZip]"));
     }
 }
