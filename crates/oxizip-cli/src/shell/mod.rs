@@ -153,7 +153,7 @@ pub fn disk_image_extensions() -> &'static [&'static str] {
 }
 
 fn is_disk_image_ext(ext: &str) -> bool {
-    disk_image_extensions().iter().any(|e| *e == ext)
+    disk_image_extensions().contains(&ext)
 }
 
 /// Default `--ext` / empty selection: all [`archive_extensions`] except disk images.

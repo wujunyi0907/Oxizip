@@ -644,7 +644,7 @@ fn register_sparse_package(install_dir: &Path) -> InstallResult<()> {
                         chrono_like_now(),
                         SPARSE_WAIT.as_secs()
                     );
-                    let _ = append_log(&log, &note);
+                    append_log(&log, &note);
                     // Classic verbs still work; do not fail the install.
                     return Ok(());
                 }
@@ -1167,13 +1167,11 @@ pub fn perform_uninstall(dir: Option<PathBuf>, progress: &mut ProgressCb<'_>) ->
             return Ok(());
         }
         // Not running from install dir — delete immediately; fall back to temp helper.
-        if dir.is_dir() {
-            if force_remove_tree(&dir).is_err() || dir.exists() {
-                let _ = schedule_install_dir_cleanup(&dir);
-            }
+        if dir.is_dir() && (force_remove_tree(&dir).is_err() || dir.exists()) {
+            let _ = schedule_install_dir_cleanup(&dir);
         }
         report(progress, 1.0, "done");
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(windows))]

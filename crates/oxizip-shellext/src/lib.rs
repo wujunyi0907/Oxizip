@@ -70,7 +70,7 @@ pub(crate) mod win {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn DllCanUnloadNow() -> HRESULT {
+    pub extern "system" fn DllCanUnloadNow() -> HRESULT {
         if LOCK_COUNT.load(Ordering::SeqCst) == 0 {
             S_OK
         } else {
@@ -78,6 +78,8 @@ pub(crate) mod win {
         }
     }
 
+    /// # Safety
+    /// Non-null input pointers must reference valid GUIDs, and `ppv` must be writable.
     #[no_mangle]
     pub unsafe extern "system" fn DllGetClassObject(
         rclsid: *const GUID,
@@ -98,7 +100,7 @@ pub(crate) mod win {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn DllRegisterServer() -> HRESULT {
+    pub extern "system" fn DllRegisterServer() -> HRESULT {
         match register::register_server() {
             Ok(()) => S_OK,
             Err(e) => e.code(),
@@ -106,7 +108,7 @@ pub(crate) mod win {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn DllUnregisterServer() -> HRESULT {
+    pub extern "system" fn DllUnregisterServer() -> HRESULT {
         match register::unregister_server() {
             Ok(()) => S_OK,
             Err(e) => e.code(),

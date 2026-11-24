@@ -1261,7 +1261,7 @@ impl OxizipApp {
             if s.starts_with(r"\\") {
                 return PathBuf::from(format!(r"\\?\UNC\{}", s.trim_start_matches(r"\\")));
             }
-            return PathBuf::from(format!(r"\\?\{s}"));
+            PathBuf::from(format!(r"\\?\{s}"))
         }
         #[cfg(not(windows))]
         {
@@ -1989,9 +1989,6 @@ impl OxizipApp {
         spec: job::ExtractJob,
         conflict: Option<ConflictPolicy>,
     ) -> Task<Message> {
-        let archives = spec.archives;
-        let mode = spec.mode;
-        let dest_override = spec.dest_override;
         let password = self.password_opt();
         let prefs = self.extract_runtime_prefs();
         let lang = self.lang;
@@ -2001,17 +1998,7 @@ impl OxizipApp {
             cancel,
             progress,
             move |cancel, progress| {
-                worker::extract_shell_job(
-                    archives,
-                    mode,
-                    dest_override,
-                    password,
-                    conflict,
-                    prefs,
-                    cancel,
-                    progress,
-                    lang,
-                )
+                worker::extract_shell_job(spec, password, conflict, prefs, cancel, progress, lang)
             },
         )
     }
@@ -5348,44 +5335,6 @@ fn apply_window_level_to(id: Option<window::Id>, on_top: bool) -> Task<Message> 
         .unwrap_or_else(Task::none)
 }
 
-#[cfg(test)]
-mod settings_window_tests {
-    use super::*;
-
-    #[test]
-    fn cancel_discards_draft_and_reopening_uses_current_preferences() {
-        let mut app = OxizipApp::default();
-        let original = app.prefs.show_gridlines;
-        drop(app.open_settings_modal(Some("assoc")));
-        assert_eq!(app.settings_tab, SettingsTab::Assoc);
-        assert!(app.settings_window.is_some());
-        drop(app.handle_settings(SettingsMsg::ShowGrid(!original)));
-        assert_eq!(app.prefs.show_gridlines, original);
-        let id = app.settings_window.unwrap();
-        drop(app.update(Message::Escape(id)));
-        assert!(app.settings_window.is_none());
-        drop(app.open_settings_modal(None));
-        assert_eq!(app.settings_draft.show_gridlines, original);
-    }
-
-    #[test]
-    fn modal_reuses_window_and_ignores_main_close() {
-        let mut app = OxizipApp::default();
-        let main = window::Id::unique();
-        app.window_id = Some(main);
-        drop(app.open_settings_modal(None));
-        let settings = app.settings_window.unwrap();
-        drop(app.open_settings_modal(Some("assoc")));
-        assert_eq!(app.settings_window, Some(settings));
-        assert_eq!(app.settings_tab, SettingsTab::General);
-        drop(app.update(Message::WindowCloseRequested(main)));
-        assert_eq!(app.settings_window, Some(settings));
-        drop(app.update(Message::WindowCloseRequested(settings)));
-        assert!(app.settings_window.is_none());
-        assert_eq!(app.window_id, Some(main));
-    }
-}
-
 fn entry_visible(entry: &EntryMeta, prefix: Option<&str>, filter: &str) -> bool {
     if let Some(prefix) = prefix {
         let name = entry.name.trim_start_matches('/');
@@ -5460,5 +5409,43 @@ fn dim_style(theme: &Theme, _status: button::Status) -> button::Style {
         text_color: Color::WHITE,
         border: Border::default(),
         shadow: iced::Shadow::default(),
+    }
+}
+
+#[cfg(test)]
+mod settings_window_tests {
+    use super::*;
+
+    #[test]
+    fn cancel_discards_draft_and_reopening_uses_current_preferences() {
+        let mut app = OxizipApp::default();
+        let original = app.prefs.show_gridlines;
+        drop(app.open_settings_modal(Some("assoc")));
+        assert_eq!(app.settings_tab, SettingsTab::Assoc);
+        assert!(app.settings_window.is_some());
+        drop(app.handle_settings(SettingsMsg::ShowGrid(!original)));
+        assert_eq!(app.prefs.show_gridlines, original);
+        let id = app.settings_window.unwrap();
+        drop(app.update(Message::Escape(id)));
+        assert!(app.settings_window.is_none());
+        drop(app.open_settings_modal(None));
+        assert_eq!(app.settings_draft.show_gridlines, original);
+    }
+
+    #[test]
+    fn modal_reuses_window_and_ignores_main_close() {
+        let mut app = OxizipApp::default();
+        let main = window::Id::unique();
+        app.window_id = Some(main);
+        drop(app.open_settings_modal(None));
+        let settings = app.settings_window.unwrap();
+        drop(app.open_settings_modal(Some("assoc")));
+        assert_eq!(app.settings_window, Some(settings));
+        assert_eq!(app.settings_tab, SettingsTab::General);
+        drop(app.update(Message::WindowCloseRequested(main)));
+        assert_eq!(app.settings_window, Some(settings));
+        drop(app.update(Message::WindowCloseRequested(settings)));
+        assert!(app.settings_window.is_none());
+        assert_eq!(app.window_id, Some(main));
     }
 }

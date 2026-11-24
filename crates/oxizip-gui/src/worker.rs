@@ -431,9 +431,7 @@ fn resolve_shell_dest(
 /// Shell `--job extract`: resolve Here/Smart/ArchiveName/Dialog dest, then extract each archive.
 /// `conflict = None` means probe first and return [`JobOutcome::NeedsConflictChoice`] if needed.
 pub fn extract_shell_job(
-    archives: Vec<PathBuf>,
-    mode: crate::job::ExtractMode,
-    dest_override: Option<PathBuf>,
+    spec: crate::job::ExtractJob,
     password: Option<String>,
     conflict: Option<oxizip_engine::ConflictPolicy>,
     prefs: ExtractRuntimePrefs,
@@ -445,6 +443,12 @@ pub fn extract_shell_job(
     use oxizip_engine::ConflictPolicy;
     use std::fs;
 
+    let crate::job::ExtractJob {
+        archives,
+        mode,
+        dest_override,
+        ..
+    } = spec;
     let progress = FnProgress({
         let slot = slot.clone();
         move |u: ProgressUpdate| slot.set_from_update(&u)

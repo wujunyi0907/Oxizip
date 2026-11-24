@@ -424,10 +424,10 @@ fn write_verb_filtered(
     label: &str,
     exe: &Path,
     args: &str,
-    icon: &Path,
-    multi_select: &str,
+    icon_and_selection: (&Path, &str),
     filter: &MenuFilter,
 ) -> Result<(), String> {
+    let (icon, multi_select) = icon_and_selection;
     write_verb(classes, ext, verb, label, exe, args, icon, multi_select)?;
     if filter.hide_icon {
         let key_path = format!("{}\\shell\\{VERB_PREFIX}.{verb}", association_key(ext));
@@ -490,35 +490,32 @@ fn write_all_verbs_filtered(
     }
     write_files_dirs_verbs_filtered(
         classes,
-        "*",
+        ("*", "%1"),
         exe,
         gui,
         icons_dir,
         lang,
         true,
-        "%1",
         filter,
     )?;
     write_files_dirs_verbs_filtered(
         classes,
-        "Directory",
+        ("Directory", "%1"),
         exe,
         gui,
         icons_dir,
         lang,
         false,
-        "%1",
         filter,
     )?;
     write_files_dirs_verbs_filtered(
         classes,
-        "Directory\\Background",
+        ("Directory\\Background", "%V"),
         exe,
         gui,
         icons_dir,
         lang,
         false,
-        "%V",
         filter,
     )?;
     Ok(())
@@ -997,35 +994,32 @@ fn write_menus_only(
     }
     write_files_dirs_verbs_filtered(
         classes,
-        "*",
+        ("*", "%1"),
         exe,
         gui,
         icons_dir,
         lang,
         true,
-        "%1",
         filter,
     )?;
     write_files_dirs_verbs_filtered(
         classes,
-        "Directory",
+        ("Directory", "%1"),
         exe,
         gui,
         icons_dir,
         lang,
         false,
-        "%1",
         filter,
     )?;
     write_files_dirs_verbs_filtered(
         classes,
-        "Directory\\Background",
+        ("Directory\\Background", "%V"),
         exe,
         gui,
         icons_dir,
         lang,
         false,
-        "%V",
         filter,
     )?;
     Ok(())
@@ -1048,8 +1042,7 @@ fn write_archive_verbs_filtered(
             t(lang, "shell.extract_here"),
             gui,
             "--job extract --here \"%1\"",
-            icon,
-            "Document",
+            (icon, "Document"),
             filter,
         )?;
     }
@@ -1061,8 +1054,7 @@ fn write_archive_verbs_filtered(
             t(lang, "shell.extract_smart"),
             gui,
             "--job extract --smart \"%1\"",
-            icon,
-            "Document",
+            (icon, "Document"),
             filter,
         )?;
     }
@@ -1074,8 +1066,7 @@ fn write_archive_verbs_filtered(
             t(lang, "shell.extract_to_folder"),
             gui,
             "--job extract --archive-name-dir \"%1\"",
-            icon,
-            "Document",
+            (icon, "Document"),
             filter,
         )?;
     }
@@ -1087,8 +1078,7 @@ fn write_archive_verbs_filtered(
             t(lang, "shell.test"),
             cli,
             "test \"%1\"",
-            icon,
-            "Document",
+            (icon, "Document"),
             filter,
         )?;
     }
@@ -1100,8 +1090,7 @@ fn write_archive_verbs_filtered(
             t(lang, "shell.checksum"),
             cli,
             "checksum \"%1\"",
-            icon,
-            "Single",
+            (icon, "Single"),
             filter,
         )?;
     }
@@ -1112,8 +1101,7 @@ fn write_archive_verbs_filtered(
         t(lang, "shell.repair"),
         cli,
         "repair \"%1\"",
-        icon,
-        "Single",
+        (icon, "Single"),
         filter,
     )?;
     if filter.extract_here_del {
@@ -1124,8 +1112,7 @@ fn write_archive_verbs_filtered(
             t(lang, "shell.extract_here_del"),
             gui,
             "--job extract --here --delete-archive \"%1\"",
-            icon,
-            "Document",
+            (icon, "Document"),
             filter,
         )?;
     }
@@ -1137,8 +1124,7 @@ fn write_archive_verbs_filtered(
             t(lang, "shell.extract_smart_del"),
             gui,
             "--job extract --smart --delete-archive \"%1\"",
-            icon,
-            "Document",
+            (icon, "Document"),
             filter,
         )?;
     }
@@ -1150,8 +1136,7 @@ fn write_archive_verbs_filtered(
             t(lang, "shell.extract_folder_del"),
             gui,
             "--job extract --archive-name-dir --delete-archive \"%1\"",
-            icon,
-            "Document",
+            (icon, "Document"),
             filter,
         )?;
     }
@@ -1163,8 +1148,7 @@ fn write_archive_verbs_filtered(
             t(lang, "shell.extract_dialog"),
             gui,
             "--job extract --dialog \"%1\"",
-            icon,
-            "Document",
+            (icon, "Document"),
             filter,
         )?;
     }
@@ -1176,8 +1160,7 @@ fn write_archive_verbs_filtered(
             t(lang, "shell.open_with"),
             gui,
             "\"%1\"",
-            icon,
-            "Document",
+            (icon, "Document"),
             filter,
         )?;
     }
@@ -1206,15 +1189,15 @@ fn write_compress_verb_filtered(
 
 fn write_files_dirs_verbs_filtered(
     classes: &RegKey,
-    root_name: &str,
+    target: (&str, &str),
     cli: &Path,
     gui: &Path,
     icons_dir: &Path,
     lang: Lang,
     with_checksum: bool,
-    path_ph: &str,
     filter: &MenuFilter,
 ) -> Result<(), String> {
+    let (root_name, path_ph) = target;
     let zip_icon = icon_path_for_ext(icons_dir, "zip");
     let seven_icon = icon_path_for_ext(icons_dir, "7z");
     let app_icon = icon_path_for_ext(icons_dir, "oxizip");

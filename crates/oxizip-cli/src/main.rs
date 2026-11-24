@@ -281,15 +281,17 @@ fn main() -> ExitCode {
             delete_archive,
             password,
         } => run_extract(
-            archive,
-            output,
-            here,
-            smart,
-            archive_name_dir,
-            entries,
-            open_after,
-            delete_archive,
-            password,
+            ExtractRequest {
+                archive,
+                output,
+                here,
+                smart,
+                archive_name_dir,
+                entries,
+                open_after,
+                delete_archive,
+                password,
+            },
             &progress,
             &cancel,
         ),
@@ -303,14 +305,16 @@ fn main() -> ExitCode {
             zip_crypto,
             paths,
         } => run_create(
-            beside,
-            format,
-            password,
-            level,
-            method,
-            volume_size,
-            zip_crypto,
-            paths,
+            CreateRequest {
+                beside,
+                format,
+                password,
+                level,
+                method,
+                volume_size,
+                zip_crypto,
+                paths,
+            },
             &progress,
             &cancel,
         ),
@@ -434,7 +438,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_extract(
+struct ExtractRequest {
     archive: PathBuf,
     output: Option<PathBuf>,
     here: bool,
@@ -444,9 +448,24 @@ fn run_extract(
     open_after: bool,
     delete_archive: bool,
     password: Option<String>,
+}
+
+fn run_extract(
+    request: ExtractRequest,
     progress: &NullProgress,
     cancel: &CancellationToken,
 ) -> Result<(), CoreError> {
+    let ExtractRequest {
+        archive,
+        output,
+        here,
+        smart,
+        archive_name_dir,
+        entries,
+        open_after,
+        delete_archive,
+        password,
+    } = request;
     let layout = if here {
         dest::ExtractLayout::Here
     } else if smart {
@@ -496,7 +515,7 @@ fn run_extract(
     Ok(())
 }
 
-fn run_create(
+struct CreateRequest {
     beside: bool,
     format: String,
     password: Option<String>,
@@ -505,9 +524,23 @@ fn run_create(
     volume_size: Option<u64>,
     zip_crypto: String,
     paths: Vec<PathBuf>,
+}
+
+fn run_create(
+    request: CreateRequest,
     progress: &NullProgress,
     cancel: &CancellationToken,
 ) -> Result<(), CoreError> {
+    let CreateRequest {
+        beside,
+        format,
+        password,
+        level,
+        method,
+        volume_size,
+        zip_crypto,
+        paths,
+    } = request;
     let Some(fmt) = FormatId::parse_create_name(&format) else {
         return Err(CoreError::Other(format!(
             "unknown format '{format}'. choose one of: {}",

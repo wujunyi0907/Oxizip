@@ -151,10 +151,10 @@ impl IContextMenu_Impl for OxizipShellExt_Impl {
             return Ok(());
         }
         let idx = verb as u32;
-        if idx < MENU_OFFSET {
+        let Some(i) = idx.checked_sub(MENU_OFFSET) else {
             return Ok(());
-        }
-        let i = (idx - MENU_OFFSET) as usize;
+        };
+        let i = i as usize;
         let actions = self.actions.borrow();
         let Some(action) = actions.get(i).copied() else {
             return Ok(());
