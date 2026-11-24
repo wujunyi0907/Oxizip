@@ -263,7 +263,7 @@ jobs:
           cat release-notes.md
 
       - name: Create / update GitHub Release
-        uses: softprops/action-gh-release@v3.0.4
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: Oxizip ${{ needs.windows.outputs.version || github.ref_name }}
